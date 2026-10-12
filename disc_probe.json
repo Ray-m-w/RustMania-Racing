@@ -1,0 +1,31 @@
+{
+  "cue_path": "F:\\Muppet Racemania\\extract\\muppet-usa.cue",
+  "cue_name": "muppet-usa.cue",
+  "bin_name": "muppet-usa.bin",
+  "track_count": 1,
+  "data_track_size": 518202048,
+  "data_track_md5": "ee4160b222e47182bc688c49bd65b2f8",
+  "data_track_sha1": "1b0fc0b6fa0958ecac5f087aab4b444b2067a387",
+  "data_track_crc32": "fd04899f",
+  "boot_exe": "SLUS_012.37",
+  "serial": "SLUS-01237",
+  "serial_exe": "SLUS_012.37",
+  "volume_id": "RACEMANIA",
+  "display_name": "MuppetRaceMania",
+  "load_address": "0x80010000",
+  "entry_pc": "0x80093214",
+  "text_size": "0x000A1000",
+  "stack_base": "0x801FFFF0",
+  "require_cue": true,
+  "required_disc_fp": "69f45212f9b9cf9a87212acac5dd624e639b0a72dcb85a12df843804a8fc2dd5",
+  "boot_exe_sha256": "81c6846ef44ba06063bb34197a590439b848ad330270c84ff5f6fc201ba870f8",
+  "seed_count": 682,
+  "warnings": [
+    "cue has only 1 TRACK \u2014 Track-01-only dumps fail multi-track netplay/catalog gates; prefer a full Redump cue."
+  ],
+  "notes": [
+    "entry_pc/load_address/text_size/stack_base taken from PS-X EXE header.",
+    "seeds are first-pass boot-EXE JAL targets (+ entry); expect to grow as overlays / runtime paths are discovered.",
+    "required_disc_fp is psxrecomp-toc-v1 (matches runtime DiscIdentity)."
+  ]
+}

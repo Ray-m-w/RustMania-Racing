@@ -1,0 +1,54 @@
+# Autofilled by tools/new_project_layout/probe_disc.py from your legal dump.
+# Review before shipping. Runtime quirks / overlay seeds still need hand work.
+
+[game]
+name = "MuppetRaceMania"
+id = "SLUS-01237"
+players = 2
+exe = "disc/SLUS_012.37"
+disc = "F:\\Muppet Racemania\\extract\\muppet-usa.cue"
+load_address = "0x80010000"
+entry_pc = "0x80093214"
+text_size = "0x000A1000"
+stack_base = "0x801FFFF0"
+
+# Digests are for data Track 01 (first BINARY FILE / TRACK 01).
+[prepare_disc]
+out_dir = "disc"
+bin_name = "muppet-usa.bin"
+cue_name = "muppet-usa.cue"
+boot_exe = "SLUS_012.37"
+known_sizes = [518202048]
+known_md5 = [
+  "ee4160b222e47182bc688c49bd65b2f8",
+]
+known_sha1 = [
+  "1b0fc0b6fa0958ecac5f087aab4b444b2067a387",
+]
+known_crc32 = [
+  "fd04899f",
+]
+
+[recompiler]
+seeds = "seeds/ghidra_funcs.txt"
+out_dir = "generated"
+strict = true
+
+[runtime]
+window_title = "MuppetRaceMania Recompiled"
+memcard_dir = "saves"
+overlay_cache = true
+
+[video]
+renderer = "opengl"
+aspect_ratio = "4:3"
+
+[controller]
+default_mode = "digital"
+
+# Online mount gate: digests + track count + optional TOC fingerprint
+# (see docs/NETPLAY.md).
+[netplay]
+require_cue = true
+required_tracks = 1
+required_disc_fp = "69f45212f9b9cf9a87212acac5dd624e639b0a72dcb85a12df843804a8fc2dd5"

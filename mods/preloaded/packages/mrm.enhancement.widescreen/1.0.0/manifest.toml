@@ -1,0 +1,48 @@
+format_version = 5
+id = "mrm.enhancement.widescreen"
+version = "1.0.0"
+name = "Widescreen"
+author = "MuppetRaceManiaRecomp"
+description = "Renders a genuinely wider view (more track either side, nothing stretched) using psxrecomp's native-wide renderer. Menus, movies and loading screens keep their 4:3 framing."
+resolver = "declarative"
+save_compatibility = "shared"
+
+[[target]]
+game_id = "SLUS-01237"
+disc_sha256 = "d070f3bb619ee5213569b355ebd2caf6e7e4e52b3a32b76b0f2d911dc93a86a9"
+
+[[feature]]
+id = "widescreen"
+name = "Widescreen"
+description = "Show more of the track either side of the kart. Fit to Window follows the window's shape; the fixed choices lock the view."
+group = "Display"
+default_enabled = true
+
+[[option]]
+feature = "widescreen"
+id = "aspect"
+label = "View"
+description = "Fit to Window follows live resizing (4:3 minimum). The fixed ratios use the same renderer."
+group = "Display"
+type = "choice"
+default = "Fit"
+
+[[option.choice]]
+value = "Fit"
+label = "Fit to Window"
+
+[[option.choice]]
+value = "16:9"
+label = "16:9"
+
+[[option.choice]]
+value = "21:9"
+label = "21:9"
+
+[[option.choice]]
+value = "32:9"
+label = "32:9"
+
+[[plugin]]
+feature = "widescreen"
+id = "mrm.widescreen"

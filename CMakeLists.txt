@@ -16,12 +16,12 @@ project(MuppetRaceManiaRecomp LANGUAGES C CXX)
 # The wizard (WIZARD_CMAKE_BLOCK / ENABLE_SETUP_WIZARD) is the first-run disc
 # picker; releases are compiled from the committed generated/ C, so it never
 # needs to generate or rebuild anything on a player's machine.
-﻿# recomp-ui submodule present (PSX_RECOMP_UI defaults ON).
-﻿# Full netplay UI -- enable after adding recomp-ui + testing:
+# recomp-ui submodule present (PSX_RECOMP_UI defaults ON).
+# Full netplay UI -- enable after adding recomp-ui + testing:
 # if(EXISTS "${PSXRECOMP_ROOT}/lib/recomp-net/CMakeLists.txt")
 #     set(PSX_NETPLAY ON CACHE BOOL "..." FORCE)
 # endif()
-﻿set(PSX_SETUP_WIZARD ON CACHE BOOL
+set(PSX_SETUP_WIZARD ON CACHE BOOL
     "Advertise first-run setup wizard + Generate & rebuild in recomp-ui" FORCE)
 include("${PSXRECOMP_ROOT}/runtime/runtime.cmake")
 
@@ -37,21 +37,31 @@ endif()
 
 psxrecomp_add_game_runtime(psx-runtime
     PRELOADED_MODS_DIR "${PSX_PRELOADED_MODS}"
+    # The framework marks its generic host-pacing loader deprecated; this title
+    # ships its own Fast Loading package (mrm.enhancement.fast-loading).
+    EXCLUDE_BUILTIN_MODS psx.enhancement.fast-loading
     # ENABLE_NETPLAY_IF_PRESENT
     # NETPLAY_LOBBY_URL ws://netplay.retcomm.net:8765
     ENABLE_SETUP_WIZARD
-    WINDOW_TITLE "MuppetRaceMania Recompiled"
+    WINDOW_TITLE "Muppet RaceMania Recompiled"
     DEFAULT_GAME_CONFIG_PATH "game.toml"
     MAX_PLAYERS 2
-﻿    # LAUNCHER_BOXART "${CMAKE_CURRENT_SOURCE_DIR}/launcher_assets/img/boxart.tga"
-﻿    APP_ICON "${CMAKE_CURRENT_SOURCE_DIR}/assets/psxrecomp.ico"
+    # LAUNCHER_BOXART "${CMAKE_CURRENT_SOURCE_DIR}/launcher_assets/img/boxart.tga"
+    APP_ICON "${CMAKE_CURRENT_SOURCE_DIR}/assets/psxrecomp.ico"
     # Committed game C (psxrecomp_cli.py generate; git add generated). Release
     # CI configures with -DPSXRECOMP_REQUIRE_GAME_C=ON so a checkout without
     # it fails instead of building a setup host.
     GEN_MARKER "generated/SLUS_012.37_dispatch.c"
     GEN_FULL_GLOB "generated/SLUS_012.37_full_*.c"
-﻿    CODEGEN_SETUP_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/codegen_setup.c"
+    CODEGEN_SETUP_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/codegen_setup.c"
 )
+
+# Trusted mod plugins for this title's own packages (mods/preloaded). A
+# .psxmod never carries native code; these are linked in and selected by id
+# (psxrecomp README "Trusted game code").
+file(GLOB MRM_MOD_PLUGIN_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/mods/*.c")
+target_sources(psx-runtime PRIVATE ${MRM_MOD_PLUGIN_SOURCES})
 
 # Stage runtime configs next to the exe for direct build/ launches. Only copy
 # files that exist — never fail POST_BUILD when game_options.toml is absent.

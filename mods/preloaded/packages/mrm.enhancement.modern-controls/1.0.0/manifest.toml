@@ -1,0 +1,23 @@
+format_version = 5
+id = "mrm.enhancement.modern-controls"
+version = "1.0.0"
+name = "Trigger Controls"
+author = "MuppetRaceManiaRecomp"
+description = "On a modern gamepad, the right trigger accelerates and the left trigger brakes, like a modern racing game. All original buttons still work."
+resolver = "declarative"
+save_compatibility = "shared"
+
+[[target]]
+game_id = "SLUS-01237"
+disc_sha256 = "d070f3bb619ee5213569b355ebd2caf6e7e4e52b3a32b76b0f2d911dc93a86a9"
+
+[[feature]]
+id = "modern-controls"
+name = "Trigger Controls"
+description = "Right trigger = accelerate (Triangle), left trigger = brake (Circle). Keyboard and the original button layout are unchanged."
+group = "Controls"
+default_enabled = true
+
+[[plugin]]
+feature = "modern-controls"
+id = "mrm.modern-controls"

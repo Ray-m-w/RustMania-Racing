@@ -2,7 +2,7 @@
 # Review before shipping. Runtime quirks / overlay seeds still need hand work.
 
 [game]
-name = "MuppetRaceMania"
+name = "Muppet RaceMania"
 id = "SLUS-01237"
 players = 2
 exe = "disc/SLUS_012.37"
@@ -35,16 +35,63 @@ out_dir = "generated"
 strict = true
 
 [runtime]
-window_title = "MuppetRaceMania Recompiled"
+window_title = "Muppet RaceMania Recompiled"
 memcard_dir = "saves"
 overlay_cache = true
 
 [video]
 renderer = "opengl"
 aspect_ratio = "4:3"
+# Modern-PC defaults (owner decision 2026-10-11). Players override any of these
+# in the launcher (settings.toml wins over game.toml). Keys per psxrecomp
+# docs/config_schema.md "Video Block".
+internal_resolution = "display"   # render at the monitor's own height
+supersample = 1.5                 # render above that and area-resolve: SSAA
+# Measured 2026-10-12: 4K x 1.5 averaged 15.4 ms GPU per frame (max 20 ms).
+# Let the supersample be the elastic part only: never below display lines.
+dynamic_resolution = true
+dynamic_resolution_min = "display"
+antialiasing_mode = "fxaa"
+perspective_texturing = true      # no texture warp on track/wall polygons
+texture_lod = "mipmap"            # no distant-road shimmer at high res
+anisotropic_filtering = 16
+fmv_chroma_smoothing = true
+# geometry_correction stays off: psxrecomp ENHANCEMENTS.md G1.8/G1.9 records it
+# as known broken outside the PGXP hook build (mesh seams); see G1.11.
 
 [controller]
-default_mode = "digital"
+# Present a DualShock: the game's Set Controllers screen offers VIBRATION, and
+# the game folds the left stick into its steering (verified 2026-10-12: stick
+# left/right produce the same processed button bits as D-pad left/right).
+default_mode = "analog"
+
+# Widescreen (psxrecomp docs/WIDESCREEN.md). Inert at 4:3: the default
+# presentation stays faithful until the bundled mrm.enhancement.widescreen
+# package selects an aspect. auto_screen_x asks the recompiler to widen GTE
+# render-funnel screen-extent rejects (identity at 4:3); it finds none in this
+# game, which is fine for the squash path below. Regen after cull changes.
+[widescreen]
+offer = false
+# Projection widescreen (GTE X-squash + stretched present), NOT native-wide:
+# this game keeps its 320-wide framebuffers beside texture pages in VRAM, and
+# native-wide's widened draw area overwrote them (garbage textures, tested
+# 2026-10-12). Squash never widens the framebuffer, and the game's own
+# screen-space culls keep working on the compressed coordinates.
+native_wide = false
+# Fully 3D title with no sprite-tag helper: classify gameplay frames by GTE
+# projection volume (as Ape Escape does), so races present wide while 2D
+# screens keep 4:3. Runtime-only.
+gte_game_mode = true
+# HUD at native proportions, pinned to its left/centre/right third, via the
+# ordering-table UI pre-scan (auto_ui_squash). NOT hud_sprt_squash: this game
+# builds some textures with SPRT draws into offscreen VRAM and that squash moved
+# them too (corrupt track/wall textures). A/B 2026-10-12, same route on SWAMP:
+# hud_sprt_squash corrupts tree trunks; auto_ui_squash alone is clean.
+hud_sprt_squash = false
+auto_ui_squash = true
+
+[widescreen.cull]
+auto_screen_x = true
 
 # Online mount gate: digests + track count + optional TOC fingerprint
 # (see docs/NETPLAY.md).

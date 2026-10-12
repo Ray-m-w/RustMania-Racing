@@ -1,0 +1,48 @@
+format_version = 5
+id = "mrm.enhancement.fast-loading"
+version = "1.0.0"
+name = "Fast Loading"
+author = "MuppetRaceManiaRecomp"
+description = "Runs loading screens faster in real time. The game's own CD timing, callbacks and logic are untouched; acceleration stops the moment a load ends."
+resolver = "declarative"
+save_compatibility = "shared"
+
+[[target]]
+game_id = "SLUS-01237"
+disc_sha256 = "d070f3bb619ee5213569b355ebd2caf6e7e4e52b3a32b76b0f2d911dc93a86a9"
+
+[[feature]]
+id = "fast-loading"
+name = "Fast Loading"
+description = "Speed up loading screens without changing gameplay timing."
+group = "Quality of Life"
+default_enabled = true
+
+[[option]]
+feature = "fast-loading"
+id = "speed"
+label = "Load speed"
+description = "Uncapped runs loads as fast as this computer can manage."
+group = "Quality of Life"
+type = "choice"
+default = "4"
+
+[[option.choice]]
+value = "2"
+label = "2x"
+
+[[option.choice]]
+value = "4"
+label = "4x"
+
+[[option.choice]]
+value = "8"
+label = "8x"
+
+[[option.choice]]
+value = "uncapped"
+label = "Uncapped"
+
+[[plugin]]
+feature = "fast-loading"
+id = "mrm.fast-loading"

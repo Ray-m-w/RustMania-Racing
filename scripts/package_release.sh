@@ -54,9 +54,9 @@ exec bash "${PACKAGER}" \
   --build-dir "${BUILD_DIR}" \
   --artifact "${ARTIFACT_TAG}" \
   --zip-prefix mrm \
-  --exe-name MuppetRaceMania_Recompiled \
-  --display-name "MuppetRaceMania Recompiled" \
+  --exe-name Muppet_RaceMania_Recompiled \
+  --display-name "Muppet RaceMania Recompiled" \
   --recompiler-build "${RECOMPILER_BUILD}" \
   --version-env RELEASE_VERSION \
-  --disc-hint "your legally owned MuppetRaceMania disc" \
+  --disc-hint "your legally owned Muppet RaceMania (USA) disc" \
   "${EXTRA[@]}"

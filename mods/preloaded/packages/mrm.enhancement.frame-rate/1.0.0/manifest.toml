@@ -1,0 +1,48 @@
+format_version = 5
+id = "mrm.enhancement.frame-rate"
+version = "1.0.0"
+name = "Smooth Motion"
+author = "MuppetRaceManiaRecomp"
+description = "Presentation-only frame blending above the game's own frame rate. Game speed, physics, timers and audio stay exactly as on the PlayStation."
+resolver = "declarative"
+save_compatibility = "shared"
+
+[[target]]
+game_id = "SLUS-01237"
+disc_sha256 = "d070f3bb619ee5213569b355ebd2caf6e7e4e52b3a32b76b0f2d911dc93a86a9"
+
+[[feature]]
+id = "frame-rate"
+name = "Smooth Motion"
+description = "Blend completed game frames at a higher presentation rate. This smooths camera motion but is not true frame generation: very fast objects can show a faint trail. Requires OpenGL."
+group = "Frame Rate"
+default_enabled = false
+
+[[option]]
+feature = "frame-rate"
+id = "rate"
+label = "Presentation rate"
+description = "Follow the display's refresh rate, or pick a fixed rate."
+group = "Frame Rate"
+type = "choice"
+default = "display"
+
+[[option.choice]]
+value = "60"
+label = "60 FPS"
+
+[[option.choice]]
+value = "120"
+label = "120 FPS"
+
+[[option.choice]]
+value = "144"
+label = "144 FPS"
+
+[[option.choice]]
+value = "display"
+label = "Display refresh (Recommended)"
+
+[[plugin]]
+feature = "frame-rate"
+id = "mrm.framerate"

@@ -1,0 +1,23 @@
+format_version = 5
+id = "mrm.enhancement.skip-fmv"
+version = "1.0.0"
+name = "Skip Intro Movies"
+author = "MuppetRaceManiaRecomp"
+description = "Skips the full-motion videos (studio logos and intro) so the game reaches the title screen quickly."
+resolver = "declarative"
+save_compatibility = "shared"
+
+[[target]]
+game_id = "SLUS-01237"
+disc_sha256 = "d070f3bb619ee5213569b355ebd2caf6e7e4e52b3a32b76b0f2d911dc93a86a9"
+
+[[feature]]
+id = "skip-fmv"
+name = "Skip Intro Movies"
+description = "End full-motion videos as soon as they start."
+group = "Quality of Life"
+default_enabled = false
+
+[[plugin]]
+feature = "skip-fmv"
+id = "mrm.skip-fmv"

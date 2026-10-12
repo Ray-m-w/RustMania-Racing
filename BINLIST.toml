@@ -1,0 +1,100 @@
+# Every outside artifact used by this project. See CLAUDE.md RULES.
+# [[artifact]] name, kind, origin, pin, sha256, published_hash, date, note
+
+# ---------------------------------------------------------------- framework
+
+[[artifact]]
+name = "psxrecomp (PSXRecomp static recompiler framework)"
+kind = "git checkout (sibling dir) + git submodule (psxrecomp/)"
+origin = "https://github.com/RetroPortingToolKit/psxrecomp (README: 'part of RetroPortingToolkit', link https://retroportingtoolkit.com/; mstan/psxrecomp redirects to the same repo and HEAD)"
+pin = "2a4824fcb897cb635438958f0c8cffb5a27df656 (master, 2026-10-11 16:22:12 -0400, 'ci: check_bios_stamps defaults to the stamps present, not a fixed retail list')"
+sha256 = ""                      # git commit hash is the identity
+published_hash = ""
+date = "2026-10-11"
+note = "sibling checkout at G:\\GameDev\\psxrecomp; nested submodules lib/recomp-net e53059306824edf4f0aec4aae5ae65151b18535f (v0.1.9), lib/retcomm-rbengine 2a03e73693acee0fb78076ea058642c931bef12e"
+
+[[artifact]]
+name = "cmake-clang-v1 toolchain pack, windows-x64 (llvm-mingw 20260616 / clang 22.1.8, CMake 3.31.12, Ninja 1.13.2, ccache 4.13.6, CPython 3.12.13, SDL3 3.4.10 + zlib 1.3.1 under deps/)"
+kind = "toolchain zip, extracted outside the repo (G:\\GameDev\\retcomm-toolchain\\pack), used session-only via tools/devshell.ps1; install.bat NOT run"
+origin = "https://github.com/RetroPortingToolKit/RetroPorting-Toolchains/releases/tag/v1.0.14 (linked from psxrecomp README 'Bundled toolchain (recommended)')"
+pin = "v1.0.14 (published 2026-08-17T13:00:20Z), asset cmake-clang-v1-windows-x64.zip, 209497009 bytes"
+sha256 = "28da9742385e7ff875b3d9311e8ed89dbdc84f27b6ecba2bc0d0acc11f6d2b4d"
+published_hash = "sha256:28da9742385e7ff875b3d9311e8ed89dbdc84f27b6ecba2bc0d0acc11f6d2b4d (GitHub release asset digest, read from the releases API before download)"
+date = "2026-10-11"
+note = "fetched because the pinned framework does not compile under MSVC (see docs/notes/SESSION-1-tools.md); MATCH"
+
+[[artifact]]
+name = "SDL3 3.4.10 source (fetched by psxrecomp runtime configure)"
+kind = "CMake FetchContent source archive (build input, not committed)"
+origin = "https://github.com/libsdl-org/SDL/releases/download/release-3.4.10/SDL3-3.4.10.tar.gz"
+pin = "3.4.10"
+sha256 = "12b34280415ec8418c864408b93d008a20a6530687ee613d60bfbd20411f2785"
+published_hash = "pinned in psxrecomp third_party/deps.manifest @2a4824fc; CMake URL_HASH verifies on download"
+date = "2026-10-11"
+note = "downloaded during the first (MSVC) runtime configure; the clang build uses the pack's deps/ SDL3 if found first"
+
+[[artifact]]
+name = "libwebp source @4fa21912338357f89e4fd51cf2368325b59e9bd9 (fetched by psxrecomp runtime configure)"
+kind = "CMake FetchContent source archive"
+origin = "https://codeload.github.com/webmproject/libwebp/tar.gz/4fa21912338357f89e4fd51cf2368325b59e9bd9"
+pin = "commit 4fa21912338357f89e4fd51cf2368325b59e9bd9"
+sha256 = "923f3382a47a2af185c3240c954cf004428b237bd7317413a95146d01eb4b94b"
+published_hash = "pinned in psxrecomp third_party/deps.manifest; CMake URL_HASH verifies"
+date = "2026-10-11"
+
+[[artifact]]
+name = "libchdr source @6cde5348eb118da3baf94f75a69577a005a484fd"
+kind = "vendored archive inside the psxrecomp checkout (third_party/)"
+origin = "https://github.com/rtissera/libchdr (vendored by psxrecomp)"
+pin = "commit 6cde5348eb118da3baf94f75a69577a005a484fd"
+sha256 = "a222b1f1c842f988c2aad51e5f56ba94a423ed87ccab71f1abdb757caa7444f5"
+published_hash = "psxrecomp third_party/deps.manifest"
+date = "2026-10-11"
+
+# ------------------------------------------------------- owner-supplied inputs
+# Never committed. Hashes computed locally this session.
+
+[[artifact]]
+name = "Muppet RaceMania (USA) track 1 bin (SLUS-01237), MODE2/2352"
+kind = "disc image (owner's dump), outside this repo"
+origin = "owner's disc via chdman 0.289; reused from F:\\Muppet Racemania\\extract\\muppet-usa.bin (quarry BINLIST id track-bin)"
+pin = "518202048 bytes"
+sha256 = "d070f3bb619ee5213569b355ebd2caf6e7e4e52b3a32b76b0f2d911dc93a86a9"
+published_hash = "Redump disc 16664 track 1: MD5 ee4160b222e47182bc688c49bd65b2f8, SHA-1 1b0fc0b6fa0958ecac5f087aab4b444b2067a387 (re-verified today: MD5 and SHA-1 MATCH; SHA-256 matches quarry record)"
+date = "2026-10-11"
+
+[[artifact]]
+name = "Muppet RaceMania (USA) cue sheet"
+kind = "disc cue (single FILE, TRACK 01 MODE2/2352)"
+origin = "F:\\Muppet Racemania\\extract\\muppet-usa.cue (written by chdman with the bin)"
+pin = "76 bytes"
+sha256 = "139376af386f1f77c0162bc160cfdb7e3fad35217a6a271ba62532d4af5df3c3"
+published_hash = ""
+date = "2026-10-11"
+
+[[artifact]]
+name = "Sony SCPH-1001 retail BIOS v2.2 (1995-09-18), owner dump"
+kind = "BIOS image, outside this repo; local copy at <psxrecomp>/bios/SCPH1001.BIN (gitignored there by bios/*)"
+origin = "owner-supplied F:\\BIOS\\scph1001.bin; not fetched"
+pin = "524288 bytes, CRC32 37157331, MD5 924e392ed05558ffdb115408c263dccf, SHA-1 10155d8d6e6e832d6ea66db9bc098321fb5e8ebf"
+sha256 = "71af94d1e47a68c11e8fdb9f8368040601514a42a5a399cda48c7d3bff1e99d3"
+published_hash = "psxrecomp bios/SCPH1001.toml [program.image] sha256 = 71af94d1...99d3, CRC32 37157331 in the same profile: MATCH. The retail backend is generated."
+date = "2026-10-11"
+
+[[artifact]]
+name = "TombaRecomp reference files (mod manifests and plugins, CMakeLists, game.toml)"
+kind = "reference reading only; fetched to the session scratchpad, nothing copied into this repo"
+origin = "https://github.com/mstan/TombaRecomp (listed in psxrecomp README Games table)"
+pin = "master @ 10bada7b4125de3b6ad7b0e0a50e5c1c26b8bc46 (raw.githubusercontent.com, 18 small text files; no generated C, no game data)"
+sha256 = ""
+published_hash = ""
+date = "2026-10-12"
+
+[[artifact]]
+name = "PowerShell 7 (winget Microsoft.PowerShell 7.6.6.0)"
+kind = "NOT INSTALLED: proposed to run setup_project.ps1; denied by the permission check. A BOM-prefixed scratch copy of the script was used instead."
+origin = "winget"
+pin = "7.6.6.0"
+sha256 = ""
+published_hash = ""
+date = "2026-10-11"

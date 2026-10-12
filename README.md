@@ -1,104 +1,79 @@
-# MuppetRaceMania Recompiled
+# Muppet RaceMania Recompiled
 
-<!-- retcomm-readme-metrics -->
-[![GitHub downloads (all assets, all releases)](https://img.shields.io/github/downloads/RetroPortingToolKit/MuppetRaceManiaRecomp/total)](https://github.com/RetroPortingToolKit/MuppetRaceManiaRecomp/releases)
-[![GitHub downloads (latest release)](https://img.shields.io/github/downloads/RetroPortingToolKit/MuppetRaceManiaRecomp/latest/total)](https://github.com/RetroPortingToolKit/MuppetRaceManiaRecomp/releases/latest)
-[![GitHub release](https://img.shields.io/github/v/release/RetroPortingToolKit/MuppetRaceManiaRecomp)](https://github.com/RetroPortingToolKit/MuppetRaceManiaRecomp/releases/latest)
-<!-- /retcomm-readme-metrics -->
+A native Windows build of **Muppet RaceMania** (PlayStation, USA, SLUS-01237),
+made with the [PSXRecomp](https://github.com/RetroPortingToolKit/psxrecomp)
+static recompiler. The original PlayStation program is machine-translated to C
+and compiled to native x64 code. It is not an emulator running the game.
 
-Static recompilation of **MuppetRaceMania** built on
-[psxrecomp](https://github.com/mstan/psxrecomp) and
-[recomp-ui](https://github.com/RetroPortingToolKit/recomp-ui).
+This repository holds the project: configuration, seeds, mod packages, build
+scripts and notes. **It contains no game data and no generated game code.**
+You build the game from your own disc.
 
-Muppet kart racing (SLUS-01237)
+## What you get
 
-| | |
+- The whole game, native: the main program is recompiled ahead of time, and the
+  code the game loads from disc at runtime (the movie player and memory-card
+  screens) is compiled to native modules on first sight and cached.
+- **High resolution**: renders at your monitor's resolution with
+  supersampling (dynamic, so it never drops below display resolution), FXAA,
+  perspective-correct textures and mipmapped/anisotropic texture filtering.
+- **Widescreen**: a genuinely wider view (more track either side), with the HUD
+  kept at its original proportions and pinned to the screen edges. Menus,
+  movies and loading screens stay 4:3. Fit to Window, 16:9, 21:9 or 32:9.
+- **Controllers**: any SDL-supported gamepad (Xbox, PlayStation, Switch Pro, ...)
+  works out of the box and can be rebound in the launcher. The game sees a
+  DualShock: the left stick steers and vibration works (turn it on in the
+  game's Options > Set Controllers). **Right trigger accelerates, left trigger
+  brakes.** Keyboard: arrows steer, A = Triangle (accelerate), S = Circle
+  (brake), Z = Square (jump), X = Cross, Enter = Start; rebindable.
+- **Fast Loading** (on by default, 4x), **Skip Intro Movies** (off by default),
+  **Smooth Motion** frame blending (off by default; the game renders at 30 fps).
+- Memory-card saves (`saves/` beside the game), save states, fullscreen (F11 or
+  Alt+Enter), all from the launcher.
+
+All of these live in the launcher's **Mods** and **Settings** pages.
+
+## Playing (portable build)
+
+Unzip `mrm-<version>-windows-x64.zip` anywhere and run
+`Muppet_RaceMania_Recompiled.exe`. On first run the launcher asks for your disc
+image (`.cue` + `.bin`). It uses the bundled, open-source OpenBIOS unless you
+select your own SCPH-1001 BIOS dump in Settings.
+
+## What you must supply
+
+- Your own dump of the disc: *Muppet RaceMania (USA)*, Redump track 1 MD5
+  `ee4160b222e47182bc688c49bd65b2f8`.
+- Optional: your own SCPH-1001 (v2.2) BIOS dump. Not required.
+
+## Building
+
+Requirements: Git for Windows, Python 3, and psxrecomp's `cmake-clang-v1`
+Windows toolchain pack (see `tools/devshell.ps1` and `BINLIST.toml` for the
+exact release and hash). Then, from a clone with submodules:
+
+```powershell
+.\tools\build.ps1 -Disc "D:\dumps\Muppet RaceMania (USA).cue" -Package
+```
+
+That builds the recompiler tools, generates the game C from your disc into
+`generated/` (gitignored), builds `build-release/`, and writes the portable zip
+to `dist/`.
+
+## Layout
+
+| Path | What |
 |---|---|
-| Players | 2 |
-| Region | USA |
-| Publisher | Midway |
-| Year | 2000 |
-
-Scaffolded with the New Project Layout. See
-`psxrecomp/docs/GAME_PROJECT_SETUP.md` for the full flow.
-
-<!-- retcomm-readme-launcher -->
-## Retro Launcher
-
-You can run this title **standalone** (download the release zip, point it at
-your disc, play), or manage installs, updates, and disc/BIOS wiring with
-**[Retro Launcher](https://github.com/RetroPortingToolKit/Retro-Launcher)** —
-the Retro Compilation Manager hub for self-compiling recomps.
-
-[Downloads](https://github.com/RetroPortingToolKit/Retro-Launcher/releases) ·
-[Full README & features](https://github.com/RetroPortingToolKit/Retro-Launcher#readme)
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/RetroPortingToolKit/Retro-Launcher/main/docs/screenshots/hub-and-game-launcher.png" alt="Retro hub with a background build, next to a title’s recomp-ui launcher" width="720">
-</p>
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/RetroPortingToolKit/Retro-Launcher/main/docs/screenshots/queue-and-background-build.png" alt="Background cmake build with titles queued" width="720">
-</p>
-
-Retro checks for updates, installs the prebuilt release zips, and automates
-BIOS/ROM/save plumbing so you are not stuck repeating each game’s first run by hand.
-<!-- /retcomm-readme-launcher -->
+| `game.toml` | Game identity, recompiler input, runtime/video/widescreen/controller defaults (commented with evidence) |
+| `seeds/` | Function entry seeds for the recompiler |
+| `mods/preloaded/packages/` | This title's mod packages (widescreen, controls, fast loading, skip movies, smooth motion) |
+| `src/mods/` | Their trusted plugins (compiled into the exe) |
+| `tools/` | `build.ps1`, `devshell.ps1`, `run-dev.ps1` + `drive.py` (debug-build test harness) |
+| `docs/` | Plan, milestones, session notes and handoff |
+| `psxrecomp/`, `recomp-ui/` | Framework and launcher submodules (pinned) |
 
 ## Legal
 
-You must own the original game. Disc images under `disc/` are gitignored and
-must never be committed. Retail BIOS dumps are not redistributed and no C
-derived from one may be committed; releases run on the bundled MIT OpenBIOS.
-
-`generated/` (the recompiled game C) **is committed**: releases ship the
-compiled game, built by CI from that tree. Regenerate and commit it whenever
-seeds or the framework pin change.
-
-Default app icon: `assets/psxrecomp.ico` (and `.png` / `.svg`) — Retro-themed controller mark from `psxrecomp/assets/`. Windows builds embed it via `APP_ICON`.
-
-Optional box art under `launcher_assets/img/` may come from
-[libretro-thumbnails](https://github.com/libretro-thumbnails/libretro-thumbnails)
-(`Named_Boxarts`); see `BOXART_SOURCE.txt` when present.
-
-## Quick start (dev)
-
-```bash
-git submodule update --init --recursive
-./psxrecomp/tools/ci/build_emitters.sh
-python3 psxrecomp/psxrecomp_cli.py generate \
-  --config game.toml --project-root . --disc disc/<your>.cue
-git add generated && git commit -m "Regenerate game C"
-cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build-release --target psx-runtime
-```
-
-Releases: tag `vX.Y.Z` (or run the *Release builds* workflow). CI builds the
-committed `generated/` C on Linux, Windows and macOS and attaches
-`mrm-<version>-<platform>.zip`, the compiled game. Locally:
-`scripts/package_release.sh build-release linux-x64`.
-
-## Symbols
-
-Progressive map: `symbols.toml` → `python3 tools/sync_symbols.py` →
-`psx_symbols.h` (`PSX_FN_*`). See `psxrecomp/docs/SYMBOLS.md`.
-
-## Framework pins
-
-Submodule gitlinks (`psxrecomp`, optional `recomp-ui`, nested `recomp-net`)
-are authoritative. `framework_pins.txt` is an optional scaffold snapshot;
-release CI logs SHAs with `record_pins.sh` but builds whatever the gitlinks
-resolve to. Bump submodules deliberately — do not float on `main`/`master`
-in release CI.
-
-<!-- retcomm-readme-raid -->
----
-
-<p align="center">
-  <sub><b>R.A.I.D. — Retro AI Development</b> · a Discord for AI-assisted retro reverse-engineering, decomp &amp; recomp</sub>
-</p>
-
-<p align="center">
-  <a href="https://discord.gg/Ad9BwSzctP"><img src=".github/raid-discord.png" alt="Join the Retro AI Development (R.A.I.D.) Discord" width="200"></a>
-</p>
-<!-- /retcomm-readme-raid -->
+You must own the original game. Disc images, BIOS dumps, generated game C,
+overlay captures and caches are never committed. PSXRecomp is licensed
+PolyForm Noncommercial 1.0.0; see `psxrecomp/LICENSE`.

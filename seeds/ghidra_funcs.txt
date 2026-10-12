@@ -683,3 +683,6 @@
 0x800A85D8
 0x800A86F0
 0x800A8710
+# Runtime discoveries (session 1, 2026-10-11):
+# 0x80060160 'lhu v0,0x898(gp)' precedes the 0x80060164 prologue; called via jalr v0 at 0x800A3384 during races; was interpreted (overlay_captures seeds)
+0x80060160

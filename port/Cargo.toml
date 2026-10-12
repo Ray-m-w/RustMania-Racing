@@ -1,0 +1,28 @@
+# Muppet RaceMania port: Rust + Bevy reimplementation (docs/SESSION-2.md).
+# Crate boundaries follow the quarry's ADR-0002 (docs/notes/SESSION-2-plan.md):
+# mr-disc, mr-assets, mr-sim and mr-trace are std-only; only mr-bevy may
+# depend on Bevy. Adding any dependency is an owner-approved change recorded
+# in BINLIST.toml.
+[workspace]
+resolver = "2"
+members = [
+    "crates/mr-disc",
+    "crates/mr-assets",
+    "crates/mr-sim",
+    "crates/mr-trace",
+    "crates/mr-bevy",
+]
+default-members = [
+    "crates/mr-disc",
+    "crates/mr-assets",
+    "crates/mr-sim",
+    "crates/mr-trace",
+]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+publish = false
+
+[profile.dev.package."*"]
+opt-level = 2

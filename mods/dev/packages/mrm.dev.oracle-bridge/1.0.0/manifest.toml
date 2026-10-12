@@ -1,0 +1,23 @@
+format_version = 5
+id = "mrm.dev.oracle-bridge"
+version = "1.0.0"
+name = "Oracle Bridge (development)"
+author = "MuppetRaceManiaRecomp"
+description = "Development only: shares per-frame RAM regions and replays savestate-anchored input routes for the Rust port's oracle harness (docs/notes/SESSION-2-oracle.md). Not shipped in releases."
+resolver = "declarative"
+save_compatibility = "shared"
+
+[[target]]
+game_id = "SLUS-01237"
+disc_sha256 = "d070f3bb619ee5213569b355ebd2caf6e7e4e52b3a32b76b0f2d911dc93a86a9"
+
+[[feature]]
+id = "oracle-bridge"
+name = "Oracle Bridge (development)"
+description = "Shared-memory capture and input replay for the port harness."
+group = "Development"
+default_enabled = false
+
+[[plugin]]
+feature = "oracle-bridge"
+id = "mrm.dev.oracle-bridge"

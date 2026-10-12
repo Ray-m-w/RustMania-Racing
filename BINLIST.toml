@@ -98,3 +98,60 @@ pin = "7.6.6.0"
 sha256 = ""
 published_hash = ""
 date = "2026-10-11"
+
+# ---------------------------------------------------------------- analysis (Ghidra, used in place)
+# Ghidra 12.1.4 + ghidra_psx_ldr + JDK 21 are used IN PLACE from the quarry
+# F:\Muppet Racemania (read-only), not copied into this repo or machine-wide.
+# Driven by tools/ghidra/run.ps1 (JAVA_HOME set per process only).
+
+[[artifact]]
+name = "Ghidra 12.1.4 PUBLIC 20260921 (used in place from quarry)"
+kind = "static analysis tool; install at F:\Muppet Racemania\.cache\ghidra\ghidra_12.1.4_PUBLIC, not copied"
+origin = "https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.1.4_build (per quarry BINLIST.toml id tool-ghidra)"
+pin = "Ghidra_12.1.4_build, asset ghidra_12.1.4_PUBLIC_20260921.zip"
+sha256 = "ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db"
+published_hash = "ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db (release body SHA-256 line, as recorded by the quarry)"
+date = "2026-10-12"
+note = "sha256 recomputed this session over the quarry's .cache\ghidra_12.1.4_PUBLIC_20260921.zip: MATCH with the quarry record and the published hash"
+
+[[artifact]]
+name = "ghidra_psx_ldr (PS-X EXE loader + PSYQ FunctionID data), installed extension (used in place)"
+kind = "Ghidra extension built by the quarry from source; installed at %APPDATA%\ghidra\ghidra_12.1.4_PUBLIC\Extensions\ghidra_psx_ldr"
+origin = "https://github.com/lab313ru/ghidra_psx_ldr (per quarry BINLIST.toml id tool-ghidra-psx-ldr); submodule data/psyq = lab313ru/psx_psyq_signatures"
+pin = "3050da64925b9aad299489468000dc62b835c09a; submodule data/psyq e9e46e7e133ef275a79bfce650924f98edb086bc"
+sha256 = ""                      # git commit hash is the identity
+published_hash = ""
+date = "2026-10-12"
+note = "both commit ids re-read this session with git rev-parse HEAD in the quarry's .cache\ghidra_psx_ldr checkout: MATCH. The installed build output itself was not re-hashed."
+
+[[artifact]]
+name = "Eclipse Temurin JDK 21.0.12+1 (used in place from quarry)"
+kind = "Java runtime for Ghidra headless; at F:\Muppet Racemania\third_party\jdk-21.0.12.1+1\jdk-21.0.12.1+1, not copied; JAVA_HOME per process only"
+origin = "https://github.com/adoptium/temurin21-binaries release jdk-21.0.12.1+1, asset OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.zip (per quarry BINLIST.toml id tool-jdk)"
+pin = "jdk-21.0.12.1+1"
+sha256 = "f9d6e191ab098c0d416e7d588a24420a8621cd2f4720dab2459b8b7b2d2d8b4e"
+published_hash = "f9d6e191ab098c0d416e7d588a24420a8621cd2f4720dab2459b8b7b2d2d8b4e (release .zip.sha256.txt)"
+date = "2026-10-12"
+note = "hashes COPIED from the quarry's record (BINLIST.toml + third_party\jdk-21.0.12.1+1.prov), not recomputed: the zip is no longer present in the quarry"
+
+# ---------------------------------------------------------------- Rust port (port/)
+
+[[artifact]]
+name = "Rust toolchain 1.98.0-x86_64-pc-windows-msvc (pre-installed rustup toolchain)"
+kind = "compiler, pinned by port/rust-toolchain.toml; already installed on this machine, nothing fetched"
+origin = "rustup (static.rust-lang.org), installed before this project; same pin as the quarry's ADR-0011"
+pin = "rustc 1.98.0 (88d9e12ae 2026-08-18), cargo 1.98.0 (797e8a9bc 2026-08-05)"
+sha256 = ""
+published_hash = ""
+date = "2026-10-12"
+note = "MSVC host needed by the Bevy tree (quarry ADR-0011); linker/SDK from the owner-installed VS Build Tools 2022 (quarry BINLIST)"
+
+[[artifact]]
+name = "bevy 0.19.1 and its dependency tree (366 packages in port/Cargo.lock, 361 from crates.io)"
+kind = "Rust crates, dependency of port/crates/mr-bevy ONLY; features in mr-bevy/Cargo.toml (quarry ADR-0009 set + 3D; no bevy_text)"
+origin = "crates.io (registry+https://github.com/rust-lang/crates.io-index); resolved and built with `cargo build -p mr-bevy --offline` from the local cargo cache, which already held these exact versions"
+pin = "bevy =0.19.1 (wgpu 29.0.4); every package pinned with its checksum in port/Cargo.lock (committed)"
+sha256 = "4bfadbebfc6599aa59289b754ac30023959854304f3d393da2cf62bb3cd5df8f"   # crates.io checksum of bevy-0.19.1.crate from Cargo.lock
+published_hash = "Cargo.lock checksum = crates.io index sha256; cargo verifies every .crate against it when unpacking"
+date = "2026-10-12"
+note = "Owner approved Option A (Bevy port) and asked for the Bevy ghost overlay; cargo-deny advisories not re-run this session (needs the advisory DB download); the quarry's 2026-10-11 deny run on bevy 0.19 with this ttf-parser exclusion was green"

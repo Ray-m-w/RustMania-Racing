@@ -1,0 +1,4 @@
+# Bevy needs the MSVC host (quarry ADR-0011: the GNU host cannot build the
+# Bevy tree). 1.98.0 is the installed stable.
+[toolchain]
+channel = "1.98.0-x86_64-pc-windows-msvc"

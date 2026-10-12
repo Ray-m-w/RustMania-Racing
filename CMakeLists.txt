@@ -34,6 +34,17 @@ set(PSX_PRELOADED_MODS "${CMAKE_CURRENT_SOURCE_DIR}/mods/preloaded")
 if(NOT IS_DIRECTORY "${PSX_PRELOADED_MODS}")
     set(PSX_PRELOADED_MODS "NONE")
 endif()
+# Development packages (mods/dev: the Rust port's oracle bridge) join the
+# catalog only in non-Release builds, through a merged copy of both source
+# catalogs in the build tree; Release catalogs never list them. Their plugin
+# sources (src/mods/mrm_dev_*.c) are likewise linked only outside Release.
+if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/mods/dev")
+    set(_MRM_MERGED_MODS "${CMAKE_BINARY_DIR}/mrm-mods-merged")
+    file(REMOVE_RECURSE "${_MRM_MERGED_MODS}")
+    file(COPY "${PSX_PRELOADED_MODS}/" DESTINATION "${_MRM_MERGED_MODS}")
+    file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/mods/dev/packages" DESTINATION "${_MRM_MERGED_MODS}")
+    set(PSX_PRELOADED_MODS "${_MRM_MERGED_MODS}")
+endif()
 
 psxrecomp_add_game_runtime(psx-runtime
     PRELOADED_MODS_DIR "${PSX_PRELOADED_MODS}"
@@ -61,6 +72,9 @@ psxrecomp_add_game_runtime(psx-runtime
 # (psxrecomp README "Trusted game code").
 file(GLOB MRM_MOD_PLUGIN_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/mods/*.c")
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    list(FILTER MRM_MOD_PLUGIN_SOURCES EXCLUDE REGEX "/mrm_dev_[^/]*\.c$")
+endif()
 target_sources(psx-runtime PRIVATE ${MRM_MOD_PLUGIN_SOURCES})
 
 # Stage runtime configs next to the exe for direct build/ launches. Only copy

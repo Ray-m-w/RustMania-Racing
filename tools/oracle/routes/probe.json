@@ -1,0 +1,2 @@
+{"name": "probe", "slot": 2, "end_vb": 1200,
+ "steps": [[0, ""], [60, "triangle"], [460, "triangle+left"], [560, "triangle"], [660, "triangle+right"], [760, "circle"], [860, ""]]}

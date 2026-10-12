@@ -99,6 +99,9 @@ pub struct Session {
     /// Analysis only: race progress the catch-up code treats as the
     /// leader's (None: the player leads, as in a race with no AI).
     pub leader_progress_override: Option<i32>,
+    /// Analysis only: the random pointer to use for the next tick, set
+    /// after the water animation (the game's pointer is shared with the AI).
+    pub rng_override: Option<u32>,
     rand_state: u32,
     cfg: SessionConfig,
 }
@@ -202,9 +205,14 @@ impl Session {
             cutscene_sync: false,
             scene_center: [0; 3],
         };
-        let mut s = Session { world, kart, record, globals, water, camera, camera_tables, camera_globals, ticks: 0, leader_progress_override: None, rand_state, cfg };
+        let mut s = Session { world, kart, record, globals, water, camera, camera_tables, camera_globals, ticks: 0, leader_progress_override: None, rng_override: None, rand_state, cfg };
         s.kart.body = crate::body::body_matrix(&s.world.tables, &s.kart);
         s.sync_record();
+        // The race frame's render pass for the starting pose.
+        {
+            let (k, rec, w) = (&mut s.kart, &mut s.record, &s.world);
+            crate::render::after_kart_loop(k, rec, w, &w.driver);
+        }
         Ok(s)
     }
 
@@ -222,7 +230,7 @@ impl Session {
     /// A tick of `dt` VBlanks (the game uses 3 when a frame runs long; live
     /// play uses `tick`, dt = 2).
     pub fn tick_dt(&mut self, buttons: u16, dt: i32) -> Result<(), SessionError> {
-        let before = (self.kart.clone(), self.globals.clone(), self.water, self.camera.clone(), self.rand_state);
+        let before = (self.kart.clone(), self.globals.clone(), self.water, self.camera.clone(), self.rand_state, self.record.clone());
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.tick_inner(buttons, dt)));
         match r {
             Ok(()) => {
@@ -230,7 +238,7 @@ impl Session {
                 Ok(())
             }
             Err(e) => {
-                (self.kart, self.globals, self.water, self.camera, self.rand_state) = before;
+                (self.kart, self.globals, self.water, self.camera, self.rand_state, self.record) = before;
                 let msg = e
                     .downcast_ref::<String>()
                     .cloned()
@@ -249,18 +257,27 @@ impl Session {
         // 1. Water animation.
         let rng_world = |a: u32| w.rng_byte(a);
         let (wn, an) = self.water.step(&w.tables, g.dt, &mut g.rng, &rng_world);
-        // 2. Contact pass resets (no other karts).
+        if let Some(r) = self.rng_override.take() {
+            g.rng = r;
+        }
+        // 2. Contact pass resets (no other karts), then the look-at target
+        //    (FUN_80041A20 / FUN_80041CC4).
         k.aim_dist = 0x7FFF_FFFF;
         k.nearest_kart = -1;
         k.close_kart = 0;
+        crate::render::aim_at_course(k, g, w);
+        crate::render::aim_camera_override(k, g, self.camera.mode);
         // 3. Path position.
         crate::progress::path_position(k, w);
         // 4. Kart update. With no AI the player leads the race.
         let leader = self.leader_progress_override.unwrap_or(k.progress);
         let inp = TickInputs { leader_progress: leader, water_normal: wn, alt_normal: an, aim: None };
         crate::tick(k, g, w, &inp, buttons);
-        // 5. Body matrix.
-        k.body = crate::body::body_matrix(&w.tables, k);
+        // 5. After the kart loop: wheel / driver part matrices (FUN_80086DF0),
+        //    body, vehicle and driver matrices, driver position, look point,
+        //    wheel and light positions (FUN_80025D8C).
+        k.to_record(&mut self.record);
+        crate::render::after_kart_loop(k, &mut self.record, w, &w.driver);
         // 6. Random pointer step.
         let n = g.rng.wrapping_add(1);
         g.rng = if RNG_WRAP < n { g.rng.wrapping_sub(0x5DB) } else { n };
@@ -288,6 +305,24 @@ impl Session {
         if g.countdown == 0 {
             g.race_clock = g.race_clock.wrapping_add(g.dt * 5);
         }
+    }
+
+    /// Analysis only: overwrite record ranges (and the matching kart
+    /// fields) with `src`, e.g. effects of game code outside the port.
+    pub fn inject(&mut self, src: &[u8], ranges: &[(usize, usize)]) {
+        self.kart.to_record(&mut self.record);
+        for &(o, n) in ranges {
+            self.record[o..o + n].copy_from_slice(&src[o..o + n]);
+        }
+        let trail = self.kart.trail;
+        self.kart = KartState::from_record(&self.record);
+        self.kart.trail = trail;
+    }
+
+    /// The full kart record (0x504 bytes) as the game would hold it after
+    /// the last tick: what part placement reads.
+    pub fn record(&self) -> &[u8] {
+        &self.record
     }
 
     pub fn kart(&self) -> &KartState {

@@ -36,6 +36,8 @@ pub struct GridSlot {
 pub struct Course {
     /// Start grid (DAT chunk id 1), DAT units (world >> 5).
     pub grid: Vec<GridSlot>,
+    /// Look-at points (DAT chunk id 7, 0x800D1C64), world units.
+    pub look_points: Vec<[i32; 3]>,
     pub finish: Option<FinishLine>,
     /// First halfword of the record at 0x800D1C5C (course length in progress
     /// units << 4), used by the catch-up (rubber band) speed.
@@ -101,6 +103,8 @@ pub struct World {
     pub ter: Ter,
     pub course: Course,
     pub heap: HeapLayout,
+    /// The driver model's data the render passes use (KERMIT.MDL).
+    pub driver: crate::render::DriverModel,
 }
 
 impl World {
@@ -153,6 +157,12 @@ impl Course {
                     .collect()
             })
             .unwrap_or_default();
+        let look_points = find(chunk::LOOK_POINTS)
+            .map(|c| (0..c.count as usize).map(|i| {
+                let o = c.offset + 4 + 12 * i;
+                [le32(o), le32(o + 4), le32(o + 8)]
+            }).collect())
+            .unwrap_or_default();
         let finish = find(chunk::FINISH).map(|c| {
             let mut words = [0i32; 13];
             for (i, w) in words.iter_mut().enumerate() {
@@ -173,7 +183,7 @@ impl Course {
             })
             .unwrap_or_default();
         let has_other_objects = chunk::OTHER.iter().any(|&id| find(id).is_some());
-        Course { grid, finish, length, triggers, has_other_objects }
+        Course { grid, look_points, finish, length, triggers, has_other_objects }
     }
 }
 
@@ -186,7 +196,10 @@ impl World {
             .map_err(|x| e(&format!("parse DOCK.TER: {x:?}")))?;
         let dat_bytes = disc.read("COURSE_A/DOCK.DAT").map_err(|x| e(&format!("read DOCK.DAT: {x:?}")))?;
         let dat = mr_assets::dat::Dat::parse(&dat_bytes).map_err(|x| e(&format!("parse DOCK.DAT: {x:?}")))?;
+        let kermit = mr_assets::mdl::Mdl::parse(&disc.read("CHARS_A/KERMIT.MDL").map_err(|x| e(&format!("read KERMIT.MDL: {x:?}")))?)
+            .map_err(|x| e(&format!("parse KERMIT.MDL: {x:?}")))?;
         Ok(World {
+            driver: crate::render::DriverModel { part0_pivot: kermit.parts[0].record.pivot },
             tables: Tables::from_exe(&exe),
             exe,
             ter,

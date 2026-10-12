@@ -107,12 +107,19 @@ What the oracle supplied and how the session produces it now:
 | leader progress | the player's own (no AI: the player leads) |
 | other karts | none |
 
+Render-side fields (render.rs, ported since): the look-at target +0x2C0..
+(FUN_80041A20 with FUN_80081170's mode-1 nearest-point search over DAT chunk
+7; FUN_80041CC4 checked), the wheel / driver part matrices (FUN_80086DF0), the
+vehicle and driver matrices, driver position, look point, bounce offset,
+wheel and light positions (FUN_80025D8C). Not ported: +0x1EC (driver matrix
+times the character model's own part matrix; nothing reads it for placement),
+the model / character slot numbers +0x4A4 / +0x4A5 (0 in the session; the
+render code only tests them against -1).
 Not produced (cosmetic or other subsystems), with the consequence:
-- Look-at target +0x2C0..+0x2CC (FUN_80041A20 needs FUN_80081170, 2.7 KB, and
-  the look-point list DAT chunk 7; FUN_80041CC4) and the render look point
-  +0x324..+0x340 (FUN_80025D8C with model part matrices): they only steer the
-  body-sway springs (+0x3A0..), i.e. how the body wobbles on screen. The aim
-  stays at 0, so the sway differs from the game's.
+- Other karts as look-at targets: in a race with AI the contact pass aims
+  the body sway at the nearest kart's look point; alone, only the course
+  look points remain, so the sway differs from the oracle's once an AI kart
+  comes close (lap1: tick 69).
 - Race position FUN_800837F8 / FUN_800834C0 (+0x388, +0x4BE): with one kart the
   player is first; +0x4BE keeps the grid value 6 from FUN_800609F4 and progress
   stays 0, which together give the same catch-up (0) as a leader would get.
@@ -141,3 +148,24 @@ forced far ahead (`mr-standalone --catchup-as-6th`) it is bit-exact through
 tick 686 (dt 3 begins at 687 in the oracle), and with the oracle's dt as well
 (`--oracle-dt`) bit-exact on every motion field, the body matrix and the
 camera through tick 821, the AI projectile hit.
+
+## 8. Render-side fields: verification and the random pointer
+The body-sway springs (+0x3A0..), their outputs (+0x454..+0x45C) and the
+driver head matrix (+0x29C) take random kicks from the shared random pointer
+0x800B0BCC. The capture holds the pointer at VBlanks, not at the moment kart 0
+updates (the water animation and the contact pass draw from it first), so the
+harness tries pointer skips 0..12 per tick and keeps the first that reproduces
+the random-driven fields (`harness::Run::teacher_forcing`, skips found on every
+lap tick: 0 x 874, 1 x 517, 2 x 136, 3 x 8, 4 x 2). With that pointer:
+- teacher forcing: every render range (body, vehicle, driver and wheel
+  matrices, driver position, look point, bounce offset, wheel and light
+  positions, aim, sway springs, weapon slots) is exact on every tick except
+  172 and 177 (weapon pickups give weapon slots: code outside the port, items)
+  and 821/822 (the AI hit);
+- free run with those three events injected and the pointer per frame: all
+  render ranges and motion fields exact on all 1537 ticks;
+- standalone session with the oracle's catch-up, dt, pointer and events:
+  exact until tick 69, where the oracle's look-at target becomes an AI kart.
+The pointer is an input like the buttons: in a real race the AI karts and
+other code draw from it too, so a standalone session's body sway (cosmetic)
+cannot match a recorded race's.

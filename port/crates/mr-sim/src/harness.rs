@@ -28,10 +28,6 @@ use crate::world::{TickInputs, World};
 /// Kart fields written by game code outside the port after the kart
 /// update (render side, race position, turbo meter, wrong-way monitor).
 pub const EXTERNAL: &[(&str, usize, usize)] = &[
-    ("look_x", 0x324, 4),
-    ("look_y", 0x328, 4),
-    ("look_z", 0x32C, 4),
-    ("ref_y", 0x338, 4),
     ("progress", 0x388, 4),
     ("race_pos", 0x4BE, 1),
     ("start_pos", 0x4CA, 1),
@@ -54,9 +50,8 @@ pub const PRE_EXTERNAL: &[(&str, usize, usize)] = &[
 /// inputs it has; none of them feeds the kart's motion (checked: the free
 /// run is exact on every motion field). See docs/spec/kart-physics-ledger.md.
 pub const NOT_COMPARABLE: &[&str] = &[
-    // Render-side body tilt outputs: the game's own code run on the
-    // capture (tools/oracle/refstep.py) differs from the oracle by a few
-    // units too; the extra input was not identified.
+    // Body-sway outputs: random-driven (the springs take random kicks);
+    // exact with `rng_search` except at the AI hit.
     "sway_c", "sway_e",
     // Pad rumble: the pad code (outside the port) decays these between
     // frames.
@@ -71,6 +66,30 @@ pub const NOT_COMPARABLE: &[&str] = &[
     // +0x48C, which the race-position code writes.
     "warn_timer", "track_dir",
 ];
+
+/// Render-side record ranges the race frame rebuilds after the kart loop
+/// (render.rs), compared byte for byte.
+pub const RENDER_RANGES: &[(&str, usize, usize)] = &[
+    ("body matrix +0x18C", 0x18C, 18),
+    ("vehicle matrix +0x1AC", 0x1AC, 18),
+    ("driver matrix +0x1CC", 0x1CC, 18),
+    ("wheel matrices +0x20C", 0x20C, 0x12 * 4),
+    ("driver part matrices +0x29C", 0x29C, 0x12 * 2),
+    ("driver position +0x330..+0x347", 0x330, 0x18),
+    ("look point +0x324", 0x324, 12),
+    ("bounce offset +0x46A", 0x46A, 6),
+    ("wheel 0 world position", 0x14, 0x18),
+    ("wheel 1 world position", 0x40, 0x18),
+    ("wheel 2 world position", 0x6C, 0x18),
+    ("wheel 3 world position", 0x98, 0x18),
+    ("light points +0x11C", 0x11C, 0x30),
+    ("aim +0x2C0..+0x2CC", 0x2C0, 16),
+    ("sway springs +0x3A0..+0x3E7", 0x3A0, 72),
+    ("weapon slots +0x4D0", 0x4D0, 6),
+];
+
+/// Largest random-pointer skip tried by `teacher_forcing`.
+pub const RNG_SEARCH: u32 = 12;
 
 pub struct Run<'a> {
     pub cap: &'a Capture,
@@ -94,6 +113,17 @@ pub struct TeacherReport {
     /// fields that differ there (external events the port does not model).
     pub events: BTreeMap<usize, Vec<(usize, usize)>>,
     pub panics: Vec<(usize, String)>,
+    /// RENDER_RANGES: ticks mismatching / first tick.
+    pub render: BTreeMap<String, Stat>,
+    /// Random-pointer skip that reproduced the random-driven fields, per
+    /// tick count (-1: none within the search).
+    pub rng_skips: BTreeMap<i32, usize>,
+    /// Per tick: the random pointer at the start of the frame that
+    /// reproduced the random-driven fields (oracle VBlank value + skip).
+    pub rng_at_frame: BTreeMap<usize, u32>,
+    /// Ticks where RENDER_RANGES differ even with the right random pointer
+    /// (state given by code outside the port: weapon pickups, the AI hit).
+    pub render_events: BTreeMap<usize, Vec<(usize, usize)>>,
 }
 
 pub struct FreeRun {
@@ -101,6 +131,10 @@ pub struct FreeRun {
     pub rows: Vec<(usize, u16, KartState, i32, u32)>,
     /// First tick whose position, angles or velocity differ from the oracle.
     pub first_diff: Option<usize>,
+    /// First tick whose RENDER_RANGES differ, with the range's name.
+    pub first_render_diff: Option<(usize, String)>,
+    /// The full record after each tick's render pass (for part placement).
+    pub records: Vec<Vec<u8>>,
     pub stopped: Option<(usize, String)>,
 }
 
@@ -145,8 +179,7 @@ impl<'a> Run<'a> {
         let ib = oracle::tick_inputs(&mb);
         inp.water_normal = ib.water_normal;
         inp.alt_normal = ib.alt_normal;
-        let a = KART_ARRAY;
-        inp.aim = Some([mb.i32(a + 0x2C0), mb.i32(a + 0x2C4), mb.i32(a + 0x2C8), mb.i32(a + 0x2CC)]);
+        inp.aim = None;
         (g, inp, mb.u16(0x800B_0CE8), ma)
     }
 
@@ -205,26 +238,76 @@ impl<'a> Run<'a> {
         k
     }
 
+    /// One teacher-forced tick from the oracle's state, the random pointer
+    /// advanced by `rng_skip` first. Returns the kart and its full record.
+    fn forced(&self, i: usize, rng_skip: u32) -> Result<(KartState, Vec<u8>), String> {
+        let mut k = self.oracle_kart(i);
+        let ma = self.cap.mem_at(self.ticks[i], Some(self.base));
+        let mut g = RaceGlobals::read(&ma);
+        g.rng = g.rng.wrapping_add(rng_skip);
+        self.step(&mut k, &mut g, i)?;
+        let mut ours = self.rec(self.ticks[i]).to_vec();
+        k.to_record(&mut ours);
+        crate::render::after_kart_loop(&mut k, &mut ours, self.world, &self.world.driver);
+        k.to_record(&mut ours);
+        Ok((k, ours))
+    }
+
+    /// Teacher forcing. The random pointer at the moment kart 0 updates is
+    /// not in the capture (the water animation and the contact pass draw
+    /// from it earlier in the frame); with `rng_search` the harness tries
+    /// skips 0..=RNG_SEARCH and keeps the first that reproduces the
+    /// random-driven fields (body-sway springs, event bits, blink timer),
+    /// reporting the skips in `rng_skips`.
     pub fn teacher_forcing(&self, n: usize) -> TeacherReport {
+        self.teacher_forcing_opt(n, true)
+    }
+
+    pub fn teacher_forcing_opt(&self, n: usize, rng_search: bool) -> TeacherReport {
         let mut rep = TeacherReport { ticks: n, ..Default::default() };
         for i in 0..n {
-            let mut k = self.oracle_kart(i);
-            let ma = self.cap.mem_at(self.ticks[i], Some(self.base));
-            let mut g = RaceGlobals::read(&ma);
-            if let Err(msg) = self.step(&mut k, &mut g, i) {
-                rep.panics.push((i, msg));
-                continue;
-            }
-            let mut ours = self.rec(self.ticks[i]).to_vec();
-            k.to_record(&mut ours);
             let refr = self.rec(self.ticks[i + 1]);
+            let random_ok = |r: &[u8]| {
+                r[0x3A0..0x3E8] == refr[0x3A0..0x3E8]
+                    && r[0x29C..0x2C0] == refr[0x29C..0x2C0]
+                    && r[0x454..0x45E] == refr[0x454..0x45E]
+                    && r[0x44C..0x44E] == refr[0x44C..0x44E]
+            };
+            let mut chosen = None;
+            let tries = if rng_search { RNG_SEARCH + 1 } else { 1 };
+            for d in 0..tries {
+                match self.forced(i, d) {
+                    Ok((k, ours)) => {
+                        let ok = random_ok(&ours);
+                        if chosen.is_none() || ok {
+                            chosen = Some((d, k, ours));
+                        }
+                        if ok {
+                            break;
+                        }
+                    }
+                    Err(msg) => {
+                        if d == 0 {
+                            rep.panics.push((i, msg));
+                        }
+                        break;
+                    }
+                }
+            }
+            let Some((d, _k, ours)) = chosen else { continue };
+            *rep.rng_skips.entry(if random_ok(&ours) { d as i32 } else { -1 }).or_default() += 1;
+            if random_ok(&ours) {
+                let ma = self.cap.mem_at(self.ticks[i], Some(self.base));
+                rep.rng_at_frame.insert(i, RaceGlobals::read(&ma).rng.wrapping_add(d));
+            }
             let mut motion = false;
-            {
-                let st = rep.fields.entry("body (+0x18C)".to_string()).or_default();
-                if ours[0x18C..0x19E] != refr[0x18C..0x19E] {
+            for &(name, off, n) in RENDER_RANGES {
+                let st = rep.render.entry(name.to_string()).or_default();
+                if ours[off..off + n] != refr[off..off + n] {
                     st.bad += 1;
                     st.first.get_or_insert(i);
                     st.max = 1;
+                    rep.render_events.entry(i).or_default().push((off, n));
                 }
             }
             for &(name, off, sz) in FIELD_OFFSETS {
@@ -255,15 +338,28 @@ impl<'a> Run<'a> {
     /// after the Rust tick, copy the listed fields from the oracle (effects
     /// of game code the port does not model, e.g. an AI weapon hit).
     pub fn free_run(&self, n: usize, events: &BTreeMap<usize, Vec<(usize, usize)>>) -> FreeRun {
+        self.free_run_rng(n, events, None)
+    }
+
+    /// Free run; `rng`: per tick, the random pointer to use at the start of
+    /// the frame (from `TeacherReport::rng_at_frame`): the game's random
+    /// stream is shared with the AI karts, so this is an input like the
+    /// buttons. Without it the run keeps its own pointer.
+    pub fn free_run_rng(&self, n: usize, events: &BTreeMap<usize, Vec<(usize, usize)>>, rng: Option<&BTreeMap<usize, u32>>) -> FreeRun {
         let m0 = self.cap.mem_at(self.ticks[0], Some(self.base));
         let mut k = oracle::load_kart(&m0, 0);
         let mut g = RaceGlobals::read(&m0);
-        let mut out = FreeRun { rows: Vec::new(), first_diff: None, stopped: None };
+        let mut out = FreeRun { rows: Vec::new(), first_diff: None, first_render_diff: None, records: Vec::new(), stopped: None };
+        let mut rrec = self.rec(self.ticks[0]).to_vec();
+        out.records.push(rrec.clone());
         out.rows.push((0, m0.u16(0x800B_0CE8), k.clone(), m0.i32(0x800B_0AEC), self.ticks[0]));
         for i in 0..n {
             let (va, vb) = (self.ticks[i], self.ticks[i + 1]);
             Self::patch(&mut k, self.rec(va), EXTERNAL.iter().map(|e| (e.1, e.2)));
             Self::patch(&mut k, self.rec(vb), PRE_EXTERNAL.iter().map(|e| (e.1, e.2)));
+            if let Some(r) = rng.and_then(|m| m.get(&i)) {
+                g.rng = *r;
+            }
             let buttons = match self.step(&mut k, &mut g, i) {
                 Ok(b) => b,
                 Err(msg) => {
@@ -274,6 +370,26 @@ impl<'a> Run<'a> {
             if let Some(fields) = events.get(&i) {
                 Self::patch(&mut k, self.rec(vb), fields.iter().copied());
             }
+            k.to_record(&mut rrec);
+            crate::render::after_kart_loop(&mut k, &mut rrec, self.world, &self.world.driver);
+            if let Some(fields) = events.get(&i) {
+                // The injected event's render side too (spin etc.).
+                let r = self.rec(vb);
+                for &(off, sz) in fields {
+                    rrec[off..off + sz].copy_from_slice(&r[off..off + sz]);
+                }
+            }
+            k.to_record(&mut rrec);
+            if out.first_render_diff.is_none() {
+                let r = self.rec(vb);
+                for &(name, off, n) in RENDER_RANGES {
+                    if rrec[off..off + n] != r[off..off + n] {
+                        out.first_render_diff = Some((i + 1, name.to_string()));
+                        break;
+                    }
+                }
+            }
+            out.records.push(rrec.clone());
             if out.first_diff.is_none() {
                 let r = self.rec(vb);
                 let mut mine = r.to_vec();

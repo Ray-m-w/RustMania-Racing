@@ -29,6 +29,10 @@ fn main() {
     //   --catchup-as-6th   catch-up as the oracle's race (player 6th, leader far ahead)
     let oracle_dt = args.iter().any(|a| a == "--oracle-dt");
     let catchup6 = args.iter().any(|a| a == "--catchup-as-6th");
+    //   --oracle-rng       the random pointer per frame and the oracle-side
+    //                      events (weapon pickups, the AI hit) from teacher
+    //                      forcing on the capture (analysis of render fields)
+    let oracle_rng = args.iter().any(|a| a == "--oracle-rng");
 
     let mut disc = mr_disc::Disc::open_default().expect("disc");
     let mut s = Session::new(&mut disc).expect("session");
@@ -112,14 +116,65 @@ fn main() {
         rest[a + 1..b].split(',').map(|x| x.trim().trim_matches('"')).collect()
     };
     let dt_col = names.iter().position(|&n| n == "dt").map(|i| i + 2);
+    // Oracle-side inputs for --oracle-rng (teacher forcing on the capture).
+    let ram0 = cap.ram0.clone();
+    let tf = if oracle_rng {
+        let base = ram0.as_ref().expect("capture with ram0.bin");
+        let w = oracle::dock_world(base);
+        let run = mr_sim::harness::Run::new(&cap, base, &w);
+        let rep = run.teacher_forcing(run.n());
+        let mut ev = rep.events.clone();
+        for (t, r) in &rep.render_events {
+            ev.entry(*t).or_default().extend(r.iter().copied());
+        }
+        Some((rep.rng_at_frame, ev, run.ticks.clone()))
+    } else {
+        None
+    };
+    if oracle_rng {
+        // Start from the oracle's render-side state too (the session idled
+        // with its own random stream, so the sway springs, weapon slots and
+        // blink timer differ at tick 0).
+        let r0 = cap.read(cap.vbs[0], KART_ARRAY, RECORD_SIZE).unwrap();
+        s.inject(
+            r0,
+            &[(0x14, 0x2C * 4), (0x11C, 0x30), (0x2C0, 0x10), (0x324, 0x24), (0x3A0, 0x48), (0x44C, 2), (0x450, 0xE), (0x4B0, 1), (0x4D0, 6), (0x4DD, 1), (0x4F0, 1)],
+        );
+    }
+    let mut first_render: Option<(i64, String)> = None;
     for r in &rows[1..] {
         let btn = r[1] as u16;
         let dt = if oracle_dt { dt_col.map(|c| r[c] as i32).unwrap_or(2) } else { 2 };
+        let i = (r[0] - 1) as usize;
+        if let Some((rng, _, _)) = &tf {
+            s.rng_override = rng.get(&i).copied();
+        }
         if let Err(e) = s.tick_dt(btn, dt) {
             stopped = Some((r[0], e.to_string()));
             break;
         }
+        if let Some((_, ev, ticks)) = &tf {
+            let refr = cap.read(ticks[i + 1], KART_ARRAY, RECORD_SIZE).unwrap();
+            if let Some(f) = ev.get(&i) {
+                s.inject(refr, f);
+            }
+            if first_render.is_none() && std::env::var("MRS_DIFF").is_ok() && r[0] >= 66 && r[0] <= 69 {
+                let d: Vec<String> = (0..RECORD_SIZE).step_by(2).filter(|&o| s.record()[o..o + 2] != refr[o..o + 2]).map(|o| format!("{o:03X}")).collect();
+                println!("  tick {}: {}", r[0], d.join(" "));
+            }
+            if first_render.is_none() {
+                for &(name, off, n) in mr_sim::harness::RENDER_RANGES {
+                    if s.record()[off..off + n] != refr[off..off + n] {
+                        first_render = Some((r[0], name.to_string()));
+                        break;
+                    }
+                }
+            }
+        }
         push(r[0], btn, &s);
+    }
+    if tf.is_some() {
+        println!("first tick whose render-side record ranges differ from the oracle: {}", first_render.map(|(t, n)| format!("{t} ({n})")).unwrap_or_else(|| "none".into()));
     }
     std::fs::write(&out, o).unwrap();
     println!("\n== free run: {} ticks -> {out}{} ==", s.ticks - idle as u64, stopped.map(|(t, m)| format!(" (stopped at tick {t}: {m})")).unwrap_or_default());

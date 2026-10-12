@@ -34,6 +34,26 @@ fn lap1_teacher_forcing_and_free_run() {
         }
     }
 
+    // Render-side ranges (matrices, driver position, look point, aim, sway
+    // springs, weapon slots): exact on every tick with the right random
+    // pointer, except where code outside the port changes them (weapon
+    // pickups at 172 and 177, the hit at 821 / 822).
+    for (name, st) in &rep.render {
+        assert!(
+            st.bad == 0 || st.first.map_or(false, |f| f == 172 || f == 177 || f >= 821),
+            "{name}: {st:?}"
+        );
+    }
+    let ev: Vec<usize> = rep.render_events.keys().copied().collect();
+    assert!(ev.iter().all(|&t| t == 172 || t == 177 || t == 821 || t == 822), "render events {ev:?}");
+    let mut all = rep.events.clone();
+    for (t, r) in &rep.render_events {
+        all.entry(*t).or_default().extend(r.iter().copied());
+    }
+    let fr = run.free_run_rng(n, &all, Some(&rep.rng_at_frame));
+    assert_eq!(fr.first_diff, None);
+    assert_eq!(fr.first_render_diff, None, "render ranges in the free run");
+
     // Pure free run: exact until the hit.
     let pure = run.free_run(n, &Default::default());
     assert!(pure.stopped.is_none(), "{:?}", pure.stopped);

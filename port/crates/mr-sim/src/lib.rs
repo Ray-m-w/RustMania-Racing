@@ -32,6 +32,7 @@ pub mod kart;
 pub mod mem;
 pub mod oracle;
 pub mod progress;
+pub mod render;
 pub mod session;
 pub mod tables;
 pub mod update;
@@ -66,6 +67,9 @@ pub fn tick_with_karts(
     buttons: u16,
 ) {
     collide::frame_contacts(k, others, g, w, rules);
+    // FUN_80041A20: the course look points (FUN_80041CC4 is checked by the
+    // caller, which knows the camera mode).
+    render::aim_at_course(k, g, w);
     if let Some([x, y, z, d]) = inp.aim {
         k.aim_x = x;
         k.aim_y = y;

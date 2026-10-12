@@ -284,7 +284,7 @@ pub const SIM_FIELDS: &[&str] = &[
 ];
 
 fn sim_row(s: &mr_sim::session::Session) -> Vec<i64> {
-    let r = &s.record;
+    let r = s.record();
     let i32at = |o: usize| i32::from_le_bytes([r[o], r[o + 1], r[o + 2], r[o + 3]]) as i64;
     let i16at = |o: usize| i16::from_le_bytes([r[o], r[o + 1]]) as i64;
     let mut v = vec![i32at(0), i32at(4), i32at(8), i16at(0xC), i16at(0xE), i16at(0x10),
@@ -318,8 +318,9 @@ impl SimRun {
     }
 
     /// Write the driven inputs as an oracle route (tools/oracle/routes format):
-    /// tick k after alignment uses the pad word visible at VBlank 2(k+1), so
-    /// each step starts at VBlank 2k+1.
+    /// the bridge samples tick k's pad (k counted after alignment) while
+    /// VBlanks-since-restore = 2k, so each step starts at VBlank 2k (verified:
+    /// a recorded drive replays identically on the oracle).
     pub fn write_route(&self, path: &str) {
         let names = ["select", "", "", "start", "up", "right", "down", "left", "l2", "r2", "l1", "r1", "triangle", "circle", "cross", "square"];
         let spec = |m: u16| (0..16).filter(|b| m & (1 << b) != 0 && !names[*b as usize].is_empty()).map(|b| names[b as usize]).collect::<Vec<_>>().join("+");
@@ -327,7 +328,7 @@ impl SimRun {
         let mut last = 0u16;
         for (k, &m) in self.buttons.iter().enumerate() {
             if m != last {
-                steps.push(format!("[{}, \"{}\"]", 2 * k + 1, spec(m)));
+                steps.push(format!("[{}, \"{}\"]", 2 * k, spec(m)));
                 last = m;
             }
         }
@@ -427,7 +428,8 @@ fn sim_tick(mut p: ResMut<Player>, keys: Res<ButtonInput<KeyCode>>, pads: Query<
                 let idle = run.session.ticks < run.align;
                 let k = run.buttons.len() as u64;
                 let scripted = run.route.as_ref().map(|r| {
-                    let vb = 2 * k + 1;
+                    // The bridge samples tick k's pad while VBlanks-since-restore = 2k.
+                    let vb = 2 * k;
                     r.iter().take_while(|(v, _)| *v <= vb).last().map(|(_, m)| *m).unwrap_or(0)
                 });
                 let b = if idle { 0 } else { scripted.unwrap_or(buttons) };
@@ -444,7 +446,7 @@ fn sim_tick(mut p: ResMut<Player>, keys: Res<ButtonInput<KeyCode>>, pads: Query<
                 }
             }
             let s = &run.session;
-            let r = &s.record;
+            let r = s.record();
             let i32at = |o: usize| i32::from_le_bytes([r[o], r[o + 1], r[o + 2], r[o + 3]]);
             let mut m = [0i32; 9];
             for (i, v) in m.iter_mut().enumerate() {
@@ -463,7 +465,7 @@ fn sim_tick(mut p: ResMut<Player>, keys: Res<ButtonInput<KeyCode>>, pads: Query<
                 m,
                 cam: Some((c.pos, cm)),
             };
-            kart = Some(r.clone());
+            kart = Some(r.to_vec());
         }
     }
     p.prev_kart = p.kart.take();

@@ -107,13 +107,14 @@ fn session_grid_state_matches_oracle() {
     }
     // Fields that differ, with the reason (docs/spec/kart-physics-ledger.md).
     let explained: &[(&str, &str)] = &[
-        ("aim_x", "look-at target not produced"),
-        ("aim_y", "look-at target not produced"),
-        ("aim_z", "look-at target not produced"),
-        ("aim_dist", "look-at target not produced"),
-        ("look_x", "render look point not produced"),
-        ("look_y", "render look point not produced"),
-        ("look_z", "render look point not produced"),
+        ("aim_x", "look-at target: other karts' look points in the oracle race"),
+        ("aim_y", "look-at target: other karts"),
+        ("aim_z", "look-at target: other karts"),
+        ("aim_dist", "look-at target: other karts"),
+        ("look_x", "look point follows the body sway"),
+        ("look_y", "look point follows the body sway"),
+        ("look_z", "look point follows the body sway"),
+        ("ref_y", "driver position follows the body lean"),
         ("lean_a", "body sway (random kicks, look-at target)"),
         ("lean_b", "body sway follows the look-at target"),
         ("sway_a", "body sway"),
@@ -139,4 +140,53 @@ fn session_grid_state_matches_oracle() {
     }
     assert!(bad.is_empty(), "unexplained differences: {bad:?}");
     assert_eq!(s.record[0x18C..0x19E], orec[0x18C..0x19E], "body matrix");
+}
+
+/// The standalone session with the oracle race's catch-up (player 6th), its
+/// dt per tick, its random pointer per frame and its outside events
+/// (weapon pickups, the AI hit) supplied: every motion field, the body
+/// matrix and every render-side range part placement reads match the oracle
+/// until an AI kart becomes the look-at target (tick 69; no AI here).
+#[test]
+fn standalone_render_fields_match_oracle() {
+    let r = root();
+    let dir = r.join("analysis/oracle/lap1P3");
+    if !dir.join("ram0.bin").exists() {
+        eprintln!("skip: no capture");
+        return;
+    }
+    let cap = Capture::open(&dir).unwrap();
+    let base = cap.ram0.clone().unwrap();
+    let w = oracle::dock_world(&base);
+    let run = mr_sim::harness::Run::new(&cap, &base, &w);
+    let n = 200;
+    let rep = run.teacher_forcing(n);
+    let mut disc = mr_disc::Disc::open_default().unwrap();
+    let mut s = Session::new(&mut disc).unwrap();
+    s.leader_progress_override = Some(1000);
+    s.kart.catchup = 180;
+    let r0 = cap.read(run.ticks[0], KART_ARRAY, RECORD_SIZE).unwrap();
+    while s.kart.race_time < cap.i32(run.ticks[0], KART_ARRAY + 0x358).unwrap() {
+        s.tick(0).unwrap();
+    }
+    s.inject(r0, &[(0x14, 0x2C * 4), (0x11C, 0x30), (0x2C0, 0x10), (0x324, 0x24), (0x3A0, 0x48), (0x44C, 2), (0x450, 0xE), (0x4B0, 1), (0x4D0, 6), (0x4DD, 1), (0x4F0, 1)]);
+    let mut first = None;
+    for i in 0..n {
+        let vb = run.ticks[i + 1];
+        let m = cap.mem_at(vb, Some(&base));
+        s.rng_override = rep.rng_at_frame.get(&i).copied();
+        s.tick_dt(m.u16(0x800B_0CE8), m.i32(0x800B_0AEC)).unwrap();
+        let refr = cap.read(vb, KART_ARRAY, RECORD_SIZE).unwrap();
+        if let Some(f) = rep.render_events.get(&i) {
+            s.inject(refr, f);
+        }
+        let motion = s.record()[..0x12] == refr[..0x12] && s.record()[0x2F4..0x300] == refr[0x2F4..0x300];
+        let render = mr_sim::harness::RENDER_RANGES.iter().all(|&(_, o, k)| s.record()[o..o + k] == refr[o..o + k]);
+        if !(motion && render) {
+            first = Some(i + 1);
+            break;
+        }
+    }
+    eprintln!("standalone render: first difference at tick {first:?}");
+    assert!(first.map_or(true, |t| t >= 69), "{first:?}");
 }

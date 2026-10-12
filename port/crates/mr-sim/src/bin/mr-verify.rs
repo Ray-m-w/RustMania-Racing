@@ -63,18 +63,28 @@ fn main() {
             println!("    tick {t} (vb {}): fields {:?}", run.ticks[*t], f.iter().map(|x| format!("{:03X}", x.0)).collect::<Vec<_>>());
         }
     }
+    println!("  random-pointer skip at kart 0's update that reproduces the random-driven fields: {:?} (skip: ticks; -1 = none)", rep.rng_skips);
+    println!("  render-side record ranges (ticks mismatching / first tick):");
+    for (name, st) in &rep.render {
+        println!("    {name:<32} {:>5}  first {}", st.bad, st.first.map(|f| f.to_string()).unwrap_or_else(|| "-".into()));
+    }
     for (t, m) in &rep.panics {
         println!("  tick {t}: panic {m}");
     }
     let _ = motion_exact;
 
+    let mut all_events = rep.events.clone();
+    for (t, r) in &rep.render_events {
+        all_events.entry(*t).or_default().extend(r.iter().copied());
+    }
+    println!("  render-side external events (fields injected in the free run): {:?}", rep.render_events.keys().collect::<Vec<_>>());
     let out = opt("--trace").unwrap_or_else(|| "analysis/traces/lap1.rust.trace.jsonl".into());
     let pure = out.replace(".trace.jsonl", ".pure.trace.jsonl");
     for (path, events, note) in [
         (&pure, &Default::default(), "mr-sim free run; no injected events"),
-        (&out, &rep.events, "mr-sim free run; external events injected from the oracle"),
+        (&out, &all_events, "mr-sim free run; external events injected from the oracle"),
     ] {
-        let fr = run.free_run(n, events);
+        let fr = run.free_run_rng(n, events, Some(&rep.rng_at_frame));
         std::fs::write(path, harness::trace_jsonl(&fr, "lap1", &format!("{note}; capture {dir}"))).unwrap();
         println!(
             "\n== free run ({note}): {} ticks -> {path}{}; first tick differing from the oracle: {} ==",
@@ -82,5 +92,16 @@ fn main() {
             fr.stopped.as_ref().map(|(t, m)| format!(" STOPPED at {t}: {m}")).unwrap_or_default(),
             fr.first_diff.map(|t| t.to_string()).unwrap_or_else(|| "none".into())
         );
+        println!("   first render-range difference: {}", fr.first_render_diff.as_ref().map(|(t, n)| format!("tick {t} ({n})")).unwrap_or_else(|| "none".into()));
+        if verbose {
+            if let Some((t, _)) = &fr.first_render_diff {
+                for tt in t.saturating_sub(2)..=*t {
+                    let mine = &fr.records[tt];
+                    let refr = cap.read(run.ticks[tt], mr_sim::kart::KART_ARRAY, mr_sim::kart::RECORD_SIZE).unwrap();
+                    let d: Vec<String> = (0..mr_sim::kart::RECORD_SIZE).step_by(2).filter(|&o| mine[o..o + 2] != refr[o..o + 2]).map(|o| format!("{o:03X}")).collect();
+                    println!("     tick {tt}: halfwords differing: {}", d.join(" "));
+                }
+            }
+        }
     }
 }

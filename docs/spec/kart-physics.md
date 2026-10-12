@@ -200,3 +200,25 @@ the game updated kart 0's path; body matrix = the oracle on every lap tick;
 Session::new after 143 idle ticks (the oracle savestate's race clock 1430)
 equals the oracle's grid record in every motion field and the body matrix
 (differences listed and explained in tests/standalone.rs and the ledger).
+
+## Render-side fields (render.rs)
+Per frame, around the kart loop (FUN_8007916C):
+- before: FUN_80041A20 aims kart +0x2C0..+0x2CC at the nearest course look
+  point (DAT chunk 7; FUN_80081170 mode 1, distances at >> 10 world units) on
+  frames where the blink bit +0x4F0 is 1 and that point is nearer than the
+  current aim (+0x2CC, reset to 0x7FFFFFFF each frame by FUN_800418D8, whose
+  contact pairs aim at nearer karts' look points).
+- after: FUN_80086DF0: wheel i's matrix +0x20C + 0x12 i = FUN_800251AC(spin,
+  steer) with steer = (+0x47C & 0x7FF) << 1 on flag-2 wheels (front) and 0 on
+  flag-1 wheels; driver head matrix +0x29C = FUN_80024AB4(+0x458, +0x45A,
+  +0x45C), body matrix +0x2AE = identity.
+- after: FUN_80025D8C: body matrix +0x18C (FUN_80024594); bounce offset
+  +0x46A = M0 * (0, (+0x348 * (0x80 - +0x180)) >> 15, 0) >> 7 (FUN_8007D58C);
+  vehicle matrix +0x1AC = M0 * L(+0x452 * k >> 7, +0x450 * k >> 7), k = 0x80
+  - +0x180 (FUN_800252A4, MulMatrix0); driver matrix +0x1CC = +0x1AC *
+  L(+0x456, +0x454); driver position +0x330/+0x338/+0x340 = pos + offset +
+  M1 * mount (+0x182..+0x186) (previous kept at +0x334/+0x33C/+0x344); look
+  point +0x324 = driver position + M2 * (KERMIT.MDL part 0 pivot); wheel world
+  positions +0x14 + 0x2C i = pos + M0 * (wheel x, 0, wheel z); light points
+  +0x11C + 0x18 j = pos + offset + M1 * point.
+GTE: MulMatrix0 = three MVMVA (sf 1, lm 0): sat16((sum) >> 12).

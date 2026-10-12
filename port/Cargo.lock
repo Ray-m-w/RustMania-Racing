@@ -2221,6 +2221,7 @@ dependencies = [
  "bevy",
  "mr-assets",
  "mr-disc",
+ "mr-sim",
  "mr-trace",
 ]
 

@@ -135,21 +135,59 @@ a permutation of the file's quads (229 of 340 bytes moved, same vertex
 sets); ring vertices found in the GTE ring]. The decoder returns file order;
 the reordering is runtime-only and not reproduced.
 
-## What drives the parts (renderer)
+## Placing the parts (kart record -> part transforms)
 
-FUN_80026f3c (vehicle) and FUN_800276e8 (driver) loop over the model's slot
-range from the ANM header. Per part they build the part matrix from the kart
-object (a 9-halfword matrix at kart +0x20C + 0x12*part for parts below the
-byte at kart +0x170; the part whose index equals the byte at kart +0x171
-gets the matrix at kart +0x1AC; wheel slots below that index get their
-pivot y rewritten each frame from kart +0x2E + 0x2C*part, the suspension)
-and translate by the slot pivot, then call FUN_8001f040 (with the kart's
-scale halfwords at +0x414/+0x418 as arguments) or, when the three words at
-+0x414..+0x41C are all 0x1000, FUN_8001ec2c, to emit the polygons. Both
-emitters derive tpage/CLUT and vertex order identically. Wheel spin and steering,
-and the driver's head and body motion, are these per-part matrices; the
-`.ANM` poses are not used (ANM.md). [CODE 80026f3c, 800276e8] [RAM: GTE RT
-per RACER wheel part differ (spin/steer), rows unit length: no ANM scale]
+FUN_80026F3C (vehicle, model index = kart byte +0x4A4) and FUN_800276E8
+(driver, model = kart byte +0x4A5) loop over the model's slot range from the
+ANM header (+4..+6) and place every part from the kart record (player kart
+at 0x800C30A8, 0x504 bytes). The GTE light matrix L and back-colour BK are
+used as scratch for the base matrix and base position (FUN_80010504). Ported
+in `port/crates/mr-bevy/src/kartmodel.rs` (`KartModel::part_transforms`,
+`neck_vertices`). All matrices 4.12, products `(a*b)>>12` per element.
+
+Vehicle [CODE 80026F3C]:
+
+- base position P = (i32 +0x00 + s16 +0x46A, i32 +0x04 + s16 +0x46C,
+  i32 +0x08 + s16 +0x46E) >> 5 (model units = world / 32);
+- base matrix B = 9 x s16 at +0x18C (the body matrix);
+- for part i (slot order):
+  - if i == byte +0x171: B = matrix at +0x1AC from this part on (RACER: the
+    body, part 4);
+  - if i < byte +0x171 (wheels): pivot.y = s16(+0x2E + 0x2C*i) -
+    ((i32 +0x348 * (0x80 - s16 +0x180)) >> 15) (suspension; x, z from the MDL);
+  - part matrix Pm = 9 x s16 at +0x20C + 0x12*i if i < byte +0x170, else
+    identity (wheel spin about X and steering);
+  - R_i = B * Pm; T_i = P + (B * pivot) >> 12 (FUN_800106C0, stored in slot
+    +0x4C); a model point p of the part goes to T_i + (R_i * p) >> 12
+    (FUN_80010A98, slot +0x38). Slot +0x1E == 1 would select a scaled path
+    (FUN_80010DC8 + FUN_800108B8 with three s16 at slot +0x18); 0 for every
+    KERMIT/RACER slot [RAM].
+  - skipped when byte +0x4F1 == 8 and i >= i32 +0x300.
+
+Driver [CODE 800276E8]: P = (i32 +0x330, +0x338, +0x340) >> 5, B = matrix at
++0x1CC (both written per tick by FUN_80025D8C from the body matrix and the
+driver's lean), Pm = matrix at +0x29C + 0x12*i for parts 0, 1 (head, body),
+identity otherwise; same R_i, T_i; skipped when +0x4F1 == 8 and i >= i32
++0x304. Slots of kind 2 (the neck) go to FUN_80039D90 instead: each ring
+vertex is transformed by its owner part's R/T (ring 1xx: head, 2xx: body),
+and the neck quads are drawn between them, so in world space each neck vertex
+= T_owner + (R_owner * ring_local) >> 12 [RAM: GTE RTPS of both rings under
+the head / body RT].
+
+For the main view the game folds the camera in first: B' = V * B and
+P' = V * (P*32 - eye) >> 17 (V, eye from the camera record at 0x800C4F40),
+so the GTE gets RT = V*B*Pm and TR = view-space T. The world-space form above
+differs only in rounding. The s16 at +0x414/+0x418/+0x41C (vehicle) and
++0x416/+0x41A/+0x41E (driver) are colour factors for the depth-cue (DPCL)
+of the emitter, not geometry; when all are 0x1000 FUN_8001EC2C is used
+instead of FUN_8001F040.
+
+Verification [RAM, 2026-10-12, live DOCK race]: one read of
+0x800BC668..0x800C4F80 (slots, kart record, camera); for all 5 RACER parts
+and KERMIT head/body, V * R_i equals the game's slot +0x38 matrix within +-2
+in rows 1-2 (row 0 is the widescreen mod's x scale, 1.6x), and V*(T_i*32 -
+eye)/32 equals slot +0x4C within +-1 in y, z. Bevy side-by-sides (oracle |
+mr-bevy, lap1 trace ticks 299, 319, 450): analysis/bevy/sbs_parts_t*.png.
 
 ## Coordinates
 

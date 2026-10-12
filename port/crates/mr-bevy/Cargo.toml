@@ -8,6 +8,7 @@ publish.workspace = true
 mr-disc = { path = "../mr-disc" }
 mr-assets = { path = "../mr-assets" }
 mr-trace = { path = "../mr-trace" }
+mr-sim = { path = "../mr-sim" }
 # The only crate that may depend on Bevy (ADR-0002 split). Feature set starts
 # from the quarry's ADR-0009 Amendment 1 list (bevy_winit, bevy_sprite dropped:
 # 2D only, bevy_core_pipeline, bevy_render, bevy_image, bevy_window,

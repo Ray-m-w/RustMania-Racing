@@ -13,7 +13,7 @@ becomes the model's record in the model table DAT_800dd598 (slot range of
 the model's parts), and its channel table marks which part is a neck (-2).
 The per-part pose frames are never read. Wheel spin, steering and the
 driver's animation come from per-part matrices in the kart object (MDL.md,
-"What drives the parts"). Evidence: the only functions that reference
+"Placing the parts"). Evidence: the only functions that reference
 DAT_800dd598 (80025d8c, 80026a5c, 80026f3c, 800276e8, 80060944, 8006e1d4,
 80092ccc, 80092f20, 800925a8) read +0, +4, +6 only; the globals
 FUN_80092458 sets from the block (DAT_800b0a78, DAT_800b0c08, DAT_800b0ab2,

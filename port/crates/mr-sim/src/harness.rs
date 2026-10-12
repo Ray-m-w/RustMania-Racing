@@ -34,12 +34,21 @@ pub const EXTERNAL: &[(&str, usize, usize)] = &[
     ("ref_y", 0x338, 4),
     ("progress", 0x388, 4),
     ("race_pos", 0x4BE, 1),
+    ("start_pos", 0x4CA, 1),
     ("start_timer", 0x48A, 2),
     ("wobble", 0x48C, 2),
 ];
 
 /// Kart fields written before the kart loop of the same frame.
-pub const PRE_EXTERNAL: &[(&str, usize, usize)] = &[("path_seg", 0x498, 2), ("path_pt", 0x49A, 2)];
+pub const PRE_EXTERNAL: &[(&str, usize, usize)] = &[
+    ("path_seg", 0x498, 2),
+    ("path_pt", 0x49A, 2),
+    ("path_width_l", 0x3F4, 4),
+    ("path_width_r", 0x3F8, 4),
+    ("path_lateral", 0x3FC, 4),
+    ("path_side", 0x500, 1),
+    ("path_flag_4cb", 0x4CB, 1),
+];
 
 /// Owned fields whose oracle value the harness cannot reproduce from the
 /// inputs it has; none of them feeds the kart's motion (checked: the free
@@ -210,6 +219,14 @@ impl<'a> Run<'a> {
             k.to_record(&mut ours);
             let refr = self.rec(self.ticks[i + 1]);
             let mut motion = false;
+            {
+                let st = rep.fields.entry("body (+0x18C)".to_string()).or_default();
+                if ours[0x18C..0x19E] != refr[0x18C..0x19E] {
+                    st.bad += 1;
+                    st.first.get_or_insert(i);
+                    st.max = 1;
+                }
+            }
             for &(name, off, sz) in FIELD_OFFSETS {
                 let d = (val(&ours[off..off + sz]) - val(&refr[off..off + sz])).abs();
                 let st = rep.fields.entry(name.to_string()).or_default();

@@ -81,8 +81,7 @@ pub fn lap_timing(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
     if (k.lap as i32) >= g.laps as i32 || g.mode == 10 || g.mode == 17 {
         return;
     }
-    const LIMIT: i32 = 0x2BF20;
-    if k.race_time >= LIMIT {
+    if k.race_time >= 180_000 {
         return;
     }
     let lap = k.lap as usize;
@@ -91,8 +90,8 @@ pub fn lap_timing(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
     for i in 0..=lap {
         k.race_time = k.race_time.wrapping_add(k.lap_time[i]);
     }
-    if LIMIT < k.race_time {
-        unreachable_in_scope!("race time limit reached");
+    if 180_000 < k.race_time {
+        k.race_time = 180_000;
     }
     let Some(f) = &w.course.finish else { return };
     let q = |i: usize| f.words[i] >> 4;
@@ -110,9 +109,12 @@ pub fn lap_timing(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
         k.line_flag = 0;
     } else if s == 6 && k.line_side == 7 {
         // 0x80083458: crossed backwards: remember it so the next forward
-        // crossing does not count a lap.
+        // crossing does not count a lap; a second backward crossing adds a
+        // course length to the race progress.
         if k.line_flag == 1 {
-            unreachable_in_scope!("finish line crossed backwards twice (0x80083468)");
+            if let Some(len) = w.course.length {
+                k.progress = k.progress.wrapping_add(len as i32);
+            }
         }
         k.line_flag = 1;
     }
@@ -123,36 +125,33 @@ pub fn lap_timing(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
 fn lap_completed(k: &mut KartState, g: &mut RaceGlobals) {
     let lap = k.lap as usize;
     let t = k.lap_time[lap];
-    let q = t / 3;
-    // Round the lap time to a multiple of 3 (nearest).
-    k.lap_time[lap] = 3 * q;
-    if t - 3 * q >= 2 {
-        // 0x80082E04 (not reached on the lap route): rounds up.
+    // Round the lap time to the nearest multiple of 3.
+    k.lap_time[lap] = (t / 3) * 3;
+    if 1 < t % 3 {
         k.lap_time[lap] += 3;
     }
-    if (k.player_index as i32) < g.humans as i32 && k.flags & 1 == 0 && g.race_flags & 2 == 0 && k.lap_time[lap] < g.lap_record {
-        unreachable_in_scope!("lap record beaten (0x80082EB4)");
+    let lt = k.lap_time[lap];
+    if (k.player_index as i32) < g.humans as i32 && k.flags & 1 == 0 && g.race_flags & 2 == 0 && lt < g.lap_record {
+        // New course lap record: the record table 0x800E0190 (and the
+        // vehicle / character bytes next to it) take this lap.
+        g.lap_record = lt;
     }
-    if k.best_lap != 0 {
-        unreachable_in_scope!("second lap end: best-lap compare (0x80082F28)");
+    if k.best_lap == 0 || lt < k.best_lap {
+        k.best_lap = lt;
     }
-    k.best_lap = k.lap_time[lap];
-    if g.lap_threshold != 0 && k.best_lap < g.lap_threshold {
-        unreachable_in_scope!("lap under the announcement threshold (0x80082F90)");
+    if g.lap_threshold == 0 || k.best_lap < g.lap_threshold {
+        g.lap_threshold = k.best_lap;
     }
     k.lap = k.lap.wrapping_add(1);
     let lap = k.lap as i32;
     let laps = g.laps as i32;
-    if lap == laps {
-        unreachable_in_scope!("race finished (0x80083008)");
-    }
-    if g.end_mode >= 2 {
-        unreachable_in_scope!("lap end with end mode >= 2");
+    if lap == laps || g.end_mode > 1 {
+        unreachable_in_scope!("race finished (0x80082E7C): the kart is handed to the AI");
     }
     if lap == laps - 1 {
-        unreachable_in_scope!("final lap banner (0x800833C8)");
-    }
-    if lap < laps {
+        k.flash_timer = 8;
+        k.blink_count = 0;
+    } else if lap < laps {
         k.flash_timer = (lap - 1) as i8;
         k.blink_count = 0;
     }
@@ -229,5 +228,80 @@ pub fn track_direction(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
         let d = s16((a & 0xFFF) - (k.track_dir as u16 as i32));
         let d = wrap_angle(d);
         k.track_dir = (((k.track_dir as i32) + div_pow2(s16(d), 3)) & 0xFFF) as i16;
+    }
+}
+
+/// FUN_8009004C: the kart's position along the TER path: the nearest path
+/// point (segments whose bounding box contains the kart, plus the current
+/// one), the lateral offset and track width there, and the heading error
+/// against the path (+0x48C, the wrong-way monitor's input).
+pub fn path_position(k: &mut KartState, w: &World) {
+    let t = &w.tables;
+    let ter = &w.ter;
+    let mut best_seg: i32 = -1;
+    let mut best_pt: i32 = 0;
+    let mut best = u32::MAX >> 1;
+    k.path_flag_4cb = 0;
+    let (px, py, pz) = (k.x >> 5, k.y >> 5, k.z >> 5);
+    for (i, s) in ter.path_segments.iter().enumerate() {
+        let inside = px >= s.bb_min[0] && px <= s.bb_max[0] && py >= s.bb_min[1] && py <= s.bb_max[1] && pz >= s.bb_min[2] && pz <= s.bb_max[2];
+        if !(k.path_seg == -1 || i as i32 == k.path_seg as i32 || inside) {
+            continue;
+        }
+        let n = s.count as i32;
+        // The game measures point j - 1 and records index j (0x800900F0:
+        // the point pointer starts at the segment's first point, the
+        // counter at 1).
+        let mut j = 1;
+        while j < n - 1 {
+            let p = &ter.path_points[(s.first as i32 + j - 1) as usize];
+            let dx = (p.x >> 4) - (k.x >> 9);
+            let dy = (p.y >> 4) - (k.y >> 9);
+            let dz = (p.z >> 4) - (k.z >> 9);
+            let d = dx.wrapping_mul(dx).wrapping_add(dy.wrapping_mul(dy)).wrapping_add(dz.wrapping_mul(dz)) as u32;
+            if d < best {
+                best = d;
+                best_seg = i as i32;
+                best_pt = j;
+            }
+            j += 1;
+        }
+    }
+    k.path_seg = best_seg as i16;
+    k.path_pt = best_pt as i16;
+    if best_seg == -1 || best_pt == 0 {
+        return;
+    }
+    let s = &ter.path_segments[best_seg as usize];
+    let n = s.count as i32;
+    if best_pt == n - 1 {
+        return;
+    }
+    let idx = (s.first as i32 + best_pt) as usize;
+    let pv = &ter.path_points[idx];
+    let u = (-(pv.heading as i16 as i32)) & 0xFFF;
+    let lat = ((k.x >> 5) - pv.x).wrapping_mul(t.cos_raw(u)).wrapping_add(((k.z >> 5) - pv.z).wrapping_mul(t.sin_raw(u)));
+    k.path_lateral = div_pow2(lat, 14);
+    k.path_width_l = pv.w[0] as i32 * -8;
+    k.path_width_r = (pv.w[1] as i32) << 3;
+    let dh = if best_pt < n - 2 {
+        ter.path_points[idx + 1].heading as i16 as i32 - pv.heading as i16 as i32
+    } else if best_pt < 2 {
+        0
+    } else {
+        pv.heading as i16 as i32 - ter.path_points[idx - 1].heading as i16 as i32
+    };
+    let dh = wrap_angle(dh);
+    let lat = k.path_lateral;
+    k.path_side = if dh < 0 {
+        (lat <= 0) as u8
+    } else if lat < 0 {
+        if dh < 1 { 1 } else { 0 }
+    } else {
+        1
+    };
+    if 0 < best_pt && best_pt < n - 1 {
+        let d = s16(pv.heading as i32 - k.heading as u16 as i32);
+        k.wobble = wrap_angle(d) as i16;
     }
 }

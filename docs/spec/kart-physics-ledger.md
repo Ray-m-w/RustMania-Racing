@@ -92,3 +92,52 @@ Paths the solo player does not take on DOCK. Address = the game code skipped.
   decoder exposes these records.
 - Vehicle stats come from the exe table at 0x800ACDB0 (FUN_80087EB4 copies them
   to 0x800D9130 + 0x174 * vehicle); verified for vehicle 0 (Kermit's RACER).
+
+## 7. Standalone session (session.rs)
+What the oracle supplied and how the session produces it now:
+| input | standalone source |
+|---|---|
+| initial kart record | FUN_800609F4 port (init.rs) + vehicle template (vehicle.rs) from the exe and RACER.MDL / KERMIT.MDL |
+| race globals | SessionConfig (race settings of the oracle savestate: laps 3, event 3, cup 4, lap record 12186, end counter 1) and the ported clock FUN_8005C2EC |
+| buttons, dt | caller (`tick`: dt 2; `tick_dt` for analysis) |
+| path position, wobble | FUN_8009004C port, every frame (one kart) |
+| water normals | FUN_8003C5FC port, state from the exe's data section |
+| random pointer | reset 0x8001F94C at race load, FUN_8007D304's per-frame step and wrap |
+| body matrix | FUN_80024594 port |
+| leader progress | the player's own (no AI: the player leads) |
+| other karts | none |
+
+Not produced (cosmetic or other subsystems), with the consequence:
+- Look-at target +0x2C0..+0x2CC (FUN_80041A20 needs FUN_80081170, 2.7 KB, and
+  the look-point list DAT chunk 7; FUN_80041CC4) and the render look point
+  +0x324..+0x340 (FUN_80025D8C with model part matrices): they only steer the
+  body-sway springs (+0x3A0..), i.e. how the body wobbles on screen. The aim
+  stays at 0, so the sway differs from the game's.
+- Race position FUN_800837F8 / FUN_800834C0 (+0x388, +0x4BE): with one kart the
+  player is first; +0x4BE keeps the grid value 6 from FUN_800609F4 and progress
+  stays 0, which together give the same catch-up (0) as a leader would get.
+- Turbo-meter tokens FUN_8007BBF0 (+0x48A += 12 per token collected on the
+  track): not ported, the meter stays 0, so R1 turbo never fires and the boost
+  glow target stays 0x60.
+- FUN_80081170 / FUN_8006F410 record fields +0x488 / +0x490 at init (course
+  point index, zone), the model/character slot numbers +0x4A4 / +0x4A5, the
+  start-light minigame (+0x4B8, +0x4D8; the session starts at race clock 0 with
+  no countdown), flag bit 1 of +0x496 (set elsewhere).
+- BIOS rand() seed: unknown at boot; `SessionConfig::rand_seed` drives the
+  initial wheel angles (cosmetic) and the camera's random bits on a mode change.
+- The water animation's state starts from the exe's initial values; in the
+  game it has run since the race (or an earlier one) loaded, and the random
+  pointer is shared with the AI, so wave phases differ from any oracle run.
+
+**Catch-up consequence (the main behavioural difference):** the oracle runs
+had the player 6th of 6 with the leader far ahead, so FUN_80064B5C's catch-up
+(+0x4C3) sat at 180 and raised the forward speed cap from 0x40*32 = 2048 to
+0x50*32 = 2560 (cap = 0x40 + 16*catchup/180, times 32). With no AI the player
+leads, catch-up is 0 and the cap is 2048: top speed is 20% lower than in the
+recorded lap. This is what the game does in a race the player leads.
+Measured on the lap1 route (buttons replayed per tick): the standalone run
+first differs at tick 43 (the speed reaches the lower cap); with the leader
+forced far ahead (`mr-standalone --catchup-as-6th`) it is bit-exact through
+tick 686 (dt 3 begins at 687 in the oracle), and with the oracle's dt as well
+(`--oracle-dt`) bit-exact on every motion field, the body matrix and the
+camera through tick 821, the AI projectile hit.

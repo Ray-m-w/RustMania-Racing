@@ -91,8 +91,8 @@ pub enum Driver {
     /// `karts`: the trace's sidecar (TRACE.kart.bin, 0x504 bytes per row),
     /// the full kart record per tick, when present.
     Replay { trace: Trace, at: usize, karts: Option<Vec<u8>> },
-    /// mr-sim drives the kart from live input (wired in when mr-sim lands).
-    Sim,
+    /// mr-sim drives the kart from live input (standalone: disc only).
+    Sim(Box<SimRun>),
 }
 
 #[derive(Resource)]
@@ -238,6 +238,117 @@ fn shot_plan() -> ShotPlan {
     ShotPlan { path: opt("--shot"), at: opt("--shot-at").and_then(|v| v.parse().ok()).unwrap_or(30), state: 0 }
 }
 
+/// A live mr-sim session plus what it records for the oracle loop.
+pub struct SimRun {
+    pub session: mr_sim::session::Session,
+    /// Ticks the session idles first so tick `align` lines up with the
+    /// oracle's grid savestate (race clock 1430 = 143 ticks); 0 = start at once.
+    pub align: u64,
+    /// Buttons fed per tick after alignment (for --record-route / --trace-out).
+    pub buttons: Vec<u16>,
+    pub rows: Vec<(i64, u16, Vec<i64>)>,
+    pub stopped: Option<String>,
+    /// --route PATH: scripted input instead of the pad ((vb_start, mask) steps).
+    pub route: Option<Vec<(u64, u16)>>,
+}
+
+/// Parse an oracle route file's steps: [[vb, "cross+left"], ...] (tools/oracle).
+fn parse_route(text: &str) -> Vec<(u64, u16)> {
+    let names = ["select", "", "", "start", "up", "right", "down", "left", "l2", "r2", "l1", "r1", "triangle", "circle", "cross", "square"];
+    let body = &text[text.find("\"steps\"").expect("route has steps")..];
+    let mut out = Vec::new();
+    let mut rest = &body[body.find('[').unwrap() + 1..];
+    while let Some(i) = rest.find('[') {
+        let end = rest[i..].find(']').unwrap() + i;
+        let item = &rest[i + 1..end];
+        let mut parts = item.splitn(2, ',');
+        let vb: u64 = parts.next().unwrap().trim().parse().expect("vb");
+        let spec = parts.next().unwrap_or("").trim();
+        let spec = spec.split(',').next().unwrap().trim().trim_matches('"');
+        let mut m = 0u16;
+        for b in spec.split('+').filter(|x| !x.is_empty()) {
+            let bit = names.iter().position(|n| *n == b).unwrap_or_else(|| panic!("button {b}"));
+            m |= 1 << bit;
+        }
+        out.push((vb, m));
+        rest = &rest[end + 1..];
+    }
+    out
+}
+
+/// Trace fields of a kart record + camera, same names as tools/oracle/trace.py.
+pub const SIM_FIELDS: &[&str] = &[
+    "x", "y", "z", "pitch", "heading", "roll", "vx", "vy", "vz", "speed", "yaw_rate",
+    "m0", "m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8", "clock", "dt",
+    "cam_x", "cam_y", "cam_z", "c0", "c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8",
+];
+
+fn sim_row(s: &mr_sim::session::Session) -> Vec<i64> {
+    let r = &s.record;
+    let i32at = |o: usize| i32::from_le_bytes([r[o], r[o + 1], r[o + 2], r[o + 3]]) as i64;
+    let i16at = |o: usize| i16::from_le_bytes([r[o], r[o + 1]]) as i64;
+    let mut v = vec![i32at(0), i32at(4), i32at(8), i16at(0xC), i16at(0xE), i16at(0x10),
+        i32at(0x2F4), i32at(0x2F8), i32at(0x2FC), i32at(0x390), i32at(0x394)];
+    for k in 0..9 {
+        v.push(i16at(0x18C + 2 * k));
+    }
+    v.push(i32at(0x358));
+    v.push(2);
+    let c = &s.camera;
+    v.extend(c.pos.iter().map(|&x| x as i64));
+    for row in c.matrix {
+        v.extend(row.iter().map(|&x| x as i64));
+    }
+    v
+}
+
+impl SimRun {
+    fn new(oracle_grid: bool, leader: bool) -> SimRun {
+        let mut disc = mr_disc::Disc::open_default().expect("open the disc (MRM_DISC or game.toml)");
+        let mut session = mr_sim::session::Session::new(&mut disc).expect("start the mr-sim session");
+        if !leader {
+            // Catch-up as in the oracle runs (player 6th, leader far ahead):
+            // speed cap 0xA00 instead of 0x800. docs/spec/kart-physics-ledger.md.
+            session.leader_progress_override = Some(1000);
+            session.kart.catchup = 180;
+        }
+        let a: Vec<String> = std::env::args().collect();
+        let route = a.iter().position(|x| x == "--route").and_then(|i| a.get(i + 1)).map(|p| parse_route(&std::fs::read_to_string(p).expect("read --route")));
+        SimRun { session, align: if oracle_grid { 143 } else { 0 }, buttons: vec![], rows: vec![], stopped: None, route }
+    }
+
+    /// Write the driven inputs as an oracle route (tools/oracle/routes format):
+    /// tick k after alignment uses the pad word visible at VBlank 2(k+1), so
+    /// each step starts at VBlank 2k+1.
+    pub fn write_route(&self, path: &str) {
+        let names = ["select", "", "", "start", "up", "right", "down", "left", "l2", "r2", "l1", "r1", "triangle", "circle", "cross", "square"];
+        let spec = |m: u16| (0..16).filter(|b| m & (1 << b) != 0 && !names[*b as usize].is_empty()).map(|b| names[b as usize]).collect::<Vec<_>>().join("+");
+        let mut steps = vec![format!("[0, \"\"]")];
+        let mut last = 0u16;
+        for (k, &m) in self.buttons.iter().enumerate() {
+            if m != last {
+                steps.push(format!("[{}, \"{}\"]", 2 * k + 1, spec(m)));
+                last = m;
+            }
+        }
+        let end = 2 * self.buttons.len() + 2;
+        let json = format!("{{\"name\": \"bevy-drive\", \"slot\": 2, \"end_vb\": {end},
+ \"note\": \"recorded in mr-bevy --oracle-grid\",
+ \"steps\": [{}]}}
+", steps.join(", "));
+        std::fs::write(path, json).expect("write route");
+    }
+
+    pub fn write_trace(&self, path: &str) {
+        let mut t = mr_trace::Trace::new("rust-bevy", "bevy-drive", SIM_FIELDS);
+        t.note = "mr-bevy live session (mr-sim standalone)".into();
+        for (k, b, v) in &self.rows {
+            t.push(*k, *b as u32, v.clone());
+        }
+        t.write(path).expect("write trace");
+    }
+}
+
 fn main() {
     let args = parse_args();
     let driver = match &args.replay {
@@ -249,7 +360,10 @@ fn main() {
             }
             Driver::Replay { trace: Trace::read(p).expect("read --replay trace"), at: 0, karts }
         }
-        None => Driver::Sim,
+        None => {
+            let a: Vec<String> = std::env::args().collect();
+            Driver::Sim(Box::new(SimRun::new(a.iter().any(|x| x == "--oracle-grid"), a.iter().any(|x| x == "--leader"))))
+        }
     };
     let ghost = args.ghost.as_ref().map(|p| Trace::read(p).expect("read --ghost trace"));
     App::new()
@@ -268,6 +382,7 @@ fn main() {
         .add_systems(Startup, (scene::setup, setup_camera))
         .add_systems(FixedUpdate, (sim_tick, ghost::tick.after(sim_tick)))
         .insert_resource(shot_plan())
+        .add_systems(Last, write_outputs)
         .add_systems(Update, (place_player, place_parts, ghost::place, follow_camera, title, follow_sky.after(follow_camera), select_objects, shot.after(follow_sky).after(select_objects)))
         .run();
 }
@@ -307,7 +422,49 @@ fn sim_tick(mut p: ResMut<Player>, keys: Res<ButtonInput<KeyCode>>, pads: Query<
                 *at += 1;
             }
         }
-        Driver::Sim => {}
+        Driver::Sim(run) => {
+            if run.stopped.is_none() {
+                let idle = run.session.ticks < run.align;
+                let k = run.buttons.len() as u64;
+                let scripted = run.route.as_ref().map(|r| {
+                    let vb = 2 * k + 1;
+                    r.iter().take_while(|(v, _)| *v <= vb).last().map(|(_, m)| *m).unwrap_or(0)
+                });
+                let b = if idle { 0 } else { scripted.unwrap_or(buttons) };
+                match run.session.tick(b) {
+                    Ok(()) => {
+                        if !idle {
+                            run.buttons.push(b);
+                            let k = run.buttons.len() as i64;
+                            let row = sim_row(&run.session);
+                            run.rows.push((k, b, row));
+                        }
+                    }
+                    Err(e) => run.stopped = Some(format!("{e:?}")),
+                }
+            }
+            let s = &run.session;
+            let r = &s.record;
+            let i32at = |o: usize| i32::from_le_bytes([r[o], r[o + 1], r[o + 2], r[o + 3]]);
+            let mut m = [0i32; 9];
+            for (i, v) in m.iter_mut().enumerate() {
+                *v = i16::from_le_bytes([r[0x18C + 2 * i], r[0x18D + 2 * i]]) as i32;
+            }
+            let c = &s.camera;
+            let mut cm = [0i32; 9];
+            for (i, v) in cm.iter_mut().enumerate() {
+                *v = c.matrix[i / 3][i % 3] as i32;
+            }
+            pose = Pose {
+                x: i32at(0),
+                y: i32at(4),
+                z: i32at(8),
+                heading: i16::from_le_bytes([r[0xE], r[0xF]]) as i32,
+                m,
+                cam: Some((c.pos, cm)),
+            };
+            kart = Some(r.clone());
+        }
     }
     p.prev_kart = p.kart.take();
     p.kart = kart;
@@ -451,4 +608,23 @@ fn write_png(img: &Image, path: &str) {
         px[3] = 255;
     }
     let _ = std::fs::write(path, mr_assets::img::png_rgba(w, h, &rgba));
+}
+
+/// On exit: --record-route PATH and --trace-out PATH for the oracle loop
+/// (replay the drive in the recomp: tools/oracle/trace.py PATH ...; compare
+/// with mr-compare).
+fn write_outputs(mut ev: MessageReader<AppExit>, p: Res<Player>) {
+    if ev.read().next().is_none() {
+        return;
+    }
+    let a: Vec<String> = std::env::args().collect();
+    let opt = |k: &str| a.iter().position(|x| x == k).and_then(|i| a.get(i + 1)).cloned();
+    if let Driver::Sim(run) = &p.driver {
+        if let Some(path) = opt("--record-route") {
+            run.write_route(&path);
+        }
+        if let Some(path) = opt("--trace-out") {
+            run.write_trace(&path);
+        }
+    }
 }

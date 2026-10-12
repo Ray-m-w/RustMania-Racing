@@ -190,13 +190,13 @@ pub fn read_fixtures(path: impl AsRef<Path>) -> std::io::Result<Vec<Fixture>> {
 
 use crate::camera::TrailEntry;
 use crate::kart::KartState;
-use crate::tables::{ExeImage, Tables};
-use crate::world::{Course, FinishLine, HeapLayout, TickInputs, Trigger, World};
+use crate::world::{HeapLayout, TickInputs, World};
 
 /// Course-data addresses in RAM (pointers the .DAT loader FUN_8002E3DC sets).
 pub mod course_addr {
     /// Heap address the .DAT file was loaded at.
     pub const DAT_BASE_PTR: u32 = 0x800B_0EE8;
+    pub const GRID_PTR: u32 = 0x800D_1C4C;
     pub const FINISH_PTR: u32 = 0x800D_1C54;
     pub const LENGTH_PTR: u32 = 0x800D_1C5C;
     pub const TRIGGER_PTR: u32 = 0x800D_1C9C;
@@ -213,44 +213,24 @@ pub mod course_addr {
 /// pointers give (pointer - DAT load address), each checked against RAM.
 pub fn dock_world(ram0: &[u8]) -> World {
     let mut disc = mr_disc::Disc::open_default().expect("open the owner's disc");
-    let exe = ExeImage::parse(&disc.read("SLUS_012.37").expect("read SLUS_012.37")).expect("exe");
-    let ter_bytes = disc.read("COURSE_A/DOCK.TER").expect("read DOCK.TER");
-    let dat = disc.read("COURSE_A/DOCK.DAT").expect("read DOCK.DAT");
-    let ter = mr_assets::ter::Ter::parse(&ter_bytes).expect("parse DOCK.TER");
+    let mut w = World::dock(&mut disc).expect("DOCK world from the disc");
     let m = Mem::new(ram0[..0x20_0000].to_vec(), ram0[0x20_0000..0x20_0400].to_vec());
+    w.heap = HeapLayout { faces: m.u32(course_addr::FACES_PTR) };
+    // The course records must be what the game registered (pointers into
+    // the loaded DAT image).
     let base = m.u32(course_addr::DAT_BASE_PTR);
-    let file = |ptr: u32, n: usize| -> Option<Vec<u8>> {
-        if ptr == 0 {
-            return None;
-        }
-        let off = (ptr - base) as usize;
-        let b = dat[off..off + n].to_vec();
-        assert_eq!(&b[..], m.slice(ptr, n), "DOCK.DAT bytes at {off:#x} differ from RAM {ptr:08X}");
-        Some(b)
-    };
-    let le32 = |b: &[u8], i: usize| i32::from_le_bytes(b[4 * i..4 * i + 4].try_into().unwrap());
-    let finish = file(m.u32(course_addr::FINISH_PTR), 52).map(|b| {
-        let mut words = [0i32; 13];
-        for (i, wd) in words.iter_mut().enumerate() {
-            *wd = le32(&b, i);
-        }
-        FinishLine { words }
-    });
-    let length = file(m.u32(course_addr::LENGTH_PTR), 2).map(|b| u16::from_le_bytes([b[0], b[1]]));
-    let n_trig = m.u8(course_addr::TRIGGER_COUNT) as usize;
-    let triggers = match file(m.u32(course_addr::TRIGGER_PTR), 36 * n_trig) {
-        Some(b) => (0..n_trig).map(|i| Trigger { pos: [le32(&b, 9 * i + 1), le32(&b, 9 * i + 2), le32(&b, 9 * i + 3)] }).collect(),
-        None => vec![],
-    };
-    let has_other_objects = course_addr::OTHER_LISTS.iter().any(|&a| m.u32(a) != 0)
-        || course_addr::OTHER_BYTES.iter().any(|&a| m.u8(a) != 0);
-    World {
-        tables: Tables::from_exe(&exe),
-        exe,
-        ter,
-        course: Course { finish, length, triggers, has_other_objects },
-        heap: HeapLayout { faces: m.u32(course_addr::FACES_PTR) },
+    let dat = disc.read("COURSE_A/DOCK.DAT").expect("read DOCK.DAT");
+    for (ptr, n) in [(course_addr::GRID_PTR, 4), (course_addr::FINISH_PTR, 52), (course_addr::LENGTH_PTR, 4), (course_addr::TRIGGER_PTR, 72)] {
+        let p = m.u32(ptr);
+        let off = (p - base) as usize;
+        assert_eq!(&dat[off..off + n], m.slice(p, n), "DOCK.DAT at {off:#x} vs RAM {p:08X}");
     }
+    let c = &w.course;
+    assert_eq!(c.triggers.len(), m.u8(course_addr::TRIGGER_COUNT) as usize);
+    assert_eq!(c.grid.len(), (m.u16(m.u32(course_addr::GRID_PTR)) >> 1) as usize);
+    let other = course_addr::OTHER_LISTS.iter().any(|&a| m.u32(a) != 0) || course_addr::OTHER_BYTES.iter().any(|&a| m.u8(a) != 0);
+    assert_eq!(c.has_other_objects, other);
+    w
 }
 
 /// Per-tick inputs from the rest of the race, read from game memory.

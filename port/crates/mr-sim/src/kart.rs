@@ -30,6 +30,9 @@ macro_rules! kart_fields {
             /// 12 entries, newest first. Not part of the 0x504 bytes: the
             /// harness loads and stores it through `history_ptr`.
             pub trail: [crate::camera::TrailEntry; crate::camera::TRAIL_LEN],
+            /// +0x18C: body matrix (4.12, rows), rebuilt after the kart loop
+            /// by FUN_80025D8C (body.rs); the camera reads it.
+            pub body: [[i16; 3]; 3],
         }
 
         /// Byte offsets of every scalar field, for reports.
@@ -56,6 +59,9 @@ macro_rules! kart_fields {
                     k.shape[i] = i16::from_le_bytes(r[0x414 + 2 * i..0x416 + 2 * i].try_into().unwrap());
                 }
                 k.weapons.copy_from_slice(&r[0x4D0..0x4D6]);
+                for i in 0..9 {
+                    k.body[i / 3][i % 3] = i16::from_le_bytes([r[0x18C + 2 * i], r[0x18D + 2 * i]]);
+                }
                 k
             }
 
@@ -74,6 +80,9 @@ macro_rules! kart_fields {
                     r[0x414 + 2 * i..0x416 + 2 * i].copy_from_slice(&self.shape[i].to_le_bytes());
                 }
                 r[0x4D0..0x4D6].copy_from_slice(&self.weapons);
+                for i in 0..9 {
+                    r[0x18C + 2 * i..0x18E + 2 * i].copy_from_slice(&self.body[i / 3][i % 3].to_le_bytes());
+                }
             }
         }
     };
@@ -166,6 +175,9 @@ kart_fields! {
     /// Water surface height (low byte kept between ticks).
     water_y: i32 @ 0x398,
     /// Ground speed: |position delta| / dt.
+    /// FUN_8009004C: track width at the nearest path point (bytes * -8 / << 3)
+    /// and the signed lateral offset from it.
+    path_width_l: i32 @ 0x3F4, path_width_r: i32 @ 0x3F8, path_lateral: i32 @ 0x3FC,
     speed_est: i32 @ 0x400,
     /// Kart-kart contact bits: other karts' `own_bit` this kart overlaps.
     hit_mask: u16 @ 0x410,
@@ -235,6 +247,8 @@ kart_fields! {
     /// 0 on the ground, 1 just above water / ground, 2 in the water.
     float_state: u8 @ 0x4C8,
     reversing: u8 @ 0x4C9,
+    start_pos: u8 @ 0x4CA,
+    path_flag_4cb: u8 @ 0x4CB,
     /// Shoulder-button latches: L1, L2, R1, R2.
     latch_l1: u8 @ 0x4CC, latch_l2: u8 @ 0x4CD, latch_r1: u8 @ 0x4CE, latch_r2: u8 @ 0x4CF,
     special: u8 @ 0x4D6,
@@ -266,6 +280,7 @@ kart_fields! {
     flash_timer: i8 @ 0x4FC,
     /// TRIANGLE latch and the kart TRIANGLE locks the camera onto.
     item_fire: u8 @ 0x4FD, look_target: u8 @ 0x4FE,
+    path_side: u8 @ 0x500,
     close_kart: u8 @ 0x501,
     on_ground: u8 @ 0x502,
     warn_timer: i8 @ 0x503,

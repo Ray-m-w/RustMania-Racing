@@ -20,18 +20,23 @@ macro_rules! unreachable_in_scope {
     };
 }
 
+pub mod body;
 pub mod camera;
 pub mod collide;
 pub mod fixed;
 pub mod globals;
 pub mod harness;
+pub mod init;
 pub mod ground;
 pub mod kart;
 pub mod mem;
 pub mod oracle;
 pub mod progress;
+pub mod session;
 pub mod tables;
 pub mod update;
+pub mod vehicle;
+pub mod water;
 pub mod world;
 
 pub use globals::RaceGlobals;
@@ -68,4 +73,6 @@ pub fn tick_with_karts(
         k.aim_dist = d;
     }
     tick(k, g, w, inp, buttons);
+    // After the kart loop: FUN_80025D8C rebuilds the body matrix.
+    k.body = body::body_matrix(&w.tables, k);
 }

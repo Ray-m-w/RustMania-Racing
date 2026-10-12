@@ -166,3 +166,37 @@ push, angle, speed; tie = random byte) spins harder.
   also run with `--base analysis/oracle/lap1P3`, but they do not record the
   water normal or the other karts, so they diverge once the kart enters the
   water (c_steer, tick 158) or is bumped (c_idle, tick 1266).
+
+## Standalone session (session.rs; no oracle data at run time)
+`Session::new(&mut disc)` builds a one-player DOCK race from the disc alone:
+- World: SLUS_012.37 tables, DOCK.TER, DOCK.DAT course records by chunk id
+  (grid 1, finish line 3, course length 5, triggers 0x15; the ids the .DAT
+  loader FUN_8002E3DC registers at 0x800D1C48 + 4 * id).
+- Vehicle template (vehicle.rs): FUN_80087EB4's stores for vehicle 0 (code
+  immediates, cited per instruction) + the exe stat row 0x800ACDB0 + wheel
+  pivots/radii from VEHIC_A/RACER.MDL parts 0..3 (FUN_80087B6C). Matches the
+  game's own FUN_80087EB4 run on a cleared table byte for byte except the wheel
+  fields, which match the RAM the model loader produced.
+- Kart (init.rs): FUN_800609F4(kart 0, Kermit, RACER, grid 5, flags 0): grid
+  point from DAT chunk 1 (entry 5 = the oracle's slot), heading toward the
+  entry's second point, ground query, pitch/roll from the floor normal
+  (FUN_8003CCBC), identity matrices, template copy, camera mount (the
+  character table 0x800AC038 with its first halfword replaced by |KERMIT.MDL
+  part 0 pivot y| as FUN_80087ACC does at model load), probe span, history
+  ring, path position.
+- Globals: the race settings of the oracle's savestate (SessionConfig).
+Per tick (`Session::tick(buttons)`, dt = 2): water animation FUN_8003C5FC
+(water.rs, random pointer modelled: reset to 0x8001F94C at race load, stepped
+and wrapped once per frame by FUN_8007D304), the contact pass's resets, path
+position FUN_8009004C (kart 0 every frame with one kart; note the game measures
+point j-1 and records index j), the kart tick, body matrix FUN_80024594 via
+FUN_80025D8C (body.rs), the camera (camera.rs, ground query from Ter::ground,
+first tick places it), frame counter and race clock (FUN_8005C2EC).
+
+Verification: water.rs = the game's FUN_8003C5FC on 400 random states (angles,
+targets, random pointer, dt 2/3) bit-exact (tools/oracle/fx_water.py,
+tests/standalone.rs); path_position = the oracle on all 256 lap frames where
+the game updated kart 0's path; body matrix = the oracle on every lap tick;
+Session::new after 143 idle ticks (the oracle savestate's race clock 1430)
+equals the oracle's grid record in every motion field and the body matrix
+(differences listed and explained in tests/standalone.rs and the ledger).

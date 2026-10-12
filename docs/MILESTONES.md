@@ -15,3 +15,15 @@ reports as a performance problem; overlays reached during the race are
 captured and compiled so a second run is native; load times and audio are
 acceptable to the owner. Stretch, only if everything above is done:
 widescreen per docs/WIDESCREEN.md.
+
+SESSION 1 OUTCOME (2026-10-12)
+Session 1 delivered the native boot AND, at the owner's request, the full
+Session-2 goal above (complete, playable, portable build). See
+docs/notes/SESSION-1-handoff.md.
+
+BEVY PORT (from 2026-10-12)
+Eventual goal: 100% Rust + Bevy reimplementation that feels the same, using the
+original assets. Hybrid first, one subsystem at a time, verified against the
+recomp. Milestone 1 (docs/SESSION-2.md): one kart driving one track in Bevy
+with handling matching the recomp within a measured tolerance.
+

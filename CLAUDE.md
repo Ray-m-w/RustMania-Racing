@@ -43,6 +43,33 @@ RULES
   fix would mean modifying the framework (propose it instead); you need
   the owner to look at the screen.
 
+CURRENT STATE (2026-10-12; details in docs/notes/SESSION-1-handoff.md, docs/PLAN.md)
+- Complete and playable: portable zip via `.\tools\build.ps1 -Disc <cue> -Package`
+  (dist/mrm-<ver>-windows-x64.zip). Framework pin psxrecomp 2a4824fc.
+- Title packages in mods/preloaded + plugins in src/mods: widescreen (default
+  on), modern-controls (default on), fast-loading (default on), skip-fmv and
+  frame-rate (off). Their evidence and rejected alternatives are commented in
+  game.toml; read those comments before changing [video]/[widescreen]/[controller].
+
+WORKING CONVENTIONS LEARNED (do not relearn these)
+- Toolchain: psxrecomp's cmake-clang-v1 pack, entered with `. .\tools\devshell.ps1`.
+  MSVC cannot build this framework pin. `bash` must be Git bash (devshell does it).
+- Windows PowerShell 5.1 breaks psxrecomp's setup_project.ps1 (encoding, empty
+  args); see docs/notes/2026-10-11.md before re-scaffolding.
+- Debug runs: `.\tools\run-dev.ps1 -Start -Autocompile` / `-Stop` (RelWithDebInfo
+  build-dev, TCP 4370, restages game.toml, process guard). Drive with
+  `python tools\drive.py ...` (press, hold, until:<frame>, shot, ws, cmd:<name>).
+  Release builds have no TCP server.
+- TCP `turbo` stops window presents: never screenshot under turbo; `until:` turns
+  it off. Window captures = present_shot; VRAM truth = screenshot.
+- mods/state.toml beside the exe enables features for tests; build-dev/settings.toml
+  was not honoured for [video] keys in testing.
+- Overlay cache namespace depends on game.toml; after config changes re-warm the
+  cache (play movies + memory card with -Autocompile) before packaging.
+- Game facts: renders 30 fps; Triangle accelerates, Circle brakes, Square jumps;
+  stick folds into steering under DualShock; START is ignored while the title
+  animates in; menu routes over TCP are timing-sensitive.
+
 QUARRY: WHAT TO TAKE FROM F:\Muppet Racemania (copy, never modify)
 - BINLIST.toml: the disc's Redump-verified hashes, the PS-X EXE header
   (PC0 0x80093214, t_addr 0x80010000, t_size 0xA1000), SYSTEM.CNF, BIOS

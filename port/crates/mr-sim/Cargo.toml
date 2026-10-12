@@ -4,4 +4,9 @@ edition.workspace = true
 version.workspace = true
 publish.workspace = true
 
+# std-only simulation (ADR-0002). Path dependencies inside this workspace
+# only: mr-disc (read SLUS_012.37 and the course files from the owner's disc)
+# and mr-assets (TER terrain decoder and ground query).
 [dependencies]
+mr-disc = { path = "../mr-disc" }
+mr-assets = { path = "../mr-assets" }

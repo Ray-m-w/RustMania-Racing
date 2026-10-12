@@ -229,3 +229,77 @@ fn every_dat_on_disc_parses() {
     eprintln!("parsed {n} DAT files");
 }
 
+
+#[test]
+fn layer0_texture_lod() {
+    use dat::{lod_level_for_sz, lod_uvs, LodThresholds};
+    let uv = [[0x80, 0xFE], [0xBF, 0xFF], [0x9E, 0xC1], [0x41, 0x83]];
+    assert_eq!(lod_uvs(0, 0, uv), uv);
+    assert_eq!(lod_uvs(4, 2, uv), uv, "slots >= 4 have no reduced copies");
+    // GPU: a far sand quad stored (0x80,0xFE).. was sent as 0x3F20 (u 0x20, v 0x3F).
+    assert_eq!(lod_uvs(1, 2, uv)[0], [0x20, 0x3F]);
+    assert_eq!(lod_uvs(3, 1, uv), [[0x40, 0x7F], [0x5F, 0x7F], [0x4F, 0x60], [0x20, 0x41]]);
+    let t = LodThresholds::ONE_PLAYER;
+    // RAM table: T[1901] = 0xC00, T[1902] > 0xC00; T[4900] <= 0xF80 < T[4901].
+    assert_eq!((t.level(950), t.level(951), t.level(2450), t.level(2451)), (0, 1, 1, 2));
+    // GPU (DOCK, sand bias 96+16*4): avg SZ ~3000 -> LOD 0, ~9000 -> 1, ~9700 -> 2.
+    let bias = dat::lod_bias(96, 4);
+    assert_eq!(lod_level_for_sz([3000; 4], bias, t), 0);
+    assert_eq!(lod_level_for_sz([9000; 4], bias, t), 1);
+    assert_eq!(lod_level_for_sz([9700; 4], bias, t), 2);
+    assert_eq!(LodThresholds::NONE.level(1 << 20), 0);
+    let Some(mut disc) = disc() else { return };
+    let exe = disc.read("SLUS_012.37").unwrap();
+    assert_eq!(dat::course_depth_bias(&exe, 3).unwrap(), 96);
+}
+
+#[test]
+fn layer1_overlaps_layer0() {
+    // [INFER check] Layer 1 (mostly untextured) covers the same places as
+    // layer-0 scenery: its stand-ins for distant views.
+    let Some(mut disc) = disc() else { return };
+    let (_, d, sin) = load(&mut disc, "COURSE_A/DOCK.DAT");
+    let bbox = |o: &dat::Object| {
+        let t = d.transform(o, &sin);
+        let mut mn = [i32::MAX; 3];
+        let mut mx = [i32::MIN; 3];
+        for v in &d.mesh(o).unwrap().vertices {
+            let w = t.apply(v.pos);
+            for k in 0..3 {
+                mn[k] = mn[k].min(w[k]);
+                mx[k] = mx[k].max(w[k]);
+            }
+        }
+        (mn, mx)
+    };
+    let l0: Vec<_> = d.layer(Layer::World).iter().map(bbox).collect();
+    let mut hit = 0;
+    let l1 = d.layer(Layer::Quarter);
+    for o in l1 {
+        let (a, b) = bbox(o);
+        if l0.iter().any(|(c, e)| a[0] <= e[0] && c[0] <= b[0] && a[2] <= e[2] && c[2] <= b[2]) {
+            hit += 1;
+        }
+    }
+    eprintln!("layer-1 objects whose x/z bbox overlaps a layer-0 object: {hit} of {}", l1.len());
+    assert!(hit * 10 >= l1.len() * 9);
+}
+
+#[test]
+fn dock_vis_node_and_selection() {
+    let Some(mut disc) = disc() else { return };
+    let (_, d, _) = load(&mut disc, "COURSE_A/DOCK.DAT");
+    // RAM: eye/32 = (27164, 1206, 19247) (from the frame's GTE) -> DAT_800b0d40 = 121.
+    let eye = [27164, 1206, 19247];
+    assert_eq!(d.vis_zone(eye, 0), 0);
+    assert_eq!(d.vis_node(0, eye), Some(121));
+    // Layer 1 is never selected right next to the camera (z < cd0/4 - r),
+    // except objects whose radius reaches past cd0/4.
+    let cam = [[4096, 0, 0], [0, 4096, 0], [0, 0, 4096]];
+    let mask = vec![0xFF; 256];
+    for o in d.layer(Layer::Quarter).iter().filter(|o| o.flags & 0x80 == 0 && (o.radius as i32) < (2386 >> 2) - 30) {
+        let e = [o.centre[0] * 4, o.centre[1] * 4, o.centre[2] * 4 - 100];
+        let sel = d.drawn(e, cam, &mask, dat::DrawParams::DOCK_1P);
+        assert!(!sel.iter().any(|x| x.object == d.objects.iter().position(|y| y.offset == o.offset).unwrap()));
+    }
+}

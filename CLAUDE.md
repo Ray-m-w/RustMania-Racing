@@ -66,9 +66,13 @@ WORKING CONVENTIONS LEARNED (do not relearn these)
   was not honoured for [video] keys in testing.
 - Overlay cache namespace depends on game.toml; after config changes re-warm the
   cache (play movies + memory card with -Autocompile) before packaging.
-- Game facts: renders 30 fps; Triangle accelerates, Circle brakes, Square jumps;
-  stick folds into steering under DualShock; START is ignored while the title
-  animates in; menu routes over TCP are timing-sensitive.
+- Game facts: renders 30 fps (drops to 20 in heavy scenes, dt=3); CROSS
+  accelerates (corrected 2026-10-12 from the code: TRIANGLE is camera lock-on),
+  Circle brakes and Square jumps (swapped in the alternate controller setup,
+  byte 0x800E0392+player); stick folds into steering under DualShock; START is
+  ignored while the title animates in; menu routes over TCP are timing-sensitive.
+- Port (session 2): port/ Cargo workspace; oracle harness tools/oracle/ +
+  dev-only bridge plugin (docs/notes/SESSION-2-oracle.md); specs docs/spec/.
 
 QUARRY: WHAT TO TAKE FROM F:\Muppet Racemania (copy, never modify)
 - BINLIST.toml: the disc's Redump-verified hashes, the PS-X EXE header

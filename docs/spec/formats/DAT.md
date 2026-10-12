@@ -94,8 +94,8 @@ layer 1 {0x01, 0x09, 0x89}. Meaning of 0x10/0x40 [INFER: render path options].
 | 0 | 0 | i32 x3 | origin: translation of the mesh (layer units) [GTE] |
 | 0xC | 0xC | u16 x3 | angles ax, ay, az (12-bit) |
 | - | 0x12 | i16 x3 | column scale (4.12) |
-| 0x12 | 0x18 | u8 | "b_lo": loader keeps low nibble [CODE] |
-| 0x13 | 0x19 | u8 | "b_hi": high 5 bits clamped to 18 by FUN_8002e13c [INFER: LOD/distance] |
+| 0x12 | 0x18 | u8 | "b_lo": loader keeps low nibble; layer-0 depth (OT) bias index, bias += 16*b_lo (table 0x800A87C4) [CODE 80028010][GPU] |
+| 0x13 | 0x19 | u8 | "b_hi": bits 0-2 light-matrix select (0x800BBA00 + 32n, 0 = default) [CODE 80028010]; bits 3-7 clamped to 18 by FUN_8002e13c, scale FUN_80012390's param_2 [INFER: draw distance] |
 | - | 0x1A | u16 | unknown (0 or small) |
 | 0x14 | 0x1C | u32 | model offset |
 | 0x18 | 0x20 | u32 | second model offset, only with flag 0x20 (none on DOCK) |
@@ -164,9 +164,40 @@ Texture attributes (both renderers): tpage = slot.tpage + (header & 0x60);
 clut = slot.clut + (u0 >> 6) + 4 * (v0 >> 6) unless slot +8 is nonzero
 ((u0, v0) = first corner): 4-bit pages are 16 tiles of 64x64 texels, each with
 its own CLUT [GPU]. Layer-0 renderer only: for slots 0..3 the UVs are halved or
-quartered by depth (texture LOD, thresholds at scratch +0x88/+0x8A), the CLUT
-still chosen from the full-size UV [CODE 80016b3c][GPU]; near polygons are
+quartered by depth (see Texture LOD below); near polygons are
 subdivided/clipped with interpolated UVs and colours.
+
+### Texture LOD of layer-0 scenery [CODE 80012390, 80016b3c, 80042534, 8002e3dc] [RAM] [GPU]
+Only the layer-0 renderer (FUN_80012390/80012620 family) does this; layer 1
+(FUN_8001a304) always sends the stored UVs.
+- Pages of texture slots 0..3 (DOCK tpages 0..3, 4-bit): the RAW loader
+  (FUN_80044008) writes point-sampled reduced copies into the top-left corner:
+  texel (u, v) is also at (u/2, v/2) (w/2 x h/2) and (u/4, v/4) (w/4 x h/4).
+  VRAM check, DOCK pages 0..3: 3072 of 3072 sampled texels (u, v multiples of
+  4) equal both copies. Stored UVs never fall in u < 128 and v < 128, so they
+  always address full-resolution texels.
+- Per quad, for slots 0..3 (scratch +0x82 = slot < 4): LOD 0 = stored UVs,
+  LOD 1 = each UV byte >> 1, LOD 2 = >> 2; the CLUT is still chosen from the
+  full-size UV0, tpage unchanged; the level is cached in packet byte +0x26
+  (GP0 word 8 bits 16-23). `dat::lod_uvs`.
+- Level: k = OTZ + bias, OTZ = (ZSF4 * sum of the quad's 4 SZ) >> 12
+  (ZSF4 = 256: average SZ / 4), bias = course byte 0x800ACB3F[12*course]
+  (DOCK 96) + 16*b_lo. The game looks up off = T[2k] in the table FUN_80042534
+  builds (DAT_800b0ca8; DAT_800b0cd4 = 400 on DOCK) and compares with
+  scratch +0x88 = DAT_800b0f1c and +0x8A = DAT_800b0c44, copied by
+  FUN_80012390 per draw: LOD 0 if off <= +0x88, 1 if off <= +0x8A, else 2.
+  FUN_8002e3dc sets them to 0xC00/0xF80 (1 player; RAM on DOCK), 0/0xC00 if
+  DAT_800b0ca6 != 0, 0x4000/0x4000 (never reduced) for courses 0x1D/0x1E, mode
+  DAT_800b0b9a == 3 or DAT_800b0e38 > 6. On DOCK T first exceeds 0xC00 at
+  index 1902 and 0xF80 at 4901, so LOD 0 for k <= 950, LOD 1 for k <= 2450,
+  else LOD 2 (`LodThresholds::ONE_PLAYER`, `lod_level_for_sz`). For a sand
+  object (b_lo 4, bias 160): LOD 0 up to average SZ ~3160, LOD 1 up to ~9160.
+- GPU check (one frame, 80 slot-0..3 GT4 packets from layer 0 with all four
+  SZ in the GTE ring): the predicted level equals the packet's LOD byte for
+  80 of 80 (28 LOD 0, 48 LOD 1, 4 LOD 2), and every LOD 1/2 packet's UVs are a
+  decoded primitive's UVs >> 1 / >> 2 exactly. The near LOD 0 quads are also
+  subdivided 2x2 (UVs 0x00/0x1E-0x1F/0x3F inside a 64-texel tile, colours
+  interpolated); the texel mapping is the stored one.
 
 ### Kind 2/3 "parts" models [CODE 8002e13c] (none on DOCK; kept raw)
 i32 n; n x 12 bytes (three i32 per part [INFER: pivot]); then per part i32 k
@@ -178,13 +209,71 @@ records. Present on other tracks (e.g. STUNT/MOUNTAIN: 280).
 |---|---|---|
 | 0 | i16 | record length (DOCK 7378); next zone follows |
 | 2 | u16 | unknown (0) |
-| 4 | 256 | visibility mask at path node 0; MSB first per byte (0x80 = first object of the list FUN_80010000 walks). DOCK: bytes 0..0x49 (74 bytes = 589 layer-0 objects) and 0xE1..0xFF (31 bytes, matching the 243 layer-1 objects) are the only ones mask0 or the stream ever touch [INFER: layer 1 packed at the end] |
+| 4 | 256 | visibility mask at path node 0; MSB first per byte. Layer 0 object i: byte i/8 (FUN_80010000); layer 1 object i: byte 0xFF - i/8 (FUN_8001031c reads backwards from 0x800C1BC7) [CODE]. DOCK touches bytes 0..0x49 and 0xE1..0xFF only |
 | 0x104 | ... | delta stream of (xor mask, byte index) pairs; a pair with mask 0 separates nodes; stepping node k -> k+1 applies the pairs after separator k (backwards: the same pairs) |
 
 Zone selection: zone bbox = min/max of the zone chunk's points 0 and 1
 (table DAT_800e3478: min xyz, max xyz, size2 = sum of ((max-min)>>5)^2, chunk
 pointer, record pointer); nodes are the chunk's points 2.. (DOCK: 172 nodes =
 172 separators); the current node is the nearest to the player (distances >> 4).
+
+## Per-frame object selection [CODE 80029f40, 80010000, 8001031c, 8005d908, 8005dc14, 8002e2f0] [GTE]
+Units: DAT layer-0 units = kart/camera world units >> 5 (toward zero; the
+game uses the scratchpad copy 0x1F800384 = eye/32). Camera rotation = the
+camera record's matrix (0x800C4F40 +0, copy at 0x1F8003B4), not the 1.6x
+row-0-scaled view matrix used for projection.
+1. **Visibility node** (FUN_8005dc14, if DAT_800b0ac0 != -1 and
+   DAT_800b0f38 == 1): zone = the zone whose bbox (points 0/1 of its 0x40
+   chunk) contains eye/32, smallest size2 first, else last frame's (0 at
+   start); node = index of the nearest of the chunk's points 2.. by
+   sum(((p - eye/32) >> 4)^2), first minimum. The mask is stepped node by node
+   to it, so it equals `mask_at(node)` (RAM: node 44, 157 bits).
+2. **Layer 0** (FUN_80010000(list, view, eye/32)): object i uses mask byte
+   i/8, bit 0x80 >> (i%8). d = centre - eye; h = (dx>>4)^2 + (dz>>4)^2 -
+   (r>>4)^2 (horizontal only; r = radius, bit 15 cleared for flag 0x80);
+   (x, y, z) = (R * (i16)d) >> 12 (RTIR; offsets pass through 16-bit IR regs).
+   Frustum F: z + r > 0, |x| <= z + r, |y| <= 3z/4 + r (90 x 73.7 deg).
+   - flag 0x80 clear: needs h < ((5*cd0) >> 4)^2, F, z - r < 4*cd0,
+     flags != 5; then flag 0x40 set -> list 0x800D6890 ("ground");
+     flag 0x40 clear -> list 0x800D1DD0 only if also h < ((5*de8) >> 4)^2.
+   - flag 0x80 set: h < 0x600000 and F -> list 0x800D6890.
+3. **Layer 1** (FUN_8001031c(list, view, eye/32/4), the camera words divided
+   by 4 toward zero): object i uses mask byte 0xFF - i/8 (read backwards from
+   0x800C1BC7), bit 0x80 >> (i%8). (x, y, z) = R * (centre - eye/128) >> 12.
+   - flag 0x80 set (DOCK: the one 0x89 backdrop): -r <= z <= 16000;
+   - else: **z >= (cd0 >> 2) - r**, i.e. layer-1 objects are drawn only beyond
+     about cd0 DAT units (2386 on DOCK = ~76k world units) from the camera;
+   - then |x| <= z + r, |y| <= 3z/4 + r, z - r < 4*b00, flags != 5.
+4. Drawing (FUN_800289a0 / FUN_80027de0): an object is skipped if its record
+   +0x18 (packet buffer, per player) is 0; otherwise, while its re-transform
+   counter (record +0x26 + player) is nonzero it is decremented and the
+   object's previous packets are drawn again without GTE work, else it is
+   transformed and the counter set to s6 >> 2 (s6 = 4 on DOCK -> every other
+   render frame; 0xC/4 by group on tracks with id > 0x40 chunks). So a
+   selected object is drawn every frame but may show no GTE input in a frame.
+5. Each selected object draws `Descriptor::mesh` (desc +0x14/+0x1C; caseD_1
+   at 0x80028010 for plain meshes). DOCK has no second meshes; their use on
+   other tracks is not traced. Special-slot objects go through the same lists
+   at their run-time (moved) centre.
+6. Globals: cd0 = DAT_800b0cd0 (written each frame by FUN_80029f40 from
+   DAT_800b0ee4 or 5000; 2386 in DOCK races), de8 = DAT_800b0de8 =
+   DAT_800b0cd4 - 0x180 at load (2002), b00 = 0x4AF - DAT_800a8840 (1139).
+   FUN_8002e2f0 sets cd4 = 0x952 (track flag 4) / 5000 / 4000 / 0x600.
+7. After selection, the renderers skip single polygons by depth (OTZ below
+   scratch +0x38, or 4*OTZ >= 4*DAT_800b0cd4 in the layer-0 renderer) and
+   subdivide/clip near ones; that is per polygon, not per object.
+
+So the two layers are a near/far pair: layer 0 (textured, full units) is
+drawn up to ~4*cd0 (non-ground props only within 5*de8 horizontally); layer 1
+(quarter units, 207 of 243 DOCK objects entirely untextured, the rest mixed)
+covers the same places (every layer-1 x/z bbox overlaps layer-0 geometry)
+and is drawn only from cd0/4 quarter units = cd0 DAT units outward. Drawing
+layer 1 near the camera puts its coarse untextured stand-ins over the
+textured layer-0 ground.
+
+API: `Dat::vis_zone(eye, prev)`, `Dat::vis_node(zone, eye)`,
+`VisZone::mask_at(node)`, `Dat::drawn(eye, cam, &mask, DrawParams) ->
+Vec<Drawn { object, mesh, layer, list }>`, `DrawParams::DOCK_1P`.
 
 ## Public Rust API (`mr_assets::dat`)
 - `Dat::parse(&[u8]) -> Result<Dat, Error>`; fields `chunks: Vec<Chunk>`,
@@ -205,11 +294,17 @@ pointer, record pointer); nodes are the chunk's points 2.. (DOCK: 172 nodes =
   `blend_bits`, `semi_transparent`, `tex_slot`, `gpu_code`, `slots`;
   `Prim { idx, uv, raw }`.
 - `TexSlot { tpage, clut, fixed_clut }`, `prim_tpage_clut(slot, &group, &prim)`.
+- Texture LOD: `lod_uvs(slot, level, uv)`, `LodThresholds { lod0_max, lod1_max }`
+  (`ONE_PLAYER`, `CA6_SET`, `NONE`, `level(k)`), `lod_bias(course_bias, b_lo)`,
+  `course_depth_bias(&exe, course)`, `lod_level_for_sz(sz, bias, thresholds)`.
 - `SinTable::from_exe(&exe)` (reads the table from SLUS_012.37 on the disc),
   `rot_matrix`, `scale_matrix`, `Transform { m, origin, scale }` with
   `apply` (integer, as the game) and `apply_f`.
 - `VisZone { chunk, bbox_min, bbox_max, size2, offset, len, b02, mask0,
   stream }`, `separators()`, `mask_at(node)`.
+- Selection: `Dat::vis_zone(eye, prev)`, `Dat::vis_node(zone, eye)`,
+  `Dat::drawn(eye, cam, &mask, DrawParams) -> Vec<Drawn>`, `DrawParams
+  { cd0, de8, b00 }` (`DOCK_1P`), `DrawList::{Near, Ground}`.
 
 ## Verification
 Recomp: psxrecomp debug build, DOCK 1-player race, DAT at 0x80137E68,
@@ -250,7 +345,15 @@ Numbers from the last run (frames 19499/19540):
    base+0x52554}.
 6. Matrices hard-coded in tests from RAM: objects 0, 426, 427, 432, 589, 831
    (rotated, scaled, both layers), slot counts and descriptor pointer.
-7. All 36 DATs on the disc parse with no unaccounted bytes (BOG, GRAVE, ISLAND,
+7. Selection (`Dat::drawn`, eye and camera rebuilt from the frame's GTE RT/TR,
+   mask = `mask_at(vis_node)`), 3 camera positions: DOCK eye (27164, 1206,
+   19247): node 121 (RAM 121), 37 predicted (9 + 28), 1186/1186 drawn GTE
+   entries belong to predicted objects, 0 drawn objects unpredicted, 4
+   predicted without GTE input (cached re-draws, rule 4); without the mask 10
+   more objects (all untextured) would pass. ISLAND (no zone) eyes
+   (1888, -752, 20352) and (-21913, 101, -7154): 1230/1230 and 2620/2620
+   entries explained, 0 unpredicted, 12 and 7 predicted without GTE input.
+8. All 36 DATs on the disc parse with no unaccounted bytes (BOG, GRAVE, ISLAND,
    DISCO, DINER, MOUNTAIN have unreferenced meshes between models; DISCO has
    256 raw bytes there).
 
@@ -258,8 +361,7 @@ Numbers from the last run (frames 19499/19540):
 - Meaning of each point-list id (paths for AI / camera / items?).
 - block128 (empty on DOCK), descriptor b_lo/b_hi/b_extra,
   object byte +0x0F, zone +0x02, flag bits 0x10/0x40.
-- Layer-1 part of the visibility mask (bytes 0xE1..0xFF) and which code reads it.
 - Kind 2/3 parts-model record layout; 12-byte-vertex meshes (negative count).
-- The layer-0 renderer's subdivision/clipping rules and LOD thresholds
-  (scratch +0x88/+0x8A), needed for pixel-exact rendering, not for the data.
+- The layer-0 renderer's subdivision/clipping rules (needed for pixel-exact
+  rendering, not for the data); the LOD rule is decoded.
 - The object centre is the bbox centre only approximately (up to 77 units).

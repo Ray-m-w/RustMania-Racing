@@ -33,12 +33,31 @@ fn srgb_to_linear(c: f32) -> f32 {
 
 /// Build meshes + materials for a set of polygons. `scale` maps game units to
 /// Bevy units through `crate::to_bevy`-style axis flips.
+/// Materials shared between meshes, keyed by (texture, semi-transparent).
+/// `depth_bias` is applied to every material this cache creates (used to put
+/// the game's "ground" draw list behind coplanar detail, as its ordering
+/// table does: the PS1 has no depth buffer).
+#[derive(Default)]
+pub struct MatCache(pub HashMap<(Option<(u16, u16)>, bool), Handle<StandardMaterial>>, pub f32);
+
 pub fn build(
     polys: &[PsxPoly],
     textures: &mut VramTextures,
     images: &mut Assets<Image>,
     meshes: &mut Assets<Mesh>,
     mats: &mut Assets<StandardMaterial>,
+    to_bevy: impl Fn([i32; 3]) -> Vec3,
+) -> Vec<(Handle<Mesh>, Handle<StandardMaterial>)> {
+    build_cached(polys, textures, images, meshes, mats, &mut MatCache::default(), to_bevy)
+}
+
+pub fn build_cached(
+    polys: &[PsxPoly],
+    textures: &mut VramTextures,
+    images: &mut Assets<Image>,
+    meshes: &mut Assets<Mesh>,
+    mats: &mut Assets<StandardMaterial>,
+    cache: &mut MatCache,
     to_bevy: impl Fn([i32; 3]) -> Vec3,
 ) -> Vec<(Handle<Mesh>, Handle<StandardMaterial>)> {
     let mut groups: HashMap<(Option<(u16, u16)>, bool), Vec<&PsxPoly>> = HashMap::new();
@@ -82,24 +101,28 @@ pub fn build(
             .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
             .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, col)
             .with_inserted_indices(Indices::U32(idx));
-        let mut m = StandardMaterial {
-            base_color: Color::WHITE,
-            unlit: true,
-            cull_mode: None,
-            double_sided: true,
-            ..default()
-        };
-        if let Some((tp, cl)) = key.0 {
-            m.base_color_texture = Some(textures.get(images, tp, cl));
-            m.alpha_mode = if key.1 { AlphaMode::Blend } else { AlphaMode::Mask(0.5) };
-            if key.1 {
+        let mat = cache.0.entry(key).or_insert_with(|| {
+            let mut m = StandardMaterial {
+                base_color: Color::WHITE,
+                unlit: true,
+                cull_mode: None,
+                double_sided: true,
+                depth_bias: cache.1,
+                ..default()
+            };
+            if let Some((tp, cl)) = key.0 {
+                m.base_color_texture = Some(textures.get(images, tp, cl));
+                m.alpha_mode = if key.1 { AlphaMode::Blend } else { AlphaMode::Mask(0.5) };
+                if key.1 {
+                    m.base_color = Color::srgba(1.0, 1.0, 1.0, 0.5);
+                }
+            } else if key.1 {
+                m.alpha_mode = AlphaMode::Blend;
                 m.base_color = Color::srgba(1.0, 1.0, 1.0, 0.5);
             }
-        } else if key.1 {
-            m.alpha_mode = AlphaMode::Blend;
-            m.base_color = Color::srgba(1.0, 1.0, 1.0, 0.5);
-        }
-        out.push((meshes.add(mesh), mats.add(m)));
+            mats.add(m)
+        });
+        out.push((meshes.add(mesh), mat.clone()));
     }
     out
 }

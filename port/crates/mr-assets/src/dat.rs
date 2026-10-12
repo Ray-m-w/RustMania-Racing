@@ -276,9 +276,14 @@ pub struct Descriptor {
     pub angles: [u16; 3],
     /// SCALED only: +0x12 i16 x3, 4.12 column scales.
     pub scale: Option<[i16; 3]>,
-    /// +0x12 (or +0x18 scaled) u8: the loader keeps only the low nibble.
+    /// +0x12 (or +0x18 scaled) u8: the loader keeps only the low nibble,
+    /// the layer-0 depth (OT) bias index: bias = 16 * b_lo (`lod_bias`).
+    /// [CODE 80028010]
     pub b_lo: u8,
-    /// +0x13 (or +0x19) u8: FUN_8002e13c clamps its high 5 bits to <= 18.
+    /// +0x13 (or +0x19) u8: bits 0-2 select a light matrix (0x800BBA00 +
+    /// 32n; 0 = default) [CODE 80028010]; bits 3-7 (clamped to 18 by
+    /// FUN_8002e13c) scale the value passed as FUN_80012390 param_2
+    /// [INFER: draw distance].
     pub b_hi: u8,
     /// SCALED only: +0x1a u16, unknown (0 or small on DOCK).
     pub b_extra: u16,
@@ -514,6 +519,93 @@ pub fn prim_tpage_clut(slot: TexSlot, g: &PrimGroup, p: &Prim) -> (u16, u16) {
     (tpage, clut)
 }
 
+// ---------------------------------------------------------------------------
+// Texture LOD of the layer-0 renderer
+// ---------------------------------------------------------------------------
+
+/// Texture LOD of layer-0 scenery (FUN_80012390 / FUN_80012620 family; the
+/// layer-1 renderer FUN_8001a304 never applies it). [CODE 80016b3c,
+/// 80012390, 80042534, 8002e3dc] [RAM] [GPU]
+///
+/// The RAW loader (FUN_80044008) overwrites the top-left of each 4-bit page
+/// of slots 0..3 with point-sampled reduced copies: texel (u, v) of the full
+/// page is also at (u/2, v/2) in the w/2 x h/2 corner and at (u/4, v/4) in
+/// the w/4 x h/4 corner (VRAM check on DOCK pages 0..3: 3072/3072 sampled
+/// texels each). Stored UVs never point into that corner; they address the
+/// full-resolution texels. LOD 1/2 divide each UV byte by 2/4, keeping the
+/// CLUT chosen from the full-size UV (`prim_tpage_clut`).
+pub fn lod_uvs(slot: u8, level: u8, uv: [[u8; 2]; 4]) -> [[u8; 2]; 4] {
+    if slot >= 4 || level == 0 {
+        return uv;
+    }
+    let sh = level.min(2);
+    uv.map(|c| c.map(|b| b >> sh))
+}
+
+/// Depth limits of the LOD bands in "k" units, k = OTZ + bias where
+/// OTZ = (ZSF4 * (sz0+sz1+sz2+sz3)) >> 12 of the quad (ZSF4 = 256 in a race:
+/// the average screen z / 4) and bias = `lod_bias`. LOD 0 if k <= lod0_max,
+/// LOD 1 if k <= lod1_max, else LOD 2.
+///
+/// The game compares OT byte offsets: off = T[2k] with T the table
+/// FUN_80042534 builds at DAT_800b0ca8 (DAT_800b0cd4 = 400 on DOCK),
+/// LOD 0 if off <= DAT_800b0f1c, LOD 1 if off <= DAT_800b0c44. FUN_8002e3dc
+/// sets those to 0xC00/0xF80 (1 player, DAT_800b0ca6 == 0), to 0/0xC00 when
+/// DAT_800b0ca6 != 0, and to 0x4000/0x4000 (no LOD) for courses 0x1D/0x1E,
+/// mode DAT_800b0b9a == 3 or DAT_800b0e38 > 6. With the DOCK table T first
+/// exceeds 0xC00 at index 1902 and 0xF80 at index 4901.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LodThresholds {
+    pub lod0_max: i32,
+    pub lod1_max: i32,
+}
+
+impl LodThresholds {
+    /// 1-player race (DOCK): thresholds 0xC00/0xF80. [RAM][GPU 80/80 packets]
+    pub const ONE_PLAYER: LodThresholds = LodThresholds { lod0_max: 950, lod1_max: 2450 };
+    /// DAT_800b0ca6 != 0: thresholds 0/0xC00 [CODE only; k <= 0 never occurs
+    /// in practice].
+    pub const CA6_SET: LodThresholds = LodThresholds { lod0_max: 0, lod1_max: 950 };
+    /// Thresholds 0x4000: the table never exceeds them, always LOD 0. [CODE]
+    pub const NONE: LodThresholds = LodThresholds { lod0_max: i32::MAX, lod1_max: i32::MAX };
+
+    pub fn level(&self, k: i32) -> u8 {
+        if k <= self.lod0_max {
+            0
+        } else if k <= self.lod1_max {
+            1
+        } else {
+            2
+        }
+    }
+}
+
+/// Depth bias the layer-0 draw adds to OTZ (FUN_80012390 param_3, from
+/// caseD_1 at 0x80028010): the course byte at 0x800ACB3F + 12*course (DOCK,
+/// course 3: 96) + 16 * (descriptor b_lo & 0xF) (table 0x800A87C4 =
+/// 0, 16, .., 240). DOCK sand objects mostly have b_lo = 4 (bias 160).
+pub fn lod_bias(course_bias: u8, b_lo: u8) -> i32 {
+    course_bias as i32 + 16 * (b_lo & 0xF) as i32
+}
+
+/// The course depth-bias byte from the executable (0x800ACB3F + 12*course).
+pub fn course_depth_bias(exe: &[u8], course: usize) -> Result<u8, Error> {
+    if exe.len() < 0x800 || &exe[0..8] != b"PS-X EXE" {
+        return err(0, "not a PS-X EXE");
+    }
+    let t_addr = le::u32(exe, 0x18);
+    let off = (0x800A_CB3F - t_addr) as usize + 0x800 + 12 * course;
+    R(exe).u8(off)
+}
+
+/// LOD for a quad from its four screen z (GTE SZ). A renderer without
+/// per-polygon depth can pass 4 x the object's view-space depth: k ~= z/4 +
+/// bias (view z in layer-0 world units; the camera matrix's z row is unit).
+pub fn lod_level_for_sz(sz: [i32; 4], bias: i32, t: LodThresholds) -> u8 {
+    let otz = (256 * sz.iter().sum::<i32>()) >> 12;
+    t.level(otz + bias)
+}
+
 #[derive(Debug, Clone)]
 pub struct Mesh {
     pub offset: usize,
@@ -642,9 +734,8 @@ pub struct VisZone {
     /// +0x02 u16: unknown (0 on DOCK).
     pub b02: u16,
     /// +0x04: 256-byte visibility mask at path node 0. Bit order is MSB
-    /// first per byte (0x80 = first object) [CODE 0x80010000]. On DOCK only
-    /// bytes 0..0x49 (589 layer-0 objects) and 0xE1..0xFF (31 bytes, the 243
-    /// layer-1 objects?) are ever touched [INFER].
+    /// first per byte. Layer-0 object i: byte i/8 [CODE 0x80010000];
+    /// layer-1 object i: byte 0xFF - i/8 [CODE 0x8001031c].
     pub mask0: Vec<u8>,
     /// +0x104: delta stream of (xor_mask, byte_index) pairs; a pair with
     /// mask 0 separates nodes. Moving from node k to k+1 applies the pairs
@@ -1014,6 +1105,121 @@ impl Dat {
         Transform { m: d.matrix(sin), origin: d.origin, scale: o.layer.world_scale() }
     }
 
+    /// Visibility zone for a camera eye in DAT layer-0 units (= kart/world
+    /// units >> 5, toward zero; scratch 0x1F800384): among zones whose bbox
+    /// contains the eye, the one with the smallest size2; else `prev` (the
+    /// game keeps last frame's zone, 0 at start). [CODE 8005d908]
+    pub fn vis_zone(&self, eye: [i32; 3], prev: usize) -> usize {
+        let mut best = (i32::MAX, prev);
+        for (i, z) in self.vis.iter().enumerate() {
+            let inside = (0..3).all(|k| z.bbox_min[k] <= eye[k] && eye[k] <= z.bbox_max[k]);
+            if inside && z.size2 < best.0 {
+                best = (z.size2, i);
+            }
+        }
+        best.1
+    }
+
+    /// Current path node of a zone: the node (zone chunk points 2..) nearest
+    /// to the eye (DAT units), distance sum of ((p - eye) >> 4)^2, first
+    /// minimum wins. The game then steps the mask node by node to it, so the
+    /// mask in use is `VisZone::mask_at(node)`. [CODE 8005dc14] [RAM]
+    pub fn vis_node(&self, zone: usize, eye: [i32; 3]) -> Option<usize> {
+        let z = self.vis.get(zone)?;
+        let pts = match &self.chunks[z.chunk].body {
+            ChunkBody::Points(p) => p,
+            _ => return None,
+        };
+        let mut best = (i64::MAX, None);
+        for (k, p) in pts.iter().enumerate().skip(2) {
+            let d: i64 = (0..3).map(|a| (((p[a] - eye[a]) >> 4) as i64).pow(2)).sum();
+            if d < best.0 {
+                best = (d, Some(k - 2));
+            }
+        }
+        best.1
+    }
+
+    /// Objects the game draws this frame (FUN_80010000 for layer 0,
+    /// FUN_8001031c for layer 1, called from FUN_80029f40) and the mesh each
+    /// one draws. `eye`: camera eye in DAT layer-0 units (world >> 5);
+    /// `cam`: the camera rotation, 4.12, rows right/down/forward (camera
+    /// record +0x00, NOT the 1.6x-scaled GTE matrix); `mask`: the 256-byte
+    /// visibility mask (`VisZone::mask_at(node)`; all 0xFF if the track has
+    /// no zone). See DAT.md "Per-frame object selection". [CODE] [GTE]
+    pub fn drawn(&self, eye: [i32; 3], cam: [[i16; 3]; 3], mask: &[u8], p: DrawParams) -> Vec<Drawn> {
+        // RTIR: the offsets go through 16-bit IR registers (mtc2 keeps the
+        // low half), then MAC = (R * IR) >> 12.
+        let rot = |d: [i32; 3]| -> [i32; 3] {
+            let mut o = [0i32; 3];
+            for r in 0..3 {
+                let s: i64 = (0..3).map(|c| cam[r][c] as i64 * (d[c] as i16) as i64).sum();
+                o[r] = (s >> 12) as i32;
+            }
+            o
+        };
+        let sq = |v: i32| (v as i64) * (v as i64);
+        let mut out = Vec::new();
+        // Layer 0: mask bytes 0.. forward, MSB first.
+        let far2 = sq((p.cd0 * 5) >> 4);
+        let near2 = sq((p.de8 * 5) >> 4);
+        for (i, o) in self.layer(Layer::World).iter().enumerate() {
+            if mask.get(i / 8).map_or(true, |b| b & (0x80 >> (i % 8)) == 0) {
+                continue;
+            }
+            let fl = o.loaded_flags();
+            let r = (if o.flags & flag::B80 != 0 { o.radius & 0x7FFF } else { o.radius }) as i32;
+            let d = [o.centre[0] - eye[0], o.centre[1] - eye[1], o.centre[2] - eye[2]];
+            let h2 = sq(d[0] >> 4) + sq(d[2] >> 4) - sq(r >> 4);
+            let v = rot(d);
+            let (x, y, z) = (v[0].abs(), v[1].abs(), v[2]);
+            let frustum = z + r > 0 && z + r >= x && (z * 3 >> 2) + r >= y;
+            let list = if fl & 0x80 == 0 {
+                if !(h2 < far2 && frustum && z - r < 4 * p.cd0 && fl != 5) {
+                    continue;
+                }
+                if fl & 0x40 == 0 {
+                    if h2 >= near2 {
+                        continue;
+                    }
+                    DrawList::Near
+                } else {
+                    DrawList::Ground
+                }
+            } else {
+                if !(h2 < 0x60_0000 && frustum) {
+                    continue;
+                }
+                DrawList::Ground
+            };
+            out.push(Drawn { object: i, mesh: self.desc(o).mesh, layer: Layer::World, list });
+        }
+        // Layer 1: quarter units; mask bytes from 0xFF backwards, MSB first.
+        let e4 = eye.map(|v| if v < 0 { (v + 3) >> 2 } else { v >> 2 });
+        for (i, o) in self.layer(Layer::Quarter).iter().enumerate() {
+            if mask.get(255 - i / 8).map_or(true, |b| b & (0x80 >> (i % 8)) == 0) {
+                continue;
+            }
+            let fl = o.loaded_flags();
+            let r = o.radius as i32;
+            let v = rot([o.centre[0] - e4[0], o.centre[1] - e4[1], o.centre[2] - e4[2]]);
+            let (x, y, z) = (v[0].abs(), v[1].abs(), v[2]);
+            if fl & 0x80 != 0 {
+                if z + r < 0 || z > 16000 {
+                    continue;
+                }
+            } else if z < (p.cd0 >> 2) - r {
+                // Near objects are left to layer 0: layer 1 is the far,
+                // mostly untextured stand-in set.
+                continue;
+            }
+            if z + r >= x && (z * 3 >> 2) + r >= y && z - r < 4 * p.b00 && fl != 5 {
+                out.push(Drawn { object: self.layer0_count + i, mesh: self.desc(o).mesh, layer: Layer::Quarter, list: DrawList::Near });
+            }
+        }
+        out
+    }
+
     /// Size of the loader's output (special records + object records), the
     /// value FUN_8002e3dc returns. [CODE]
     pub fn loader_output_size(&self) -> usize {
@@ -1106,6 +1312,41 @@ impl Dat {
         }
         LoaderImage { file: f, out, defined }
     }
+}
+
+/// Per-frame draw-distance globals. [CODE 8002e2f0, 80029f40] [RAM]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DrawParams {
+    /// DAT_800b0cd0: far distance (written each frame by FUN_80029f40).
+    pub cd0: i32,
+    /// DAT_800b0de8: detail distance for layer-0 objects without flag 0x40
+    /// (= DAT_800b0cd4 - 0x180 at load).
+    pub de8: i32,
+    /// DAT_800b0b00 = 0x4AF - DAT_800a8840: layer-1 far distance.
+    pub b00: i32,
+}
+
+impl DrawParams {
+    /// DOCK, 1-player race (RAM, 2026-10-12): 2386, 2002, 1139.
+    pub const DOCK_1P: DrawParams = DrawParams { cd0: 2386, de8: 2002, b00: 1139 };
+}
+
+/// Which draw list FUN_80010000 put an object in: 0x800D1DD0 (objects
+/// without flag 0x40, and all of layer 1) or 0x800D6890 (flag 0x40/0x80).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DrawList {
+    Near,
+    Ground,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Drawn {
+    /// Index into `Dat::objects`.
+    pub object: usize,
+    /// Mesh file offset (`Descriptor::mesh`).
+    pub mesh: u32,
+    pub layer: Layer,
+    pub list: DrawList,
 }
 
 pub struct LoaderImage {

@@ -664,7 +664,7 @@ fn check_gte(o: &mut Oracle, d: &Dat, sin: &SinTable, rep: &mut String) {
         let _ = writeln!(rep, "    {ra}: {n:5} {k:5}");
     }
     // Scenery renderers: callers where most entries matched.
-    let scen: HashSet<String> = by_ra.iter().filter(|(_, (n, k))| *k * 2 > *n).map(|(r, _)| r.clone()).collect();
+    let scen: HashSet<String> = by_ra.iter().filter(|(_, (_, k))| *k > 0).map(|(r, _)| r.clone()).collect();
     // Group draws by (RT, TR).
     let mut groups: BTreeMap<([i64; 9], [i64; 3]), Vec<&GteEntry>> = BTreeMap::new();
     for e in entries.iter().filter(|e| scen.contains(&e.ra)) {
@@ -763,6 +763,107 @@ fn check_gte(o: &mut Oracle, d: &Dat, sin: &SinTable, rep: &mut String) {
     if !unexplained.is_empty() {
         let _ = writeln!(rep, "  unexplained entries by caller: {unexplained:?} (input vertices not in any DAT mesh: other geometry drawn by the same routine)");
     }
+
+    // Per-frame selection: rebuild the eye and the camera rotation from the
+    // GTE (RT = view matrix, row 0 = 1.6 x camera row 0), run Dat::drawn and
+    // compare with the objects the frame actually transformed.
+    let c: Vec<f64> = cam.iter().map(|&x| x as f64).collect();
+    let det = c[0] * (c[4] * c[8] - c[5] * c[7]) - c[1] * (c[3] * c[8] - c[5] * c[6]) + c[2] * (c[3] * c[7] - c[4] * c[6]);
+    let inv = [
+        (c[4] * c[8] - c[5] * c[7]) / det,
+        (c[2] * c[7] - c[1] * c[8]) / det,
+        (c[1] * c[5] - c[2] * c[4]) / det,
+        (c[5] * c[6] - c[3] * c[8]) / det,
+        (c[0] * c[8] - c[2] * c[6]) / det,
+        (c[2] * c[3] - c[0] * c[5]) / det,
+        (c[3] * c[7] - c[4] * c[6]) / det,
+        (c[1] * c[6] - c[0] * c[7]) / det,
+        (c[0] * c[4] - c[1] * c[3]) / det,
+    ];
+    let mut eye = [0i32; 3];
+    for r in 0..3 {
+        eye[r] = (-4096.0 * (0..3).map(|k| inv[3 * r + k] * eref[k]).sum::<f64>()).round() as i32;
+    }
+    let mut camm = [[0i16; 3]; 3];
+    for r in 0..3 {
+        for k in 0..3 {
+            let v = cam[3 * r + k];
+            camm[r][k] = if r == 0 { (v * 5 / 8) as i16 } else { v as i16 };
+        }
+    }
+    let zone = d.vis_zone(eye, 0);
+    let node = d.vis_node(zone, eye);
+    let mask = match (d.vis.get(zone), node) {
+        (Some(z), Some(n)) => z.mask_at(n),
+        _ => vec![0xFF; 256],
+    };
+    let params = dat::DrawParams {
+        cd0: i32::from_le_bytes(o.ram(0x800B_0CD0, 4).try_into().unwrap()),
+        de8: i32::from_le_bytes(o.ram(0x800B_0DE8, 4).try_into().unwrap()),
+        b00: i32::from_le_bytes(o.ram(0x800B_0B00, 4).try_into().unwrap()),
+    };
+    let pred = d.drawn(eye, camm, &mask, params);
+    let pset: HashSet<usize> = pred.iter().map(|x| x.object).collect();
+    // Observed: per entry, every candidate object agreeing with the camera term.
+    let mut seen_any: HashSet<usize> = HashSet::new();
+    let (mut ent_ok, mut ent_bad) = (0usize, 0usize);
+    let mut bad_objs: BTreeSet<usize> = BTreeSet::new();
+    for cands_e in &per_entry {
+        let ok: Vec<usize> = cands_e
+            .iter()
+            .filter(|(_, x)| (0..3).all(|k| (x[k] - eref[k]).abs() <= 16.0))
+            .map(|(oi, _)| *oi)
+            .collect();
+        if ok.is_empty() {
+            continue;
+        }
+        if ok.iter().any(|oi| pset.contains(oi)) {
+            ent_ok += 1;
+            seen_any.extend(ok.iter().filter(|oi| pset.contains(oi)));
+        } else {
+            ent_bad += 1;
+            bad_objs.extend(ok);
+        }
+    }
+    // Only mesh objects can be observed through their vertices.
+    let missing: Vec<usize> = pset
+        .iter()
+        .filter(|oi| !seen_any.contains(oi) && d.mesh(&d.objects[**oi]).is_some())
+        .copied()
+        .collect();
+    let all_untex = |oi: usize| d.mesh(&d.objects[oi]).map_or(false, |m| m.groups.iter().all(|g| !g.is_textured()));
+    let ram_node = i16::from_le_bytes(o.ram(0x800B_0D40, 2).try_into().unwrap());
+    let _ = writeln!(
+        rep,
+        "  selection: eye (DAT units) {eye:?}, zone {zone}, node {node:?} (RAM now: {ram_node}), params {params:?}"
+    );
+    let _ = writeln!(
+        rep,
+        "    predicted {} objects (layer0 {}, layer1 {}); drawn entries explained by a predicted object: {} of {}; drawn objects not predicted: {:?}",
+        pset.len(),
+        pred.iter().filter(|x| x.layer == Layer::World).count(),
+        pred.iter().filter(|x| x.layer == Layer::Quarter).count(),
+        ent_ok,
+        ent_ok + ent_bad,
+        bad_objs
+    );
+    let _ = writeln!(
+        rep,
+        "    predicted but no GTE input this frame: {} objects {:?} (all-untextured meshes among them: {})",
+        missing.len(),
+        missing,
+        missing.iter().filter(|&&x| all_untex(x)).count()
+    );
+    // Does dropping the mask or the layer-1 near cut change the outcome?
+    let full = vec![0xFFu8; 256];
+    let nomask: HashSet<usize> = d.drawn(eye, camm, &full, params).iter().map(|x| x.object).collect();
+    let _ = writeln!(
+        rep,
+        "    without the visibility mask {} objects would pass ({} more, {} of them all-untextured)",
+        nomask.len(),
+        nomask.len() - pset.len(),
+        nomask.difference(&pset).filter(|&&x| all_untex(x)).count()
+    );
 }
 
 /// Expected GP0 words (positions zeroed) of every decoded primitive, built

@@ -13,6 +13,7 @@
 
 mod ghost;
 mod input;
+pub mod kartmodel;
 mod psxmesh;
 mod scene;
 mod vramtex;
@@ -44,6 +45,9 @@ pub struct Pose {
     pub heading: i32,
     /// Body rotation matrix (kart +0x18C), 4.12, row-major: world = M * model.
     pub m: [i32; 9],
+    /// The game's camera this tick: eye (kart units) and 4.12 view matrix
+    /// (rows right, down, forward), when known (oracle replay or mr-sim).
+    pub cam: Option<([i32; 3], [i32; 9])>,
 }
 
 impl Pose {
@@ -70,14 +74,23 @@ impl Pose {
         for (i, v) in m.iter_mut().enumerate() {
             *v = c(&format!("m{i}"));
         }
-        Pose { x: c("x"), y: c("y"), z: c("z"), heading: c("heading"), m }
+        let cam = t.col("cam_x").map(|_| {
+            let mut cm = [0; 9];
+            for (i, v) in cm.iter_mut().enumerate() {
+                *v = c(&format!("c{i}"));
+            }
+            ([c("cam_x"), c("cam_y"), c("cam_z")], cm)
+        }).filter(|(_, cm)| *cm != [0; 9]);
+        Pose { x: c("x"), y: c("y"), z: c("z"), heading: c("heading"), m, cam }
     }
 }
 
 /// Where the player kart's state comes from.
 pub enum Driver {
     /// Play a recorded trace back (the oracle's own run) - the hybrid view.
-    Replay { trace: Trace, at: usize },
+    /// `karts`: the trace's sidecar (TRACE.kart.bin, 0x504 bytes per row),
+    /// the full kart record per tick, when present.
+    Replay { trace: Trace, at: usize, karts: Option<Vec<u8>> },
     /// mr-sim drives the kart from live input (wired in when mr-sim lands).
     Sim,
 }
@@ -89,6 +102,29 @@ pub struct Player {
     pub prev: Pose,
     pub tick: i64,
     pub buttons: u16,
+    /// The player's kart record this tick and last tick (0x504 bytes): from
+    /// the replay sidecar, else synthesized from `pose` (kartmodel::synth_record).
+    pub kart: Option<Vec<u8>>,
+    pub prev_kart: Option<Vec<u8>>,
+}
+
+/// One model part of the player's vehicle (model 0) or driver (model 1),
+/// placed every frame by `place_parts`.
+#[derive(Component)]
+pub struct KartPart {
+    pub model: usize,
+    pub part: usize,
+}
+
+/// A polygon of the driver's neck (world-space vertices rewritten per frame).
+#[derive(Component)]
+pub struct NeckPoly;
+
+#[derive(Resource)]
+pub struct KartRig {
+    pub model: kartmodel::KartModel,
+    /// Per neck part, per polygon: its mesh (vertices in GPU order).
+    pub neck_meshes: Vec<Vec<Handle<Mesh>>>,
 }
 
 #[derive(Component)]
@@ -96,6 +132,83 @@ pub struct PlayerKart;
 
 #[derive(Component)]
 pub struct ChaseCamera;
+
+#[derive(Component)]
+pub struct Sky;
+
+/// A DAT scenery object (index into Dat::objects).
+#[derive(Component)]
+pub struct TrackObject(pub usize);
+
+/// The game's per-frame scenery selection (DAT.md "Per-frame object
+/// selection"): visibility zone/node from the camera eye, then the layer-0
+/// near/ground cull and the layer-1 far stand-ins, exactly as FUN_80010000 /
+/// FUN_8001031C choose them.
+#[derive(Resource)]
+pub struct TrackVis {
+    pub dat: mr_assets::dat::Dat,
+    pub zone: usize,
+}
+
+fn select_objects(
+    p: Res<Player>,
+    mut vis: ResMut<TrackVis>,
+    mut q: Query<(&TrackObject, &mut Visibility)>,
+    mut cams: Query<(Entity, &mut Camera, &Projection), With<ChaseCamera>>,
+    mut commands: Commands,
+    mut far_done: Local<bool>,
+) {
+    // Painter's order of the game's ordering table: far pass (sky + DAT
+    // layer 1) first, then everything else over it (scene::setup_far_pass).
+    if !*far_done {
+        if let Ok((e, mut cam, proj)) = cams.single_mut() {
+            scene::setup_far_pass(&mut commands, e, &mut cam, proj);
+            *far_done = true;
+        }
+    }
+    let Some((eye_w, cm)) = p.pose.cam else { return };
+    if !p.is_changed() {
+        return;
+    }
+    // DAT units = world >> 5 toward zero (the game's scratch copy of eye / 32).
+    let eye = [eye_w[0] / 32, eye_w[1] / 32, eye_w[2] / 32];
+    let cam = [
+        [cm[0] as i16, cm[1] as i16, cm[2] as i16],
+        [cm[3] as i16, cm[4] as i16, cm[5] as i16],
+        [cm[6] as i16, cm[7] as i16, cm[8] as i16],
+    ];
+    let prev = vis.zone;
+    let zone = vis.dat.vis_zone(eye, prev);
+    vis.zone = zone;
+    let mask = match vis.dat.vis_node(zone, eye) {
+        Some(node) => vis.dat.vis[zone].mask_at(node),
+        None => vec![0xFF; 256],
+    };
+    let drawn: std::collections::HashSet<usize> = vis
+        .dat
+        .drawn(eye, cam, &mask, mr_assets::dat::DrawParams::DOCK_1P)
+        .iter()
+        .map(|d| d.object)
+        .collect();
+    if p.tick % 100 == 0 && std::env::args().any(|a| a == "--debug-vis") {
+        let n = q.iter().count();
+        eprintln!("tick {} eye {:?} zone {} node {:?} drawn {} of {} entities", p.tick, eye, zone, vis.dat.vis_node(zone, eye), drawn.len(), n);
+    }
+    for (o, mut v) in q.iter_mut() {
+        let want = if drawn.contains(&o.0) { Visibility::Inherited } else { Visibility::Hidden };
+        if *v != want {
+            *v = want;
+        }
+    }
+}
+
+/// The sky dome is centred on the eye (the game draws it with zero translation).
+fn follow_sky(cam: Query<&Transform, With<ChaseCamera>>, mut sky: Query<&mut Transform, (With<Sky>, Without<ChaseCamera>)>) {
+    let Ok(c) = cam.single() else { return };
+    for mut s in sky.iter_mut() {
+        s.translation = c.translation;
+    }
+}
 
 pub struct Args {
     pub replay: Option<String>,
@@ -128,7 +241,14 @@ fn shot_plan() -> ShotPlan {
 fn main() {
     let args = parse_args();
     let driver = match &args.replay {
-        Some(p) => Driver::Replay { trace: Trace::read(p).expect("read --replay trace"), at: 0 },
+        Some(p) => {
+            let side = p.replace(".trace.jsonl", ".kart.bin");
+            let karts = std::fs::read(&side).ok().filter(|b| b.len() % kartmodel::KART_LEN == 0);
+            if karts.is_none() {
+                eprintln!("no kart sidecar {side}: parts placed from the trace pose only");
+            }
+            Driver::Replay { trace: Trace::read(p).expect("read --replay trace"), at: 0, karts }
+        }
         None => Driver::Sim,
     };
     let ghost = args.ghost.as_ref().map(|p| Trace::read(p).expect("read --ghost trace"));
@@ -143,18 +263,31 @@ fn main() {
         }))
         .insert_resource(Time::<Fixed>::from_hz(30.0))
         .insert_resource(ClearColor(Color::srgb(0.25, 0.2, 0.45)))
-        .insert_resource(Player { driver, pose: Pose::default(), prev: Pose::default(), tick: 0, buttons: 0 })
+        .insert_resource(Player { driver, pose: Pose::default(), prev: Pose::default(), tick: 0, buttons: 0, kart: None, prev_kart: None })
         .insert_resource(ghost::Ghost::new(ghost))
         .add_systems(Startup, (scene::setup, setup_camera))
         .add_systems(FixedUpdate, (sim_tick, ghost::tick.after(sim_tick)))
         .insert_resource(shot_plan())
-        .add_systems(Update, (place_player, ghost::place, follow_camera, title, shot.after(follow_camera)))
+        .add_systems(Update, (place_player, place_parts, ghost::place, follow_camera, title, follow_sky.after(follow_camera), select_objects, shot.after(follow_sky).after(select_objects)))
         .run();
 }
 
 fn setup_camera(mut c: Commands) {
     // No tonemapping: PS1 colours go to the screen as the game wrote them.
-    c.spawn((Camera3d::default(), Tonemapping::None, Transform::from_xyz(0.0, 3.0, 8.0), ChaseCamera));
+    // The game's projection: H = 160 over a 240-line screen (SetGeomScreen
+    // at 0x8004311C) = 2*atan(120/160) = 73.74 deg vertical [camera.md].
+    c.spawn((
+        Camera3d::default(),
+        Projection::Perspective(PerspectiveProjection {
+            fov: 2.0 * (120.0f32 / 160.0).atan(),
+            near: 0.05,
+            far: 2000.0,
+            ..default()
+        }),
+        Tonemapping::None,
+        Transform::from_xyz(0.0, 3.0, 8.0),
+        ChaseCamera,
+    ));
     c.spawn((DirectionalLight { illuminance: 8000.0, ..default() },
              Transform::from_xyz(1.0, 3.0, 2.0).looking_at(Vec3::ZERO, Vec3::Y)));
     c.insert_resource(GlobalAmbientLight { brightness: 1500.0, ..default() });
@@ -165,15 +298,19 @@ fn sim_tick(mut p: ResMut<Player>, keys: Res<ButtonInput<KeyCode>>, pads: Query<
     p.prev = p.pose;
     let tick = p.tick;
     let mut pose = p.pose;
+    let mut kart = p.kart.clone();
     match &mut p.driver {
-        Driver::Replay { trace, at } => {
+        Driver::Replay { trace, at, karts } => {
             if *at < trace.rows.len() {
                 pose = Pose::from_row(trace, &trace.rows[*at]);
+                kart = karts.as_ref().and_then(|b| b.get(*at * kartmodel::KART_LEN..(*at + 1) * kartmodel::KART_LEN)).map(|r| r.to_vec());
                 *at += 1;
             }
         }
         Driver::Sim => {}
     }
+    p.prev_kart = p.kart.take();
+    p.kart = kart;
     p.pose = pose;
     p.buttons = buttons;
     p.tick = tick + 1;
@@ -190,10 +327,77 @@ fn place_player(p: Res<Player>, time: Res<Time<Fixed>>, mut q: Query<&mut Transf
     }
 }
 
-/// Placeholder chase camera until mr-sim's port of FUN_80070418 lands.
-fn follow_camera(p: Res<Player>, mut q: Query<&mut Transform, (With<ChaseCamera>, Without<PlayerKart>)>, k: Query<&Transform, With<PlayerKart>>) {
+/// Place every vehicle/driver part from the kart record (kartmodel), with
+/// display interpolation between the last two ticks like `place_player`.
+fn place_parts(
+    p: Res<Player>,
+    rig: Option<Res<KartRig>>,
+    time: Res<Time<Fixed>>,
+    mut q: Query<(&KartPart, &mut Transform, &mut Visibility)>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    let Some(rig) = rig else { return };
+    let rec = |k: &Option<Vec<u8>>, pose: &Pose| match k {
+        Some(r) => r.clone(),
+        None => {
+            let id = if pose.m == [0; 9] { [4096, 0, 0, 0, 4096, 0, 0, 0, 4096] } else { pose.m };
+            kartmodel::synth_record(pose.x, pose.y, pose.z, id, &rig.model.vehicle_pivots)
+        }
+    };
+    let k1 = rec(&p.kart, &p.pose);
+    let k0 = if p.prev_kart.is_some() || p.kart.is_none() { rec(&p.prev_kart, &p.prev) } else { k1.clone() };
+    let x0 = rig.model.part_transforms(&k0);
+    let x1 = rig.model.part_transforms(&k1);
+    let a = time.overstep_fraction();
+    for (kp, mut t, mut vis) in q.iter_mut() {
+        let find = |xs: &[kartmodel::PartXform]| xs.iter().find(|x| x.model == kp.model && x.part == kp.part).copied();
+        let (Some(b0), Some(b1)) = (find(&x0), find(&x1)) else { continue };
+        let (t0, t1) = (kartmodel::to_transform(&b0), kartmodel::to_transform(&b1));
+        t.translation = t0.translation.lerp(t1.translation, a);
+        t.rotation = t0.rotation.slerp(t1.rotation, a);
+        let want = if b1.visible { Visibility::Inherited } else { Visibility::Hidden };
+        if *vis != want {
+            *vis = want;
+        }
+    }
+    let (n0, n1) = (rig.model.neck_vertices(&x0), rig.model.neck_vertices(&x1));
+    for (ni, polys) in rig.neck_meshes.iter().enumerate() {
+        for (pi, h) in polys.iter().enumerate() {
+            let Some(mut mesh) = meshes.get_mut(h) else { continue };
+            let pos: Vec<[f32; 3]> = n0[ni][pi]
+                .iter()
+                .zip(&n1[ni][pi])
+                .map(|(v0, v1)| {
+                    to_bevy(v0[0] * 32, v0[1] * 32, v0[2] * 32).lerp(to_bevy(v1[0] * 32, v1[1] * 32, v1[2] * 32), a).to_array()
+                })
+                .collect();
+            mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
+        }
+    }
+}
+
+/// The game's camera (docs/spec/camera.md): eye + view matrix from the
+/// replayed trace or mr-sim, rotation = cols (m00,-m01,-m02), (-m10,m11,m12),
+/// (-m20,m21,m22). Without one, a simple chase stand-in.
+fn follow_camera(p: Res<Player>, time: Res<Time<Fixed>>, mut q: Query<&mut Transform, (With<ChaseCamera>, Without<PlayerKart>)>, k: Query<&Transform, With<PlayerKart>>) {
+    if let (Some((e0, m0)), Some((e1, m1))) = (p.prev.cam.or(p.pose.cam), p.pose.cam) {
+        let a = time.overstep_fraction();
+        let rot = |m: [i32; 9]| {
+            let f = |i: usize| m[i] as f32 / 4096.0;
+            Quat::from_mat3(&Mat3::from_cols(
+                Vec3::new(f(0), -f(1), -f(2)),
+                Vec3::new(-f(3), f(4), f(5)),
+                Vec3::new(-f(6), f(7), f(8)),
+            ))
+            .normalize()
+        };
+        for mut cam in q.iter_mut() {
+            cam.translation = to_bevy(e0[0], e0[1], e0[2]).lerp(to_bevy(e1[0], e1[1], e1[2]), a);
+            cam.rotation = rot(m0).slerp(rot(m1), a);
+        }
+        return;
+    }
     let Ok(kart) = k.single() else { return };
-    let _ = &p;
     for mut cam in q.iter_mut() {
         // kart forward is +Z in Bevy space (model -z_game flipped)
         let back = kart.rotation * Vec3::new(0.0, 0.0, -1.0);

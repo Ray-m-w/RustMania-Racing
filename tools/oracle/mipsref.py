@@ -80,6 +80,8 @@ class Machine:
         if self.reads is not None:
             self.reads.add(((a & 0x1FFFFFFF), 4, self.cur))
         if m is None:
+            if (a & 0x1FFFFFFF) == 0x1F801814:
+                return 0x1C000000  # GPUSTAT: ready (no GPU modelled)
             return 0
         return m[o] | (m[o + 1] << 8) | (m[o + 2] << 16) | (m[o + 3] << 24)
 
@@ -106,7 +108,11 @@ class Machine:
                 self.writes.add(((a & 0x1FFFFFFF), 4))
 
     # ---- GTE (subset) ----
+    gte_lenient = False
+
     def gte_cmd(self, op):
+        if self.gte_lenient:
+            return  # render-side exploration only: results are garbage
         raise Unimpl("GTE cmd %08x" % op)
 
     # ---- execution ----

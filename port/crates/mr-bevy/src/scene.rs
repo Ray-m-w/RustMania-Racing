@@ -5,11 +5,40 @@
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
+use mr_assets::axe::Axe;
 use mr_assets::dat::{self, Dat, SinTable};
 use mr_assets::mdl::{self, Mdl, SlotAttr};
 use mr_assets::{raw, ter::Ter, vram::Vram};
 
 use crate::psxmesh::{self, PsxPoly};
+use bevy::camera::visibility::RenderLayers;
+
+/// Render layer of the far pass (sky + DAT layer 1), drawn by a camera that
+/// renders before the main one; the main camera then clears depth only.
+pub const FAR_LAYER: usize = 1;
+
+/// Marker for the far-pass camera (child of the chase camera).
+#[derive(Component)]
+pub struct FarCamera;
+
+/// Make the chase camera draw over a far pass: spawn the far camera as its
+/// child (same projection, order -1, FAR_LAYER only) and set the main
+/// camera to keep the colour buffer. Runs once (called from select_objects).
+pub fn setup_far_pass(commands: &mut Commands, main: Entity, cam: &mut Camera, proj: &Projection) {
+    cam.order = 1;
+    cam.clear_color = ClearColorConfig::None;
+    commands.entity(main).with_children(|c| {
+        c.spawn((
+            Camera3d::default(),
+            Camera { order: 0, ..default() },
+            proj.clone(),
+            bevy::core_pipeline::tonemapping::Tonemapping::None,
+            Transform::default(),
+            RenderLayers::layer(FAR_LAYER),
+            FarCamera,
+        ));
+    });
+}
 
 use crate::ghost::GhostKart;
 use crate::vramtex::VramTextures;
@@ -65,6 +94,25 @@ pub fn model_polys(m: &Mdl, slots: &[Option<SlotAttr>; 32]) -> Vec<PsxPoly> {
     out
 }
 
+/// One mesh part's polygons in part-local model units (no pivot), GPU order.
+pub fn part_polys(part: &mdl::Part, slots: &[Option<SlotAttr>; 32]) -> Vec<PsxPoly> {
+    let flag = part.tex_flag().unwrap_or(0);
+    let slot = slots[(flag & 0x1F) as usize];
+    part.polys()
+        .iter()
+        .map(|poly| {
+            let ord = poly.gpu_order();
+            PsxPoly {
+                pos: ord.iter().map(|&i| poly.verts[i].pos.map(|c| c as i32)).collect(),
+                uv: ord.iter().map(|&i| poly.verts[i].uv).collect(),
+                rgb: ord.iter().map(|&i| poly.colors.get(i).copied().unwrap_or([128, 128, 128])).collect(),
+                tex: slot.map(|s| mdl::tpage_clut(flag, s, poly)),
+                semi: poly.semi_transparent(),
+            }
+        })
+        .collect()
+}
+
 pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -80,26 +128,78 @@ pub fn setup(
     // the quarter-unit layer), exactly the game's integer transform.
     let dat = Dat::parse(&disc.read("COURSE_A/DOCK.DAT").expect("read DAT")).expect("parse DAT");
     let sin = SinTable::from_exe(&exe).expect("sin table");
-    let tpolys = track_polys(&dat, &sin, &dslots);
-    if std::env::args().any(|a| a == "--debug-track") {
-        let mut lo = [i32::MAX; 3];
-        let mut hi = [i32::MIN; 3];
-        for p in &tpolys {
-            for v in &p.pos {
-                for k in 0..3 {
-                    lo[k] = lo[k].min(v[k]);
-                    hi[k] = hi[k].max(v[k]);
-                }
-            }
-        }
-        let tex = tpolys.iter().filter(|p| p.tex.is_some()).count();
-        eprintln!("track: {} polys ({} textured), bbox {:?}..{:?}", tpolys.len(), tex, lo, hi);
-    }
-    // DAT world units = TER units = kart position units >> 5 (layer-1 extents
-    // equal TER vertex extents; examples/units.rs)
+    // One entity per DAT object (TrackObject), so per-frame object selection
+    // (the game's visibility stream / LOD) can show and hide them.
+    let textured_only = std::env::args().any(|a| a == "--textured-only");
     let world = |p: [i32; 3]| crate::to_bevy(p[0] * 32, p[1] * 32, p[2] * 32);
-    for (mesh, mat) in psxmesh::build(&tpolys, &mut tex, &mut images, &mut meshes, &mut mats, world) {
-        commands.spawn((Mesh3d(mesh), MeshMaterial3d(mat), Transform::default()));
+    let mut cache = psxmesh::MatCache::default();
+    let mut ground_cache = psxmesh::MatCache(Default::default(), -2000.0);
+    let mut far_cache = psxmesh::MatCache(Default::default(), 0.0);
+    for (i, o) in dat.objects.iter().enumerate() {
+        let mut polys = object_polys(&dat, o, &sin, &dslots);
+        if textured_only {
+            polys.retain(|p| p.tex.is_some());
+        }
+        if polys.is_empty() {
+            continue;
+        }
+        // FUN_80010000 puts layer-0 objects with flag 0x40/0x80 on the
+        // "ground" list, which the game's ordering table draws under the
+        // near list (DAT.md "Per-frame object selection").
+        // Layer 1 (the far stand-ins, drawn by FUN_80029F40 before layer 0)
+        // sits under everything else.
+        // Layer 1 (the far stand-ins) goes to its own render layer, drawn by
+        // FAR_CAMERA before everything else: the game sorts layer 1 into
+        // ordering-table offsets >= 4000 (table 0x800BA758, FUN_8001a304)
+        // while layer 0 uses 0..~3600 out to its LOD-2 range (table
+        // 0x800CB788), so every layer-0 polygon is painted over layer 1
+        // regardless of depth (PS1 has no depth buffer).
+        let far = i >= dat.layer0_count;
+        let ground = !far && o.loaded_flags() & 0xC0 != 0;
+        let c = if far { &mut far_cache } else if ground { &mut ground_cache } else { &mut cache };
+        let parts = psxmesh::build_cached(&polys, &mut tex, &mut images, &mut meshes, &mut mats, c, world);
+        commands
+            .spawn((Transform::default(), Visibility::default(), crate::TrackObject(i)))
+            .with_children(|c| {
+                for (mesh, mat) in parts {
+                    if far {
+                        c.spawn((Mesh3d(mesh), MeshMaterial3d(mat), RenderLayers::layer(FAR_LAYER)));
+                    } else {
+                        c.spawn((Mesh3d(mesh), MeshMaterial3d(mat)));
+                    }
+                }
+            });
+    }
+
+    commands.insert_resource(crate::TrackVis { dat, zone: 0 });
+
+    // Sky dome (DOCK.AXE): gouraud quads drawn around the eye with zero
+    // translation (FUN_80034AE4), i.e. directions only. Rendered as a big
+    // shell that follows the camera (crate::follow_sky).
+    if let Ok(axe) = disc.read("COURSE_A/DOCK.AXE").map(|b| Axe::parse(&b)) {
+        let axe = axe.expect("parse AXE");
+        let polys: Vec<PsxPoly> = axe
+            .drawn_quads()
+            .iter()
+            .map(|q| PsxPoly {
+                pos: q.iter().map(|(p, _)| {
+                    let v = Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32).normalize_or_zero() * 1_000_000.0;
+                    [v.x as i32, v.y as i32, v.z as i32]
+                }).collect(),
+                uv: vec![[0, 0]; 4],
+                rgb: q.iter().map(|(_, c)| *c).collect(),
+                tex: None,
+                semi: false,
+            })
+            .collect();
+        let sky = |p: [i32; 3]| Vec3::new(p[0] as f32, -(p[1] as f32), -(p[2] as f32)) / 1000.0;
+        commands.spawn((Transform::default(), Visibility::default(), crate::Sky)).with_children(|c| {
+            // The sky sits in one ordering-table slot behind everything: draw
+            // it with the far pass.
+            for (mesh, mat) in psxmesh::build(&polys, &mut tex, &mut images, &mut meshes, &mut mats, sky) {
+                c.spawn((Mesh3d(mesh), MeshMaterial3d(mat), RenderLayers::layer(FAR_LAYER)));
+            }
+        });
     }
 
     // Debug: the collision surface (DOCK.TER), flat shaded (--show-ter).
@@ -116,14 +216,46 @@ pub fn setup(
         Transform::default(),
     )); }
 
-    // Kermit in the RACER: both models share the kart's transform; model
-    // units are world units / 32. [MDL.md; per-part matrices (wheel spin,
-    // steering, the driver's motion) are not animated yet.]
-    let mut polys = Vec::new();
-    for path in ["VEHIC_A/RACER.MDL", "CHARS_A/KERMIT.MDL"] {
-        let m = Mdl::parse(&disc.read(path).expect("read MDL")).expect("parse MDL");
-        polys.extend(model_polys(&m, &slots));
+    // Kermit in the RACER, one entity per model part, placed every frame
+    // from the kart record exactly as FUN_80026F3C / FUN_800276E8 place them
+    // (crate::kartmodel, MDL.md "Placing the parts"). Part meshes are in
+    // part-local model units (world = model * 32); the neck is re-skinned
+    // each frame between the head and body seam rings.
+    let racer = Mdl::parse(&disc.read("VEHIC_A/RACER.MDL").expect("read MDL")).expect("parse MDL");
+    let kermit = Mdl::parse(&disc.read("CHARS_A/KERMIT.MDL").expect("read MDL")).expect("parse MDL");
+    let rig = crate::kartmodel::KartModel::new(&racer, &kermit);
+    let local_to_bevy = |p: [i32; 3]| crate::to_bevy(p[0] * 32, p[1] * 32, p[2] * 32);
+    let mut neck_meshes: Vec<Vec<Handle<Mesh>>> = vec![Vec::new(); rig.driver_necks.len()];
+    for (mi, m) in [&racer, &kermit].into_iter().enumerate() {
+        for (slot, (_, part)) in m.meshes().enumerate() {
+            let neck = if mi == 1 { rig.driver_necks.iter().position(|&n| n == slot) } else { None };
+            let polys = part_polys(part, &slots);
+            if let Some(ni) = neck {
+                // one mesh per polygon so its 3/4 vertices can be rewritten
+                for poly in &polys {
+                    for (mesh, mat) in psxmesh::build(std::slice::from_ref(poly), &mut tex, &mut images, &mut meshes, &mut mats, local_to_bevy) {
+                        neck_meshes[ni].push(mesh.clone());
+                        commands.spawn((Mesh3d(mesh), MeshMaterial3d(mat), Transform::default(), Visibility::default(), crate::NeckPoly));
+                    }
+                }
+                continue;
+            }
+            let parts = psxmesh::build(&polys, &mut tex, &mut images, &mut meshes, &mut mats, local_to_bevy);
+            commands
+                .spawn((Transform::default(), Visibility::default(), crate::KartPart { model: mi, part: slot }))
+                .with_children(|c| {
+                    for (mesh, mat) in parts {
+                        c.spawn((Mesh3d(mesh), MeshMaterial3d(mat)));
+                    }
+                });
+        }
     }
+    commands.insert_resource(crate::KartRig { model: rig, neck_meshes });
+    commands.spawn((Transform::default(), Visibility::default(), PlayerKart));
+
+    // The ghost stays one rigid rest-pose mesh.
+    let mut polys = model_polys(&racer, &slots);
+    polys.extend(model_polys(&kermit, &slots));
     let model_to_bevy = |p: [i32; 3]| crate::to_bevy(p[0] * 32, p[1] * 32, p[2] * 32);
     let parts = psxmesh::build(&polys, &mut tex, &mut images, &mut meshes, &mut mats, model_to_bevy);
     let ghost_mat = mats.add(StandardMaterial {
@@ -132,13 +264,6 @@ pub fn setup(
         unlit: true,
         ..default()
     });
-    commands
-        .spawn((Transform::default(), Visibility::default(), PlayerKart))
-        .with_children(|c| {
-            for (mesh, mat) in &parts {
-                c.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mat.clone())));
-            }
-        });
     commands
         .spawn((Transform::default(), Visibility::Hidden, GhostKart))
         .with_children(|c| {
@@ -190,25 +315,25 @@ pub fn ter_mesh(ter: &Ter) -> Mesh {
         .with_inserted_indices(Indices::U32((0..n).collect()))
 }
 
-/// All DAT objects as world-space PS1 polygons (GPU vertex order).
-pub fn track_polys(dat: &Dat, sin: &SinTable, slots: &[Option<dat::TexSlot>; 32]) -> Vec<PsxPoly> {
+/// One DAT object's polygons in DAT world units (= TER units = kart units >> 5),
+/// GPU vertex order: world = origin + (M v) >> 12 (x4 for the quarter layer),
+/// exactly the game's integer transform.
+pub fn object_polys(dat: &Dat, o: &dat::Object, sin: &SinTable, slots: &[Option<dat::TexSlot>; 32]) -> Vec<PsxPoly> {
     let mut out = Vec::new();
-    for o in &dat.objects {
-        let Some(mesh) = dat.mesh(o) else { continue };
-        let t = dat.transform(o, sin);
-        for g in &mesh.groups {
-            let slot = if g.is_textured() { slots[g.tex_slot() as usize] } else { None };
-            let n = if g.is_triangle() { 3 } else { 4 };
-            let ord: &[usize] = if n == 4 { &[0, 1, 3, 2] } else { &[0, 1, 2] };
-            for p in &g.prims {
-                out.push(PsxPoly {
-                    pos: ord.iter().map(|&k| t.apply(mesh.vertices[p.idx[k] as usize].pos)).collect(),
-                    uv: ord.iter().map(|&k| p.uv[k]).collect(),
-                    rgb: ord.iter().map(|&k| mesh.vertices[p.idx[k] as usize].rgb()).collect(),
-                    tex: slot.map(|s| dat::prim_tpage_clut(s, g, p)),
-                    semi: g.semi_transparent(),
-                });
-            }
+    let Some(mesh) = dat.mesh(o) else { return out };
+    let t = dat.transform(o, sin);
+    for g in &mesh.groups {
+        let slot = if g.is_textured() { slots[g.tex_slot() as usize] } else { None };
+        let n = if g.is_triangle() { 3 } else { 4 };
+        let ord: &[usize] = if n == 4 { &[0, 1, 3, 2] } else { &[0, 1, 2] };
+        for p in &g.prims {
+            out.push(PsxPoly {
+                pos: ord.iter().map(|&k| t.apply(mesh.vertices[p.idx[k] as usize].pos)).collect(),
+                uv: ord.iter().map(|&k| p.uv[k]).collect(),
+                rgb: ord.iter().map(|&k| mesh.vertices[p.idx[k] as usize].rgb()).collect(),
+                tex: slot.map(|s| dat::prim_tpage_clut(s, g, p)),
+                semi: g.semi_transparent(),
+            });
         }
     }
     out

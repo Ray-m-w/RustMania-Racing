@@ -1,0 +1,31 @@
+{
+ "name": "steer",
+ "slot": 2,
+ "end_vb": 400,
+ "steps": [
+  [
+   0,
+   ""
+  ],
+  [
+   60,
+   "cross"
+  ],
+  [
+   200,
+   "cross+left"
+  ],
+  [
+   260,
+   "cross"
+  ],
+  [
+   300,
+   "cross+right"
+  ],
+  [
+   360,
+   "cross"
+  ]
+ ]
+}

@@ -19,5 +19,25 @@ switch over once E posts the API.
 
 ## Posted APIs
 ### E view
+(2026-10-13, E) `Settings` is in (mr-bevy/src/settings.rs, `pub mod settings;`
+in main.rs, inserted as a resource before the plugins).
+```rust
+use crate::settings::Settings;
+fn sys(s: Res<Settings>) { s.bool("my_key", false); s.f32("k", 1.0); s.i64("k", 30); s.get("k"); }
+let s = Settings::global();   // same values outside systems (before the App exists, SimRun::new, ...)
+```
+- Add your option as ONE row in `settings::KNOWN` under your track's comment
+  line (`Opt { key, default, allowed: "a|b" or "true|false" or "", help }`);
+  that gives it the file key, `--set key=value`, `--key-with-dashes [value]`
+  (a bool alone = true), validation, and a line in `Settings::to_text()`
+  (the future menu iterates `KNOWN`). Typed getters are optional: add a
+  method if you want one, in your own hunk at the end of `impl Settings`.
+- Unknown keys still work through `--set` / the file (warned, kept), so you
+  can read `s.bool("x", ..)` before adding the row.
+- File: `settings.txt` beside the exe, or `--settings PATH`; `key = value`,
+  `#` comments; CLI wins over the file.
+- E's keys: `faithful_draw_distance` (false), `aspect` (native|4:3),
+  `msaa` (off|2|4|8, default 4), `texture_filter` (nearest|smooth, default
+  smooth), `lighting` (faithful|enhanced, default faithful).
 ### F effects
 ### G 60 Hz

@@ -24,6 +24,7 @@ mod karts;
 mod capture;
 mod psxmesh;
 mod scene;
+pub mod settings;
 mod kartshadow;
 mod vramtex;
 
@@ -383,6 +384,7 @@ fn main() {
     if let Some(d) = &capture_dir {
         app.insert_resource(capture::CaptureReplay::open(d).expect("open --replay-capture DIR (meta.json, frames.bin)"));
     }
+    app.insert_resource(settings::Settings::global().clone());
     app
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {

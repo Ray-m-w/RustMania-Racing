@@ -22,6 +22,7 @@ mod ghost;
 mod hud;
 mod fps;
 mod input;
+mod pacing;
 pub mod kartmodel;
 mod karts;
 mod capture;
@@ -302,7 +303,7 @@ fn sim_row(s: &mr_sim::session::Session) -> Vec<i64> {
         v.push(i16at(0x18C + 2 * k));
     }
     v.push(i32at(0x358));
-    v.push(2);
+    v.push(s.vblanks_per_tick() as i64);
     let c = &s.camera;
     v.extend(c.pos.iter().map(|&x| x as i64));
     for row in c.matrix {
@@ -321,7 +322,8 @@ impl SimRun {
             // the catch-up the oracle race had (player 6th, leader far ahead).
             // Overrides before the countdown, the ramped value after
             // (mr-standalone --catchup-as-6th).
-            let mut s = mr_sim::session::Session::solo(&mut disc).expect("start the mr-sim session");
+            let cfg = mr_sim::session::SessionConfig { logic_hz: pacing::logic_hz(), ..mr_sim::session::SessionConfig::dock_solo() };
+            let mut s = mr_sim::session::Session::with_config(&mut disc, cfg).expect("start the mr-sim session");
             if !leader {
                 s.leader_progress_override = Some(1000);
                 s.race_pos_override = Some(6);
@@ -335,7 +337,8 @@ impl SimRun {
         } else {
             // Play: the full race - Kermit and five AI opponents from race
             // load; positions and catch-up come from the real field.
-            let mut s = mr_sim::session::Session::new(&mut disc).expect("start the mr-sim session");
+            let cfg = mr_sim::session::SessionConfig { logic_hz: pacing::logic_hz(), ..mr_sim::session::SessionConfig::dock_default() };
+            let mut s = mr_sim::session::Session::with_config(&mut disc, cfg).expect("start the mr-sim session");
             // --autopilot: the game's AI drives Kermit too (demo / soak test).
             s.autopilot = std::env::args().any(|a| a == "--autopilot");
             s
@@ -354,13 +357,16 @@ impl SimRun {
         let spec = |m: u16| (0..16).filter(|b| m & (1 << b) != 0 && !names[*b as usize].is_empty()).map(|b| names[b as usize]).collect::<Vec<_>>().join("+");
         let mut steps = vec![format!("[0, \"\"]")];
         let mut last = 0u16;
+        // VBlanks per tick: 2, or 1 in the 60 Hz mode (such a route replays
+        // on the oracle at 30 Hz with the buttons of every second VBlank).
+        let vpt = self.session.vblanks_per_tick() as usize;
         for (k, &m) in self.buttons.iter().enumerate() {
             if m != last {
-                steps.push(format!("[{}, \"{}\"]", 2 * k, spec(m)));
+                steps.push(format!("[{}, \"{}\"]", vpt * k, spec(m)));
                 last = m;
             }
         }
-        let end = 2 * self.buttons.len() + 2;
+        let end = vpt * self.buttons.len() + 2;
         let json = format!("{{\"name\": \"bevy-drive\", \"slot\": 2, \"end_vb\": {end},
  \"note\": \"recorded in mr-bevy --oracle-grid\",
  \"steps\": [{}]}}
@@ -398,6 +404,8 @@ fn main() {
         }
     };
     let ghost = args.ghost.as_ref().map(|p| Trace::read(p).expect("read --ghost trace"));
+    // Logic rate (pacing.rs): a live session at `logic_hz`; replays at 30.
+    let tick_hz = if matches!(driver, Driver::Sim(_)) { pacing::logic_hz() } else { 30 };
     let mut app = App::new();
     if let Some(d) = &capture_dir {
         app.insert_resource(capture::CaptureReplay::open(d).expect("open --replay-capture DIR (meta.json, frames.bin)"));
@@ -419,7 +427,7 @@ fn main() {
             }),
             ..default()
         }))
-        .insert_resource(Time::<Fixed>::from_hz(30.0))
+        .insert_resource(Time::<Fixed>::from_hz(tick_hz as f64))
         .add_plugins(scene::ObjectsPlugin)
         .insert_resource(ClearColor(Color::srgb(0.25, 0.2, 0.45)))
         .insert_resource(Player { driver, pose: Pose::default(), prev: Pose::default(), tick: 0, buttons: 0, kart: None, prev_kart: None })
@@ -428,6 +436,7 @@ fn main() {
         .add_systems(FixedUpdate, (sim_tick, ghost::tick.after(sim_tick)))
         .insert_resource(shot_plan())
         .add_plugins(fps::plugin)
+        .add_plugins(pacing::PacingPlugin)
         .add_plugins(hud::HudPlugin)
         .add_plugins(lighting::plugin)
         .add_plugins(animtex::AnimTexPlugin)
@@ -508,8 +517,10 @@ fn fit_viewports(
     }
 }
 
-fn sim_tick(mut p: ResMut<Player>, keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, mut hud_g: ResMut<hud::HudGlobals>, mut feed: ResMut<karts::KartFeed>) {
-    let buttons = input::sample(&keys, &pads);
+fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_g: ResMut<hud::HudGlobals>, mut feed: ResMut<karts::KartFeed>) {
+    // The pad as sampled this frame (pacing.rs; with low_latency also the
+    // presses since the last tick).
+    let buttons = latch.take_for_tick();
     p.prev = p.pose;
     let tick = p.tick;
     let mut pose = p.pose;
@@ -540,8 +551,9 @@ fn sim_tick(mut p: ResMut<Player>, keys: Res<ButtonInput<KeyCode>>, pads: Query<
                 let idle = run.session.ticks < run.align;
                 let k = run.buttons.len() as u64;
                 let scripted = run.route.as_ref().map(|r| {
-                    // The bridge samples tick k's pad while VBlanks-since-restore = 2k.
-                    let vb = 2 * k;
+                    // The bridge samples tick k's pad while VBlanks-since-restore = 2k
+                    // (60 Hz mode: k).
+                    let vb = run.session.vblanks_per_tick() as u64 * k;
                     r.iter().take_while(|(v, _)| *v <= vb).last().map(|(_, m)| *m).unwrap_or(0)
                 });
                 let b = if idle { 0 } else { scripted.unwrap_or(buttons) };

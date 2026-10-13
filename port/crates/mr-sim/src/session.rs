@@ -651,6 +651,12 @@ impl Session {
         true
     }
 
+    /// VBlanks of game time per `tick`: 2 (30 Hz) or 1 (60 Hz mode). Route
+    /// files count VBlanks: tick k reads VBlank k * this.
+    pub fn vblanks_per_tick(&self) -> i32 {
+        if self.globals.hz60.on { 1 } else { 2 }
+    }
+
     /// Seconds of game time per `tick`.
     pub fn tick_seconds(&self) -> f64 {
         if self.globals.hz60.on { 1.0 / 60.0 } else { 1.0 / 30.0 }

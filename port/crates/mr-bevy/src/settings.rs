@@ -45,6 +45,8 @@ pub const KNOWN: &[Opt] = &[
     Opt { key: "fx_blend", default: "psx", allowed: "psx|linear", help: "psx = effects and kart shadows blended as the PS1 GPU does (B/2+F/2, B+F, B-F, B+F/4 on the gamma-encoded frame); linear = the same equations in linear light (softer additive glow, dimmer dim sparks)" },
     Opt { key: "fx_depth_test", default: "true", allowed: "true|false", help: "true = sprites, particles, projectiles and shadows are hidden by walls (the ground under a sprite never hides it, as the game's ordering table draws the ground first); false = always drawn over the scene (debug)" },
     // --- G 60 Hz --- (append below)
+    Opt { key: "logic_hz", default: "30", allowed: "30|60", help: "simulation rate: 30 = the game's logic (2 VBlanks per tick, exact against the original); 60 = the 60 Hz mode (1 VBlank per tick, within the feel tolerance of 30; kart-physics-ledger.md \"60 Hz mode\")" },
+    Opt { key: "low_latency", default: "true", allowed: "true|false", help: "pad sampled every display frame and the coming tick shown as it is sampled (look-ahead on a throw-away copy; the simulation is unchanged); false = the Session 4 display (interpolated one tick behind)" },
 ];
 
 #[derive(Resource, Clone, Debug)]

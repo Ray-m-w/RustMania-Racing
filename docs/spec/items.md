@@ -164,5 +164,42 @@ projectiles + records), savestate slot 2, 3 laps + finish:
   nothing injected. The player is exact on every motion field to the
   finish in all four races, with 4 / 4 / 2 / 3 projectile hits on the
   player produced by the port's projectiles.
-- AI item use against oracle races: docs/notes/2026-10-12.md "Session 4, A
-  items sim" and the report.
+- All karts free (`mr-items freeall`): every kart, pickups and projectiles
+  from the port; only the frame-start random pointer, the rand() seed and
+  the FUN_8007F03C skip from the oracle. Exact on every tick for all six
+  karts over 4,815 ticks on s_1, s_11, s_15, s_20.
+- AI item use (`mr-items rows` / `race`, tools/oracle/item_stats.py): 20
+  independent oracle races s_1..s_20 (tools/oracle/capture_seeds.py: player
+  idle, a different poked rand() seed and random pointer each) vs 100 port
+  races (5 seeds from each start, `Session` free, nothing injected).
+  Per-race totals over the five AI karts; tolerance = 2 * sqrt(sd_o^2/n_o +
+  sd_p^2/n_p).
+
+  Race window (each kart until it finishes):
+
+  | stat | oracle mean (sd) [min..max] | port mean (sd) | diff | tol | ok |
+  |---|---|---|---|---|---|
+  | fires | 40.0 (3.4) [34..48] | 38.7 (3.0) | -1.26 | 1.66 | yes |
+  | boxes | 38.6 (3.5) [32..46] | 37.4 (2.9) | -1.25 | 1.67 | yes |
+  | tokens | 434.3 (24.0) [397..480] | 416.3 (27.9) | -17.96 | 12.08 | NO |
+  | turbo ticks | 615.7 (91.7) [440..812] | 573.4 (99.5) | -42.34 | 45.58 | yes |
+  | special moves | 2.3 (0.9) [1..4] | 2.4 (1.1) | +0.14 | 0.47 | yes |
+  | character specials | 0 | 0 | 0 | 0 | yes |
+  | hits dealt | 13.9 (3.4) [8..21] | 14.4 (3.4) | +0.53 | 1.65 | yes |
+  | hits taken | 13.8 (3.3) [8..21] | 14.2 (3.4) | +0.49 | 1.63 | yes |
+  | hit rate | 0.35 (0.09) | 0.37 (0.09) | +0.02 | 0.05 | yes |
+
+  Whole run (4,815 ticks, past the AI's finish): the same except tokens
+  620.0 vs 599.8 (tol 17.4, NO) and turbo 1011 vs 930 (tol 70.3, NO).
+  Fires by lap: oracle 0.34/0.33/0.32, port 0.34/0.32/0.33. First special
+  move: median tick 2302 (44 karts) vs 1684 (227). Character specials are
+  0 in both: the idle player is last, and an AI kart uses R1 / R2 specials
+  only when it is behind kart 0 (docs/spec/ai.md, AI items).
+  Open: the port collects ~4 % fewer tokens (about 3 standard errors) and
+  ~3 % fewer boxes/fires (inside tolerance). freeall is exact, so the sim
+  matches given the game's random streams; the suspect is the stream
+  itself: FUN_8007F03C's per-frame random-byte draws are not ported (the
+  pointer walks exe text 0x8001F94C..0x8001FF28, whose bytes are far from
+  uniform, so which bytes the AI reads depends on every consumer). Tried
+  without effect: an unconditional skip drawn from the measured excess
+  (`--rng-mimic`), and another race's frame-start streams (`--streams`).

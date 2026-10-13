@@ -21,7 +21,12 @@ pub struct FinishLine {
 /// kart +0x4E6 and enters the pickup code, which is out of scope here.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Trigger {
+    /// Where it is touched (TER units).
     pub pos: [i32; 3],
+    /// Where it takes the kart (the record's second point, TER units).
+    pub to: [i32; 3],
+    /// A third point: the kart leaves heading from `to` toward it.
+    pub dir: [i32; 3],
 }
 
 /// A start position: the grid point and a second point the kart faces away
@@ -193,7 +198,7 @@ impl Course {
                 (0..(c.count as usize) / 3)
                     .map(|i| {
                         let o = c.offset + 36 * i;
-                        Trigger { pos: [le32(o + 4), le32(o + 8), le32(o + 12)] }
+                        Trigger { pos: [le32(o + 4), le32(o + 8), le32(o + 12)], to: [le32(o + 16), le32(o + 20), le32(o + 24)], dir: [le32(o + 28), le32(o + 32), le32(o + 36)] }
                     })
                     .collect()
             })

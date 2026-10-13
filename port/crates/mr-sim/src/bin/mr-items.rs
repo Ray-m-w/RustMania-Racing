@@ -105,7 +105,16 @@ fn main() {
     match mode.as_str() {
         "tf" => teacher(&run, &cap, &base, &mut s, from, n, skip_max, verbose),
         "free" => free(&run, &cap, &base, &mut s, from, n, skip_max, verbose),
-        _ => eprintln!("usage: mr-items tf|free CAPTURE [--ticks N]"),
+        "rows" => {
+            let out = opt("--out").expect("--out CSV");
+            oracle_rows(&run, &cap, &base, n, &out);
+        }
+        "race" => {
+            let out = opt("--out").expect("--out CSV");
+            let seed: u32 = opt("--seed").map(|v| v.parse().unwrap()).unwrap_or(0);
+            port_race(&run, &cap, &base, &mut s, n, seed, &out);
+        }
+        _ => eprintln!("usage: mr-items tf|free|rows|race CAPTURE [--ticks N] [--out CSV] [--seed S]"),
     }
 }
 
@@ -126,6 +135,8 @@ fn teacher(run: &Run, cap: &Capture, base: &[u8], s: &mut Session, from: usize, 
     let mut skips: BTreeMap<i64, usize> = BTreeMap::new();
     let mut panics = Vec::new();
     let mut events = 0usize;
+    let mut rng_end: BTreeMap<i64, usize> = BTreeMap::new();
+    let mut seed_bad = 0usize;
     for i in from..n {
         let ma = cap.mem_at(run.ticks[i], Some(base));
         let mb = cap.mem_at(run.ticks[i + 1], Some(base));
@@ -173,6 +184,13 @@ fn teacher(run: &Run, cap: &Capture, base: &[u8], s: &mut Session, from: usize, 
             }
         }
         events += s.items().events.len();
+        {
+            let d = (mb.u32(0x800B_0BCC) as i64) - (s.globals.rng as i64);
+            *rng_end.entry(d.clamp(-5, 40)).or_default() += 1;
+            if s.rand_state != mb.u32(0x8000_9010) {
+                seed_bad += 1;
+            }
+        }
         if verbose && !s.items().events.is_empty() {
             println!("tick {i} (vb {}): events {:?}", run.ticks[i + 1], s.items().events);
         }
@@ -203,6 +221,8 @@ fn teacher(run: &Run, cap: &Capture, base: &[u8], s: &mut Session, from: usize, 
     println!("item tables (pickups + projectiles) differing: {} ticks, first {:?}", item_bad.bad, item_bad.first);
     println!("FUN_8007F03C random-byte skip found (skip: ticks; -1 none): {skips:?}");
     println!("item events produced: {events}");
+    println!("random pointer at the frame end, game - port (bytes: ticks): {rng_end:?}");
+    println!("BIOS rand() seed at the frame end differing: {seed_bad} ticks");
     let mut kinds: BTreeMap<String, (usize, usize)> = BTreeMap::new();
     for (t, e) in &panics {
         let en = kinds.entry(e.clone()).or_insert((0, *t));
@@ -312,4 +332,89 @@ fn free(run: &Run, cap: &Capture, base: &[u8], s: &mut Session, from: usize, n: 
     println!("first player motion difference: {first_diff:?}");
     println!("first item-state difference: {first_item_diff:?}");
     println!("projectile hits on the player produced by the port: {hits}");
+}
+
+/// Item-use statistics rows (tools/oracle/item_stats.py): one per tick and
+/// kart.
+const ROW_HEADER: &str = "tick,slot,charge0,charge1,meter,special,boosting,boost_count,lap,dealt,taken,race_time,finished,gspecial,gowner,clock,character,fires,pickups_box,pickups_token,hits_dealt,hits_taken";
+
+#[allow(clippy::too_many_arguments)]
+fn row(out: &mut String, tick: usize, slot: usize, k: &KartState, g: (i8, u8, i32), ev: [usize; 5]) {
+    out.push_str(&format!(
+        "{tick},{slot},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+        k.weapons[4], k.weapons[5], k.start_timer, k.special, k.boosting, k.boost_count, k.lap, k.contacts_from_above, k.contacts_below,
+        k.race_time, k.finished, g.0, g.1, g.2, k.character, ev[0], ev[1], ev[2], ev[3], ev[4]
+    ));
+}
+
+/// The oracle's rows from the capture (events left at -1: the stats
+/// script derives them from the record fields, as for the port).
+fn oracle_rows(run: &Run, cap: &Capture, base: &[u8], n: usize, path: &str) {
+    let mut out = String::from(ROW_HEADER);
+    out.push_str("\n");
+    for i in 0..=n {
+        let m = cap.mem_at(run.ticks[i], Some(base));
+        let nk = (m.i16(0x800B_0DFE) + m.i16(0x800B_0C98)) as u32;
+        let it = ItemState::read(&m);
+        for slot in 0..nk {
+            let k = oracle::load_kart(&m, slot);
+            row(&mut out, i, slot as usize, &k, (it.special, it.special_owner, m.i32(0x800B_0A94)), [0; 5]);
+        }
+    }
+    std::fs::write(path, out).unwrap();
+    println!("{} ticks -> {path}", n + 1);
+}
+
+/// A port race from the capture's first tick: every kart in the port (the
+/// AI with items), the player on the capture's pad; `seed` != 0 replaces
+/// the BIOS rand() seed (another race from the same start).
+fn port_race(run: &Run, cap: &Capture, base: &[u8], s: &mut Session, n: usize, seed: u32, path: &str) {
+    let m0 = cap.mem_at(run.ticks[0], Some(base));
+    s.load_mem(&m0);
+    if seed != 0 {
+        let mut x = seed.wrapping_mul(0x9E37_79B9) ^ 0x5bd1_e995;
+        for _ in 0..3 {
+            x ^= x >> 15;
+            x = x.wrapping_mul(0x2C1B_3C6D);
+        }
+        s.rand_state = x;
+        s.globals.rng = 0x8001_F94C + (x >> 8) % 0x5DB;
+    }
+    let nk = 1 + s.others.len();
+    let mut out = String::from(ROW_HEADER);
+    out.push_str("\n");
+    let mut ev = vec![[0usize; 5]; nk];
+    let it = s.items();
+    for (slot, k) in std::iter::once(&s.kart).chain(s.others.iter().map(|o| &o.kart)).enumerate() {
+        row(&mut out, 0, slot, k, (it.special, it.special_owner, s.globals.race_clock), ev[slot]);
+    }
+    for i in 0..n {
+        let mb = cap.mem_at(run.ticks[i + 1], Some(base));
+        let buttons = mb.u16(0x800B_0CE8);
+        let dt = mb.i32(0x800B_0AEC);
+        if let Err(e) = s.tick_dt(buttons, dt) {
+            println!("STOPPED at tick {i}: {e}");
+            break;
+        }
+        for e in &s.items().events {
+            use mr_sim::items::{ItemEvent, PickupKind};
+            match *e {
+                ItemEvent::Fired { kart, .. } => ev[kart as usize][0] += 1,
+                ItemEvent::Pickup { kart, kind: PickupKind::Box, .. } => ev[kart as usize][1] += 1,
+                ItemEvent::Pickup { kart, kind: PickupKind::Token, .. } => ev[kart as usize][2] += 1,
+                ItemEvent::Hit { victim, shooter, .. } => {
+                    ev[shooter as usize][3] += 1;
+                    ev[victim as usize][4] += 1;
+                }
+                _ => {}
+            }
+        }
+        let it = s.items();
+        let g = (it.special, it.special_owner, s.globals.race_clock);
+        for (slot, k) in std::iter::once(&s.kart).chain(s.others.iter().map(|o| &o.kart)).enumerate() {
+            row(&mut out, i + 1, slot, k, g, ev[slot]);
+        }
+    }
+    std::fs::write(path, out).unwrap();
+    println!("port race seed {seed}: {n} ticks -> {path}");
 }

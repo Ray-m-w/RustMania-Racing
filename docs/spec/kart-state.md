@@ -111,6 +111,23 @@ against the oracle over the DOCK lap unless noted. Model: docs/spec/kart-physics
 | 0x4F6/0x4F7 | u8 | conveyor / conveyor_prev | [0x8003F034] |
 | 0x502 | u8 | on_ground | any floor found [0x8003FBDC] |
 
+### Item fields (Session 4, docs/spec/items.md)
+| off | type | name in mr-sim | meaning |
+|---|---|---|---|
+| 0x1AC | 3x3 i16 | vmat | vehicle matrix (render pass); weapons launch along it [0x80068F44] |
+| 0x300..0x318 | i32 x7 | target_x/yaw/z, eff_30c.. | effect parameters a character special sets (FUN_8006B828) and FUN_8006C388 steps |
+| 0x330 / 0x338 / 0x340 | i32 | drv_x / ref_y / drv_z | driver position: pickups and projectile hits test it [0x8007BC9C, 0x8006A8E8] |
+| 0x3E8..0x3F0 | i32 | ai_tx/ty/tz | AI steering target (TER units) / special move path target (world) |
+| 0x404..0x40C | i32 | sp_x/y/z | special move chase point [FUN_800913F4] |
+| 0x492 / 0x494 | i16 | contacts_from_above / contacts_below | hits dealt / taken: projectiles, specials, landing on a kart [0x8006AC38] |
+| 0x49C / 0x49E | i16 | sp_seg / sp_pt | special move path position |
+| 0x4A4 / 0x4A5 | i8 | model_slot / char_slot | model table slots (effect 8 counts their parts) |
+| 0x4D6 | u8 | special | special move state 1 / 2 (backward) / 3 (landing) |
+| 0x4E6 / 0x4B5 / 0x4EF / 0x4B3 | | pickup / pickup_timer / pickup_state / wall_flag | trigger warp FUN_80061FC0 |
+| 0x4F1 | i8 | effect | character special effect on this kart (-1 none) |
+| 0x4F4 | u8 | token_colour | colour of the last turbo token collected |
+| 0x4FC / 0x444 | i8 / i16 | flash_timer / hit_dir | HUD message (0xF hits, 0xE collection) and its value (+1 / -1 HIT) |
+
 ## Controls
 The kart update decodes the pad word itself (0x80065510..0x8006559C) [CODE]:
 CROSS (0x4000) accelerates in every configuration. The only configurable part

@@ -8,13 +8,35 @@ kart-physics.md.
 AI (Session 3, mr-sim ai.rs; docs/spec/ai.md, docs/notes/SESSION-3-ai.md).
 The owner's rule: AI behaves the same within a tolerance; these are the
 places it is not one-for-one:
-- Items: the AI's L1/L2 (weapons), R1 (turbo from the meter) and R2 /
-  full-meter R1 (specials) are produced by ai.rs and dropped
-  (`ai::items_off`); item boxes, turbo tokens (FUN_8007BBF0), weapons
-  (FUN_80068C6C, projectiles FUN_80069648) and specials (+0x4D6,
-  FUN_800913F4, FUN_8006B828) are not ported. The oracle runs the tolerance
-  is measured on had them switched off by TCP pokes (capture_noitems.py; a
-  boost tick can slip through, none did) or bridge v4 pokes once built.
+- Items (Session 4, docs/spec/items.md): ported and on in the session
+  (`SessionConfig::items`); the AI's L1/L2/R1/R2 take effect. `ai::items_off`
+  remains for the Session 3 items-off analysis (mr-ai). Item-use
+  statistics against oracle races: docs/notes/2026-10-12.md, Session 4 A.
+- Items, not one-for-one (Session 4):
+  * FUN_8007F03C (kart particles: dust, spray, smoke, near a human camera)
+    is not ported; its random-byte draws (0 on ~93 % of frames, up to ~30)
+    are absent from a session, so a session's random pointer runs a little
+    behind the game's (the analysis harness searches them per frame:
+    `Session::rng_skip_items`). FUN_8008650C (weather; off on DOCK) and
+    FUN_800330D4's splash particles likewise (its random draw is kept).
+  * The special move reads two stack slots the skipped physics block would
+    set (steer rate 0x58(sp), sideways speed 0x48(sp)); the session keeps
+    the previous kart update's (`RaceGlobals::stack`): exact for AI karts;
+    for the player (first in the loop) other code leaves other values, so
+    in a player's special move steer lag (+0x47C), the sway springs and the
+    look point (render side) differ from the game's. The yaw rate +0x448 of
+    a kart in a special move is the caller's register fp: 0 [RAM].
+  * Effect 17 / 22 particles need the driver matrix +0x1EC (not ported):
+    their random draws are kept, the particle is not spawned.
+  * 0x800AC6C0 (vehicle per character-grid cell, filled by the model loader
+    FUN_80092928): taken as "every racing vehicle loaded" (true on DOCK).
+  * Token colours at race load come from the 92 rand() seeds before the
+    session's race-load seed (the oracle's course load was before its
+    start_probe); cosmetic (+0x4F4, sparkle colours).
+  * Trigger warp FUN_80061FC0 is ported but no capture touches a trigger.
+  * Session race load: the first camera tick (intro mode change) takes its
+    side bit from the next rand() without drawing it (oracle start_probe:
+    drawing it puts every AI decision one rand() off) [INFER].
 - rand(): the BIOS rand() stream (seed 0x80009010) is shared with other
   game code (camera mode changes, contact effects, race load); a session
   has its own seed, so AI path branches and jumps differ from any recorded
@@ -84,18 +106,14 @@ Paths the solo player does not take on DOCK. Address = the game code skipped.
 |---|---|---|
 | update.rs | nearest-camera search with 2+ humans (0x80064FB0) | multiplayer |
 | update.rs | TRIANGLE look-at when no kart is near / mode 0x14 (FUN_800728C0) | camera lock search, challenge mode |
-| update.rs | special state +0x4D6 != 0 (track reset / special move, FUN_800913F4) | special move / reset |
-| update.rs | R1 with a full meter (+0x48A = 0x1A4) on a path: special move (0x80065B5C) | special move |
-| update.rs | L1 / L2 with a charged weapon slot: fire (FUN_80068C6C) | weapons |
-| update.rs | R2 with a full meter: character special (FUN_8006B828) | special move |
 | update.rs | jump while carrying an object (+0x4E8 != -1) | items |
-| update.rs | status bits 0x40110 / 0x20 / 0x400 / 0x2000 / 0x8000 / 0x80 / 1 (homing, forced float, frozen, pushes, wobbles); 0x40 (spun by a hit) is ported, its timer +0x468 is FUN_8006C388's | item / weapon effects |
-| update.rs | effects +0x4F1 = 0x15 / 0x16 | item effects |
 | update.rs | time-trial ghost FUN_8006F64C (race type 3) | not a race |
 | update.rs | 10-minute limit: kart handed to the AI (+0x4C7 = 2) | race clock > 179999 |
-| ground.rs | ground contact in a special state; wall hit while carrying | special move / items |
+| ground.rs | wall hit while carrying (+0x4E8) | carried objects (none on DOCK) |
+| progress.rs | item +0x4E7 (carried object list) | none on DOCK |
+| progress.rs | paired trigger list 0x800D1C7C (+0x4EF = 2), trigger on course 12 | other courses |
+| items | challenge-mode boxes / tokens / objects (0x800B07E6 != 0), battle-mode projectile damage (modes 2 / 7, race flag 8), mode 20 hits | other modes |
 | progress.rs | object lists FUN_800628FC / FUN_80061BC4 / FUN_800632BC / FUN_80063C24 / FUN_80062E38 / FUN_800627E0 with non-empty lists | DOCK has none (pointers 0x800D1C68/8C/98/A4 null, 0x800B0C58/0E00/0C68 zero) |
-| progress.rs | DOCK's two trigger objects (0x800D1C9C, count 0x800B0DC6 = 2) touched, pickup states (+0x4E6, +0x4E7) | items |
 | progress.rs | lap timing in modes 2/7/20, race flags 8/2, time trial, 10-minute limit | other modes |
 | progress.rs | challenge win bits at the finish (race flag 0x10) | challenge mode |
 | race.rs | race progress in battle / time trial / race flag 1 | other modes |
@@ -143,7 +161,12 @@ Paths the solo player does not take on DOCK. Address = the game code skipped.
   (FUN_80041A20/80041CC4) (before the kart loop: same frame);
 - the other karts' records (for the contact pass), from the previous frame.
 
-## 4. External events injected in the lap free run
+## 4. External events injected in the lap free run (Session 2/3; gone in Session 4)
+Session 4: the projectiles are the port's (FUN_80069648); `mr-items free`
+on items-on captures runs the player with nothing injected (exact to the
+finish on all four, docs/spec/items.md). The player-only harness below
+(mr-verify, tests/oracle_lap.rs, tests/race.rs) still injects, as it does
+not run the other karts.
 - Tick 821 (VBlank 1650): an AI projectile hits the player (FUN_80069648 after
   the kart loop: velocity halved and pushed, spin-out, flash). Weapons are out
   of scope and the capture does not include the projectile table (0x800DDC50),
@@ -209,7 +232,7 @@ Not produced (cosmetic or other subsystems), with the consequence:
   comes close (lap1: tick 69).
 - Race position (ported since, race.rs): with one kart the player is first,
   so the catch-up is 0 as for a leader (analysis: `race_pos_override`).
-- Turbo-meter tokens FUN_8007BBF0 (+0x48A += 12 per token collected on the
+- (Ported in Session 4: items.rs.) Turbo-meter tokens FUN_8007BBF0 (+0x48A += 12 per token collected on the
   track): not ported, the meter stays 0, so R1 turbo never fires and the boost
   glow target stays 0x60.
 - FUN_80081170 / FUN_8006F410 record fields +0x488 / +0x490 at init (course

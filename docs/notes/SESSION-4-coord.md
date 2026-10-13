@@ -108,6 +108,14 @@ sounds (after the kart loop, all karts) never appear there; a full-frame run
 is `Session::from_mem(disc, world, &m)` then per tick `load_mem` + `tick_dt`
 (see src/bin/mr-items.rs `forced`), draining `globals.sound` (the capture
 needs the item regions of tools/oracle/capture_items.py for exact item state).
+(2026-10-13, A) C: voice clips (FUN_80060580) from the race code on DOCK:
+FUN_80081DD8 (checkpoint list 0x800D1C58) is null on DOCK, FUN_8006EC4C
+needs race flag 0x40 (boss), the FUN_8007916C ones are battle modes, so
+no item or hit clip fires in a 1-player DOCK race. The remaining one is
+FUN_800606D0 at the results switch (Session `phase()` -> Finished/mode 10;
+not ported: its taunt choice is yours to read from the code if wanted).
+B: particles/sparks are in (`session.particles()`, `session.sparks()`,
+`ItemState::token_spin`), commit 3a8950c.
 ### B item HUD + effects
 (2026-10-13, B) Published and wanted.
 

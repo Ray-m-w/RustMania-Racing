@@ -236,3 +236,17 @@ docs/notes/SESSION-3-ai.md section 4: race-load order (templates, grid,
 order (all-pairs contacts, round-robin `path_position`, `ai_buttons` ->
 `items_off` -> `kart_update(.., -1)`), and the two update.rs hooks
 (`catchup_scale` at 0x80065850, `reroll` at 0x80068078).
+
+## Items (Session 4)
+The AI's item buttons now act (`SessionConfig::items`, default on; the
+item code is docs/spec/items.md): L1 / L2 at random (rand() < 0x400 per
+tick, then L2 if a second rand() > 0x3FFF) fire a charged slot; R1 in water
+(or on straights when behind kart 0) burns the meter as turbo, and with a
+full meter starts the special move; with preference flag 2 / 4 and a full
+meter, R1 / R2 (special move / character special) when behind kart 0, else
+the meter drops to 210 and the preference is re-rolled (FUN_8009192C). So in
+a race where the player is last no AI kart is "behind" and the specials
+come only from R1 pressed in water with a full meter. The item code runs
+the same for every kart; teacher-forced race frames are exact for all six
+karts (items.md, Verification). Item-use statistics against oracle races:
+docs/notes/2026-10-12.md "Session 4, A items sim".

@@ -24,23 +24,11 @@ pub fn contact_phase(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Ti
         unreachable_in_scope!("item +0x4E7 active: ground contact skipped");
     }
     // FUN_80061FC0: proximity triggers (list 0x800D1C9C, count 0x800B0DC6).
-    if k.effect == -1 {
-        if k.pickup == -1 {
-            let (x, y, z) = (k.x >> 10, k.y >> 10, k.z >> 10);
-            for tr in &w.course.triggers {
-                let dx = (tr.pos[0] >> 5) - x;
-                let dy = (tr.pos[1] >> 5) - y;
-                let dz = (tr.pos[2] >> 5) - z;
-                if dx.wrapping_mul(dx).wrapping_add(dy.wrapping_mul(dy)).wrapping_add(dz.wrapping_mul(dz)) < 0x100 {
-                    unreachable_in_scope!("DOCK trigger object touched (FUN_80061FC0 pickup)");
-                }
-            }
-        } else if !w.course.triggers.is_empty() {
-            unreachable_in_scope!("pickup state +0x4E6 active");
-        }
-    }
+    teleport(k, g, w);
     if !(k.pickup == -1 || k.wall_flag != 0) {
-        unreachable_in_scope!("pickup state +0x4E6: ground contact skipped");
+        // In a trigger's transfer the kart is moved by it alone.
+        k.object_f8 = -1;
+        return;
     }
     // FUN_80061BC4: flag 0x800B0E00 (0 on DOCK).
     if k.effect == -1 && w.course.has_other_objects {
@@ -60,6 +48,107 @@ pub fn contact_phase(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Ti
     }
     // FUN_80062E38: +0x4F8 = -1; lists 0x800D1C68 / 0x800D1CA4 null on DOCK.
     k.object_f8 = -1;
+}
+
+/// FUN_80061FC0: touching a trigger object (within 16 units >> 10 of its
+/// first point) takes the kart to its second point over 240 VBlanks: it
+/// shrinks away (+0x442 to 0 over 60), flies (120: position eased toward a
+/// point moving from the first to the second, heading along the line, body
+/// flat), grows back at the second point (60), then is released. +0x4E6 =
+/// trigger, +0x4B5 = clock, +0x4EF = 1, +0x4B3 = done. DOCK has two (the
+/// course's own warp). The second list (0x800D1C7C, count 0x800B0C68: pairs,
+/// state 2) is empty on DOCK.
+fn teleport(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
+    if k.effect != -1 {
+        return;
+    }
+    if w.course.triggers.is_empty() {
+        return;
+    }
+    if k.pickup == -1 {
+        let (x, y, z) = (k.x >> 10, k.y >> 10, k.z >> 10);
+        let hit = w.course.triggers.iter().position(|tr| {
+            let dx = (tr.pos[0] >> 5) - x;
+            let dy = (tr.pos[1] >> 5) - y;
+            let dz = (tr.pos[2] >> 5) - z;
+            dx.wrapping_mul(dx).wrapping_add(dy.wrapping_mul(dy)).wrapping_add(dz.wrapping_mul(dz)) < 0x100
+        });
+        let Some(i) = hit else { return };
+        k.pickup = i as i8;
+        k.pickup_timer = 0;
+        k.pickup_state = 1;
+        k.event_bits |= 8;
+    } else if k.pickup_state == 2 {
+        unreachable_in_scope!("paired trigger list (0x800D1C7C)");
+    }
+    let tr = w.course.triggers[k.pickup as u8 as usize];
+    let t0 = k.pickup_timer;
+    if t0 == 0 {
+        crate::sound::at(g, w, 0x1E, 0x1600, 0x60, [k.x, k.y, k.z], -1);
+    }
+    let r0 = crate::update::rng_next(g, w) as i8 as i32;
+    let r1 = crate::update::rng_next(g, w) as i8 as i32;
+    let r2 = crate::update::rng_next(g, w) as i8 as i32;
+    let end = [tr.to[0] * 0x20 + r0 * 2, tr.to[1] * 0x20 + r1 * 2, tr.to[2] * 0x20 + r2 * 2];
+    if g.game_state == 0xC {
+        unreachable_in_scope!("trigger on course 12 (offset end point)");
+    }
+    let t = t0 as i32;
+    let start = [tr.pos[0] << 5, tr.pos[1] << 5, tr.pos[2] << 5];
+    let mut scale: Option<i32> = None;
+    let target;
+    if t < 0x3C {
+        // Shrink at the start point.
+        target = start;
+        scale = Some(((t - 0x3C).abs()).min(0x3C));
+    } else if t - 0x3C < 0x78 {
+        // Fly: toward a point moving along the line.
+        let s = t - 0x3C;
+        target = [0, 1, 2].map(|i| start[i] + ((end[i] - start[i]) * s) / 0x78);
+        k.engine = 0;
+        k.heading = (ratan2(&w.tables, tr.dir[0] - tr.to[0], tr.dir[2] - tr.to[2]) & 0xFFF) as i16;
+        k.tilt_nx = 0;
+        k.tilt_ny = -0x1000;
+        k.tilt_nz = 0;
+        k.pitch = 0;
+        k.roll = 0;
+    } else if (t + 0x4C) & 0xFF >= 0x3C {
+        // Released (0xF0): full size.
+        target = end;
+        k.engine = 0x1000;
+    } else {
+        // Grow at the end point.
+        target = end;
+        scale = Some((t - 0xB4).min(0x3C));
+    }
+    if let Some(sc) = scale {
+        k.engine = (((sc << 16) >> 4) / 0x3C) as i16;
+    }
+    if k.pickup_timer < 0xF0 {
+        for _ in 0..substeps(g.dt) {
+            k.x = k.x.wrapping_add(div_pow2(target[0].wrapping_sub(k.x), 4));
+            k.y = k.y.wrapping_add(div_pow2(target[1].wrapping_sub(k.y), 4));
+            k.z = k.z.wrapping_add(div_pow2(target[2].wrapping_sub(k.z), 4));
+        }
+        k.vx = 0;
+        k.vy = 0;
+        k.vz = 0;
+        let n = (k.pickup_timer as i32 + g.dt) as u8;
+        k.pickup_timer = if n > 0xEF { 0xF0 } else { n };
+        k.wall_flag = 0;
+        if t0 < 0xB4 && 0xB3 < k.pickup_timer {
+            crate::sound::at(g, w, 0x1E, 0x1600, 0x60, [k.x, k.y, k.z], -1);
+        }
+    } else {
+        k.wall_flag = 1;
+    }
+    if k.wall_flag != 0 {
+        // Released (state 1; state 2 waits until the kart has left the
+        // second point).
+        k.pickup = -1;
+        k.wall_flag = 0;
+        k.pickup_state = 0;
+    }
 }
 
 /// FUN_8003D208: 1 when (px, pz) is on the non-negative side of the line

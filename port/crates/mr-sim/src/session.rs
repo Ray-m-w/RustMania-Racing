@@ -180,7 +180,8 @@ pub struct Session {
     /// (oracle start_probe: drawing it puts every later AI decision one
     /// rand() off; the game enters the intro during the load) [INFER].
     pub camera_peek: bool,
-    rand_state: u32,
+    /// The BIOS rand() seed 0x80009010 (rand_seed() reads it).
+    pub rand_state: u32,
     cfg: SessionConfig,
 }
 

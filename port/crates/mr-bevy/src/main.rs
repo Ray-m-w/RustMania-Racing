@@ -16,8 +16,11 @@ mod hud;
 mod fps;
 mod input;
 pub mod kartmodel;
+mod karts;
+mod capture;
 mod psxmesh;
 mod scene;
+mod kartshadow;
 mod vramtex;
 
 use bevy::core_pipeline::tonemapping::Tonemapping;
@@ -108,25 +111,6 @@ pub struct Player {
     /// the replay sidecar, else synthesized from `pose` (kartmodel::synth_record).
     pub kart: Option<Vec<u8>>,
     pub prev_kart: Option<Vec<u8>>,
-}
-
-/// One model part of the player's vehicle (model 0) or driver (model 1),
-/// placed every frame by `place_parts`.
-#[derive(Component)]
-pub struct KartPart {
-    pub model: usize,
-    pub part: usize,
-}
-
-/// A polygon of the driver's neck (world-space vertices rewritten per frame).
-#[derive(Component)]
-pub struct NeckPoly;
-
-#[derive(Resource)]
-pub struct KartRig {
-    pub model: kartmodel::KartModel,
-    /// Per neck part, per polygon: its mesh (vertices in GPU order).
-    pub neck_meshes: Vec<Vec<Handle<Mesh>>>,
 }
 
 #[derive(Component)]
@@ -365,7 +349,10 @@ impl SimRun {
 
 fn main() {
     let args = parse_args();
+    let a0: Vec<String> = std::env::args().collect();
+    let capture_dir = a0.iter().position(|x| x == "--replay-capture").and_then(|i| a0.get(i + 1)).cloned();
     let driver = match &args.replay {
+        _ if capture_dir.is_some() => Driver::Replay { trace: Trace::new("capture", "capture", &[]), at: 0, karts: None },
         Some(p) => {
             let side = p.replace(".trace.jsonl", ".kart.bin");
             let karts = std::fs::read(&side).ok().filter(|b| b.len() % kartmodel::KART_LEN == 0);
@@ -380,7 +367,11 @@ fn main() {
         }
     };
     let ghost = args.ghost.as_ref().map(|p| Trace::read(p).expect("read --ghost trace"));
-    App::new()
+    let mut app = App::new();
+    if let Some(d) = &capture_dir {
+        app.insert_resource(capture::CaptureReplay::open(d).expect("open --replay-capture DIR (meta.json, frames.bin)"));
+    }
+    app
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Muppet RaceMania (Rust)".into(),
@@ -399,8 +390,10 @@ fn main() {
         .insert_resource(shot_plan())
         .add_plugins(fps::plugin)
         .add_plugins(hud::HudPlugin)
+        .add_plugins(karts::KartsPlugin)
+        .add_systems(FixedUpdate, capture::tick.after(sim_tick).before(karts::feed_player))
         .add_systems(Last, write_outputs)
-        .add_systems(Update, (place_player, place_parts, ghost::place, follow_camera, title, follow_sky.after(follow_camera), select_objects, shot.after(follow_sky).after(select_objects)))
+        .add_systems(Update, (place_player, ghost::place, follow_camera, title, follow_sky.after(follow_camera), select_objects, shot.after(follow_sky).after(select_objects)))
         .run();
 }
 
@@ -505,55 +498,6 @@ fn place_player(p: Res<Player>, time: Res<Time<Fixed>>, mut q: Query<&mut Transf
         let p1 = to_bevy(p.pose.x, p.pose.y, p.pose.z);
         t.translation = p0.lerp(p1, a);
         t.rotation = p.prev.rotation().slerp(p.pose.rotation(), a);
-    }
-}
-
-/// Place every vehicle/driver part from the kart record (kartmodel), with
-/// display interpolation between the last two ticks like `place_player`.
-fn place_parts(
-    p: Res<Player>,
-    rig: Option<Res<KartRig>>,
-    time: Res<Time<Fixed>>,
-    mut q: Query<(&KartPart, &mut Transform, &mut Visibility)>,
-    mut meshes: ResMut<Assets<Mesh>>,
-) {
-    let Some(rig) = rig else { return };
-    let rec = |k: &Option<Vec<u8>>, pose: &Pose| match k {
-        Some(r) => r.clone(),
-        None => {
-            let id = if pose.m == [0; 9] { [4096, 0, 0, 0, 4096, 0, 0, 0, 4096] } else { pose.m };
-            kartmodel::synth_record(pose.x, pose.y, pose.z, id, &rig.model.vehicle_pivots)
-        }
-    };
-    let k1 = rec(&p.kart, &p.pose);
-    let k0 = if p.prev_kart.is_some() || p.kart.is_none() { rec(&p.prev_kart, &p.prev) } else { k1.clone() };
-    let x0 = rig.model.part_transforms(&k0);
-    let x1 = rig.model.part_transforms(&k1);
-    let a = time.overstep_fraction();
-    for (kp, mut t, mut vis) in q.iter_mut() {
-        let find = |xs: &[kartmodel::PartXform]| xs.iter().find(|x| x.model == kp.model && x.part == kp.part).copied();
-        let (Some(b0), Some(b1)) = (find(&x0), find(&x1)) else { continue };
-        let (t0, t1) = (kartmodel::to_transform(&b0), kartmodel::to_transform(&b1));
-        t.translation = t0.translation.lerp(t1.translation, a);
-        t.rotation = t0.rotation.slerp(t1.rotation, a);
-        let want = if b1.visible { Visibility::Inherited } else { Visibility::Hidden };
-        if *vis != want {
-            *vis = want;
-        }
-    }
-    let (n0, n1) = (rig.model.neck_vertices(&x0), rig.model.neck_vertices(&x1));
-    for (ni, polys) in rig.neck_meshes.iter().enumerate() {
-        for (pi, h) in polys.iter().enumerate() {
-            let Some(mut mesh) = meshes.get_mut(h) else { continue };
-            let pos: Vec<[f32; 3]> = n0[ni][pi]
-                .iter()
-                .zip(&n1[ni][pi])
-                .map(|(v0, v1)| {
-                    to_bevy(v0[0] * 32, v0[1] * 32, v0[2] * 32).lerp(to_bevy(v1[0] * 32, v1[1] * 32, v1[2] * 32), a).to_array()
-                })
-                .collect();
-            mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
-        }
     }
 }
 

@@ -351,4 +351,33 @@ mod tests {
             assert!(d < 200.0, "driver {drv:?} body {body:?}");
         }
     }
+
+    /// Every DOCK racer pair: rest pose = vertex + pivot, necks close.
+    #[test]
+    fn dock_lineup_rest_pose() {
+        let Ok(mut d) = mr_disc::Disc::open_default() else { eprintln!("SKIP: no disc"); return };
+        let pairs = [
+            ("CHARS_A/KERMIT", "VEHIC_A/RACER"), ("CHARS_B/CLIFFORD", "VEHIC_A/TRIKE"),
+            ("CHARS_A/BOBO", "VEHIC_A/W_BUGGY"), ("CHARS_B/SAL", "VEHIC_A/FLAME"),
+            ("CHARS_A/BEAKER", "VEHIC_B/M_BUGGY"), ("CHARS_A/CHEF", "VEHIC_A/HOTDOG"),
+        ];
+        for (c, v) in pairs {
+            let veh = Mdl::parse(&d.read(&format!("{v}.MDL")).unwrap()).unwrap();
+            let drv = Mdl::parse(&d.read(&format!("{c}.MDL")).unwrap()).unwrap();
+            let km = KartModel::new(&veh, &drv);
+            assert_eq!(km.driver_necks.len(), 1, "{c}");
+            let rec = synth_record(0, 0, 0, [4096, 0, 0, 0, 4096, 0, 0, 0, 4096], &km.vehicle_pivots);
+            let xs = km.part_transforms(&rec);
+            for x in &xs {
+                let piv = if x.model == 0 { km.vehicle_pivots[x.part] } else { km.driver_pivots[x.part] };
+                assert_eq!(x.trans, piv, "{c}/{v} {x:?}");
+            }
+            let part = drv.meshes().nth(km.driver_necks[0]).unwrap().1;
+            for (poly, got) in part.polys().iter().zip(&km.neck_vertices(&xs)[0]) {
+                for (j, &i) in poly.gpu_order().iter().enumerate() {
+                    assert_eq!(got[j], poly.verts[i].pos.map(|q| q as i32), "{c} neck");
+                }
+            }
+        }
+    }
 }

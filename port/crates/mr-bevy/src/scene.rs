@@ -190,6 +190,11 @@ pub fn setup(
         }
     }
 
+    // Kart shadows (kartshadow.rs): texture slot 0x14.
+    if let Some(slot) = dslots[crate::kartshadow::SHADOW_SLOT as usize] {
+        commands.insert_resource(crate::kartshadow::ShadowState::new(SinTable(sin.0.clone()), slot));
+    }
+
     commands.insert_resource(crate::TrackVis { dat, zone: 0 });
 
     // Sky dome (DOCK.AXE): gouraud quads drawn around the eye with zero
@@ -235,41 +240,14 @@ pub fn setup(
         Transform::default(),
     )); }
 
-    // Kermit in the RACER, one entity per model part, placed every frame
-    // from the kart record exactly as FUN_80026F3C / FUN_800276E8 place them
-    // (crate::kartmodel, MDL.md "Placing the parts"). Part meshes are in
-    // part-local model units (world = model * 32); the neck is re-skinned
-    // each frame between the head and body seam rings.
+    // Karts: one rig per fed kart, any character / vehicle (crate::karts).
+    commands.insert_resource(crate::karts::ModelLib::new(
+        mr_disc::Disc::open_default().expect("open the disc"),
+        exe.clone(),
+        slots,
+    ));
     let racer = Mdl::parse(&disc.read("VEHIC_A/RACER.MDL").expect("read MDL")).expect("parse MDL");
     let kermit = Mdl::parse(&disc.read("CHARS_A/KERMIT.MDL").expect("read MDL")).expect("parse MDL");
-    let rig = crate::kartmodel::KartModel::new(&racer, &kermit);
-    let local_to_bevy = |p: [i32; 3]| crate::to_bevy(p[0] * 32, p[1] * 32, p[2] * 32);
-    let mut neck_meshes: Vec<Vec<Handle<Mesh>>> = vec![Vec::new(); rig.driver_necks.len()];
-    for (mi, m) in [&racer, &kermit].into_iter().enumerate() {
-        for (slot, (_, part)) in m.meshes().enumerate() {
-            let neck = if mi == 1 { rig.driver_necks.iter().position(|&n| n == slot) } else { None };
-            let polys = part_polys(part, &slots);
-            if let Some(ni) = neck {
-                // one mesh per polygon so its 3/4 vertices can be rewritten
-                for poly in &polys {
-                    for (mesh, mat) in psxmesh::build(std::slice::from_ref(poly), &mut tex, &mut images, &mut meshes, &mut mats, local_to_bevy) {
-                        neck_meshes[ni].push(mesh.clone());
-                        commands.spawn((Mesh3d(mesh), MeshMaterial3d(mat), Transform::default(), Visibility::default(), crate::NeckPoly));
-                    }
-                }
-                continue;
-            }
-            let parts = psxmesh::build(&polys, &mut tex, &mut images, &mut meshes, &mut mats, local_to_bevy);
-            commands
-                .spawn((Transform::default(), Visibility::default(), crate::KartPart { model: mi, part: slot }))
-                .with_children(|c| {
-                    for (mesh, mat) in parts {
-                        c.spawn((Mesh3d(mesh), MeshMaterial3d(mat)));
-                    }
-                });
-        }
-    }
-    commands.insert_resource(crate::KartRig { model: rig, neck_meshes });
     commands.spawn((Transform::default(), Visibility::default(), PlayerKart));
 
     // The ghost stays one rigid rest-pose mesh.
@@ -443,6 +421,6 @@ pub struct ObjectsPlugin;
 
 impl Plugin for ObjectsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, update_banners.before(crate::shot));
+        app.add_systems(Update, (update_banners.before(crate::shot), crate::kartshadow::update_shadows.before(crate::shot)));
     }
 }

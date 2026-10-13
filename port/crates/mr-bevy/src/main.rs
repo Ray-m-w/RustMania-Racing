@@ -432,6 +432,7 @@ fn sim_tick(mut p: ResMut<Player>, keys: Res<ButtonInput<KeyCode>>, pads: Query<
     let tick = p.tick;
     let mut pose = p.pose;
     let mut kart = p.kart.clone();
+    let prev_buttons = p.buttons;
     match &mut p.driver {
         Driver::Replay { trace, at, karts } => {
             if *at < trace.rows.len() {
@@ -441,6 +442,18 @@ fn sim_tick(mut p: ResMut<Player>, keys: Res<ButtonInput<KeyCode>>, pads: Query<
             }
         }
         Driver::Sim(run) => {
+            // Results screen: START (pressed, not held) restarts the race. The
+            // game goes back to its menus here, which are out of scope.
+            if run.route.is_none()
+                && matches!(run.session.phase(), mr_sim::race::RacePhase::Finished { .. })
+                && buttons & input::START != 0
+                && prev_buttons & input::START == 0
+            {
+                let a: Vec<String> = std::env::args().collect();
+                let autopilot = run.session.autopilot;
+                **run = SimRun::new(false, a.iter().any(|x| x == "--leader"));
+                run.session.autopilot = autopilot;
+            }
             if run.stopped.is_none() {
                 let idle = run.session.ticks < run.align;
                 let k = run.buttons.len() as u64;
@@ -472,6 +485,7 @@ fn sim_tick(mut p: ResMut<Player>, keys: Res<ButtonInput<KeyCode>>, pads: Query<
             hud_g.countdown_start = 300;
             hud_g.race_time = Some(s.race_clock());
             hud_g.laps = 3;
+            hud_g.results = hud::results_from_session(s);
             let r = s.record();
             let i32at = |o: usize| i32::from_le_bytes([r[o], r[o + 1], r[o + 2], r[o + 3]]);
             let mut m = [0i32; 9];

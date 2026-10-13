@@ -136,7 +136,8 @@ impl ShadowRec {
     /// Texture coordinates of corners A, B, C, D.
     pub fn uvs(&self) -> [[u8; 2]; 4] {
         let [u, v] = self.uv0;
-        let (u1, v1) = (u + self.size[0] - 1, v + self.size[1] - 1);
+        // u8 texture coordinates wrap as on the GPU (a 0-size shadow gives u-1).
+        let (u1, v1) = (u.wrapping_add(self.size[0]).wrapping_sub(1), v.wrapping_add(self.size[1]).wrapping_sub(1));
         [[u, v], [u1, v], [u1, v1], [u, v1]]
     }
     /// CLUT offset added to the slot's CLUT: (u >> 6) | ((v & 0xC0) >> 4),

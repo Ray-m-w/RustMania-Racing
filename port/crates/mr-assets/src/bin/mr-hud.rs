@@ -58,6 +58,19 @@ fn main() {
                 flicker: 0,
             });
         }
+        if st.finished || st.mode == 10 {
+            let leader = i32at(&g(0x800D_8F94, 4)) as u32;
+            let lrec = g(0x800C_30A8 + leader * 0x504, 0x504);
+            let mut r = hud::Results::from_records(&rec, &lrec, st.laps);
+            let e38 = i16::from_le_bytes(g(0x800B_0E38, 2).try_into().unwrap()) as i32;
+            let e32 = i16::from_le_bytes(g(0x800B_0E32, 2).try_into().unwrap()) as i32;
+            let record = i32at(&g((0x800E_0190i64 + 4 * (e38 * 8 + e32 * 2) as i64) as u32, 4));
+            let e2 = u16::from_le_bytes(g(0x800B_07E2, 2).try_into().unwrap());
+            r.best_lap_record = e2 & 2 == 0 && r.best_lap == record;
+            r.press_start = g(0x800B_0F88, 1)[0] != 0 || g(0x800B_0EBE, 1)[0] != 0;
+            r.frame = i32at(&g(0x800B_0D90, 4));
+            st.results = Some(r);
+        }
         eprintln!("oracle state: {st:?}; kart +0x358 = {}", i32at(&rec[0x358..]));
     }
     for (i, k) in a.iter().enumerate() {
@@ -78,6 +91,14 @@ fn main() {
             "finished" => st.finished = v != 0,
             "button" => st.minigame.get_or_insert_with(Minigame::default).button = v as u8,
             "count" => st.minigame.get_or_insert_with(Minigame::default).count = v as i16,
+            "best_lap" => st.results.get_or_insert_with(hud::Results::default).best_lap = v,
+            "total_time" => st.results.get_or_insert_with(hud::Results::default).total_time = v,
+            "leader_total" => st.results.get_or_insert_with(hud::Results::default).leader_total = v,
+            "place" => st.results.get_or_insert_with(hud::Results::default).place = v as u8,
+            "hits_taken" => st.results.get_or_insert_with(hud::Results::default).hits_taken = v as i16,
+            "hits_given" => st.results.get_or_insert_with(hud::Results::default).hits_given = v as i16,
+            "frame" => st.results.get_or_insert_with(hud::Results::default).frame = v,
+            "press_start" => st.results.get_or_insert_with(hud::Results::default).press_start = v != 0,
             _ => panic!("unknown key {key}"),
         }
     }

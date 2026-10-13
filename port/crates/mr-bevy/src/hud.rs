@@ -38,11 +38,14 @@ pub struct HudGlobals {
     pub race_time: Option<i32>,
     /// Minigame lit-icon wobble byte (shared random stream); 0 = steady.
     pub flicker: i8,
+    /// After the player's finish: the results panel's inputs
+    /// (`results_from_session`, or set by hand). None = no panel.
+    pub results: Option<hud::Results>,
 }
 
 impl Default for HudGlobals {
     fn default() -> Self {
-        HudGlobals { countdown: 0, countdown_start: 300, laps: 3, mode: 1, race_time: None, flicker: 0 }
+        HudGlobals { countdown: 0, countdown_start: 300, laps: 3, mode: 1, race_time: None, flicker: 0, results: None }
     }
 }
 
@@ -129,9 +132,41 @@ fn state_from_player(p: Res<crate::Player>, g: Res<HudGlobals>, mut input: ResMu
             flicker: g.flicker,
         });
     }
+    st.results = g.results;
     if input.state != Some(st) {
         input.state = Some(st);
     }
+}
+
+/// The results panel's inputs from a live session once the player has
+/// finished (else None): the player's record, the winner's lap times
+/// (place 1 = DAT_800D8F94's kart), the frame counter 0x800B0D90 the
+/// "PRESS START" prompt blinks with.
+/// - `best_lap_record`: the game compares with its course record table
+///   (0x800E0190, save data). Here: the player's best lap is the fastest
+///   best lap of the race [INFER: in the oracle race the record equalled
+///   the player's new best].
+/// - `press_start`: from the finish on [INFER: DAT_800B0F88 was set
+///   throughout the oracle's results screen].
+pub fn results_from_session(s: &mr_sim::session::Session) -> Option<hud::Results> {
+    if s.kart.finished == 0 {
+        return None;
+    }
+    let laps = 3u8;
+    let rows = s.results();
+    let winner = rows.iter().find(|r| r.place == 1).map(|r| r.slot).unwrap_or(0);
+    let mut leader: &[u8] = s.record();
+    for (slot, _, _, rec) in s.kart_records() {
+        if slot == winner {
+            leader = rec;
+        }
+    }
+    let mut r = hud::Results::from_records(s.record(), leader, laps);
+    let fastest = rows.iter().map(|k| k.best_lap).filter(|&b| b > 0).min().unwrap_or(0);
+    r.best_lap_record = r.best_lap > 0 && r.best_lap <= fastest;
+    r.press_start = true;
+    r.frame = s.globals.frame;
+    Some(r)
 }
 
 #[allow(clippy::too_many_arguments)]

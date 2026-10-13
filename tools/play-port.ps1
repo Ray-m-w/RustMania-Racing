@@ -1,11 +1,14 @@
-# Play the Rust + Bevy port (milestone 1: Kermit in the RACER on DOCK).
+# Play the Rust + Bevy port: a 3-lap 1-PLAYER RACE on DOCK, Kermit in the
+# RACER against five AI opponents, from race load (countdown and the
+# "Copy the buttons" start game) to the results. START on the results restarts.
 #
 #   .\tools\play-port.ps1            # build (release) and play
-#   .\tools\play-port.ps1 -Record    # also record the drive for the oracle comparison
-#   .\tools\play-port.ps1 -Leader    # catch-up off (no AI: the player leads)
+#   .\tools\play-port.ps1 -Demo      # the game's AI drives Kermit too
+#   .\tools\play-port.ps1 -Record    # solo lap aligned to the oracle savestate,
+#                                    # recorded for tools\compare-drive.ps1
 #
 # Controls (keyboard): arrows steer, X accelerate (CROSS), S brake/reverse
-# (CIRCLE), Z jump (SQUARE). Gamepad: south = accelerate, east = brake, west =
+# (CIRCLE), Z jump (SQUARE), A = TRIANGLE (start game), Enter = START. Gamepad: south = accelerate, east = brake, west =
 # jump, right trigger = accelerate, left trigger = brake, D-pad/left stick steer.
 # The disc is read from game.toml's disc line (or $env:MRM_DISC); nothing from
 # the recomp is used at run time.
@@ -14,7 +17,7 @@
 # route format, aligned to the oracle's DOCK grid savestate) and
 # <stamp>.bevy.trace.jsonl (the Rust run). Compare with
 # .\tools\compare-drive.ps1 <stamp>.
-param([switch]$Record, [switch]$Leader)
+param([switch]$Record, [switch]$Demo, [switch]$Leader)
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 Push-Location (Join-Path $Root "port")
@@ -25,6 +28,7 @@ try {
 $exe = Join-Path $Root "port\target\release\mr-bevy.exe"
 $argv = @()
 if ($Leader) { $argv += "--leader" }
+if ($Demo) { $argv += "--autopilot" }
 if ($Record) {
     $dir = Join-Path $Root "analysis\drives"
     New-Item -ItemType Directory -Force $dir | Out-Null

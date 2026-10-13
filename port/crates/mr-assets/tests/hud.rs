@@ -97,3 +97,39 @@ fn countdown_phases() {
     let lap = t.text(b"LAP", 0x30, 0xD2, 4, Size::Small, 5, 0x60);
     assert_eq!((lap[0].x, lap[0].y), (30, 199));
 }
+
+#[test]
+fn results_panel_matches_game_frame() {
+    let Some((t, slots)) = tables() else { return };
+    // oracle race3 at VBlank 7300 (player 3rd, 3 laps): 59/59 primitives
+    // matched the game's GP0 packets (tools/oracle/hud_check.py --route).
+    let r = hud::Results {
+        best_lap: 11196,
+        best_lap_record: true,
+        flash_counter: 256,
+        total_time: 36645,
+        place: 3,
+        leader_total: 31992,
+        hits_given: 0,
+        hits_taken: 6,
+        press_start: true,
+        frame: 8068,
+    };
+    let st = HudState { mode: 10, lap: 3, laps: 3, position: 3, finished: true, results: Some(r), ..HudState::default() };
+    let s = t.layout(&st);
+    assert_eq!(s.len(), 59);
+    let first = |y: i32, x0: i32| s.iter().filter(|p| p.y == y && p.x >= x0).map(|p| (p.x, p.attrs(&slots).1)).min().unwrap();
+    assert_eq!(first(112, 0), (216, 0x3EFB)); // best lap 0:37.32, record colour
+    assert_eq!(first(114, 0).0, 126); // "BEST LAP"
+    assert_eq!(first(129, 0).0, 216); // total 2:02.15
+    assert_eq!(first(131, 0).0, 106); // "TOTAL TIME"
+    assert_eq!(first(131, 300), (304, 0x3EFB)); // "+0:15.51"
+    assert_eq!(first(146, 0).0, 228); // "+0 -6"
+    assert_eq!(first(148, 0).0, 179); // "HITS"
+    assert_eq!(first(84, 0).0, 245); // "3"
+    assert_eq!(first(202, 0).0, 180); // "PRESS START"
+    assert_eq!(hud::time_text_cs(36645 - 31992, true), "+0:15.51");
+    // no timer or race HUD after the finish; prompt blinks off at frame % 60 >= 45
+    let off = t.layout(&HudState { results: Some(hud::Results { frame: 8085, ..r }), ..st });
+    assert_eq!(off.len(), 59 - "PRESSSTART".len());
+}

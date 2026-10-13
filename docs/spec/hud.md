@@ -81,6 +81,30 @@ DAT_800B0A94. Mode of 60 paired reads: 39 × 10, 12 × 20, 9 × 0, all
 non-atomic. `hud::race_clock_from_kart` subtracts 10 for the replay, which
 only has the kart record. [RAM]
 
+## After the finish: results panel (FUN_8004CEA0) and PRESS START
+
+When the player's kart finishes (+0x4C7 != 0), FUN_8004F688 case 1 calls
+FUN_8004CEA0. The game then switches to mode 10, and case 10 calls it too
+(when DAT_800B07E6 == 0, DAT_800B07E2 & 0x41 == 0, DAT_800B0B9A not 2 or 3,
+DAT_800B0A64 == 0). The timer and the race HUD stop. There is no separate
+finish banner: the 3D chequered flag is scenery, and the panel shows from
+the first frames after the line (oracle VB 7060, finish ~7043).
+[CODE 8004f688, 8004cea0] [RAM]
+
+Centre (cx, cy) = viewport +8/+10 = (0x100, 0x78). W = width of the
+previous string (DAT_800B0B22, set by FUN_800474E8).
+
+| Line | Draw | Tag |
+|---|---|---|
+| Place | text('0'+(+0x4CA), cx, cy-0x18, 0, 24px, 7) + suffix at (cx+dx, cy-0x1D, 0, 12px, 4) | [CODE] [RAM] |
+| Best lap | +0x384 as "%i:%i%i.%i%i" (hundredths) at (cx, cy, 0, 16px, colour 4); colour 7 while it equals the course record (0x800E0190[e38*8+e32*2]), DAT_800B07E2 & 2 == 0 and (+0x38C & 0x1F) < 0x10 (flash); then "BEST LAP" at (cx - W/2 - 8, cy, align 8 right, 12px, 5). If +0x384 == 0: "NO LAPS COMPLETED" (cx, cy, 0, 16px, 4) | [CODE] [RAM] |
+| Total | if +0x4BF == laps: sum of +0x35C[0..laps) at (cx, cy+0x11, 0, 16px, 4); "TOTAL TIME" at (cx - W/2 - 8, ..., 8, 12px, 5); if +0x4BE >= 2: "+%i:%i%i.%i%i" of (total - the leader's sum; leader = kart DAT_800D8F94) at (cx + W/2 + 8, ..., align 2 left, 12px, 7). Else "DID NOT FINISH" (cx, cy+0x11, 0, 16px, 4) | [CODE] [RAM] |
+| Hits | "+%i -%i" of +0x492 / +0x494 at (cx, cy+0x22, 0, 16px, 4); "HITS" at (cx - W/2 - 8, ..., 8, 12px, 5). Battle modes (07E2 & 8) show DAMAGE / OUT instead | [CODE] [RAM] |
+| PRESS START | FUN_80051698 / FUN_80050DB8: (0x100, 0xD2, 0, 16px, 4) while DAT_800B0D90 % 60 < 45 and (DAT_800B0F88 or DAT_800B0EBE) | [CODE] [RAM] |
+
+Not ported: "YOU BEAT x" / "x BEAT YOU" (07E2 & 0x10), "NEW COURSE"
+unlocks, and the two FUN_8002FD04 icons (controller-dependent).
+
 **Not ported** (all drawn by the same frame, outside this minimal HUD):
 - item slot outline and meter (FUN_8004CBC8, FUN_80049440);
 - minimap (96x64 SPRT, clut 0x31BA, plus kart PolyF3 markers);
@@ -153,6 +177,30 @@ only has the kart record. [RAM]
    - exe tables;
    - packet-matched layout;
    - countdown phases.
+
+4. **Results** (`hud_check.py --route tools/oracle/routes/race3.json --vb N`).
+   This replays the 3-lap race under the oracle lock, captures the frame,
+   reads the frame counter, then reads the state.
+   - At VB 7300: **59/59 primitives matched**. That covers the place, the
+     best lap in the record colour, the total, the "+0:15.51" gap, the hits
+     and PRESS START. Locked in the `results_panel_matches_game_frame` test.
+   - At VB 8000: the 49 panel primitives matched. The best-lap colour and
+     the prompt are blinking and lagged the RAM reads.
+   - A probe over VB 7950..8096 (frame dumps every ~10 VB with 0x800B0D90
+     and +0x38C) shows PRESS START hidden exactly when (counter - ~10) % 60
+     >= 45. That fits the code given the ~10-VBlank capture lag. The record
+     flash fits (c & 0x1F) < 0x10 within the same lag, with one outlier
+     sample.
+   - Side-by-side: `analysis/hud/sbs_results.png` compares oracle VB 7300
+     and 8000 (3rd, 0:37.32, 2:02.15, +0:15.51, +0 -6) with
+     `mr-bevy --autopilot` ticks 4300 and 4500. The autopilot race is a
+     different race: 2nd, 0:38.67, 2:00.47, +0:01.24, +0 -0. Same layout,
+     fonts, colours and blinking prompt.
+   - In the Bevy app, `results_from_session` sets
+     `HudGlobals.results` from mr-sim. Two inputs are inferred:
+     - `best_lap_record` = the player's best lap is the fastest of the
+       race, because the course-record table is save data;
+     - `press_start` = true from the finish.
 
 Countdown elements are [CODE] only. The grid savestate used by the oracle
 routes starts at race clock 1430, after the countdown, so there is no oracle

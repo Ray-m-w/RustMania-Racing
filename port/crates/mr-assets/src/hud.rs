@@ -61,6 +61,12 @@ pub mod addr {
     pub const PTR_READY: u32 = 0x800B_0340;
     pub const PTR_RACE_1_LAP: u32 = 0x800B_0450;
     pub const PTR_RACE_N_LAPS: u32 = 0x800B_0454;
+    pub const PTR_NO_LAPS: u32 = 0x800B_0210;
+    pub const PTR_TOTAL_TIME: u32 = 0x800B_0214;
+    pub const PTR_DID_NOT_FINISH: u32 = 0x800B_0218;
+    pub const PTR_HITS: u32 = 0x800B_0228;
+    pub const PTR_BEST_LAP: u32 = 0x800B_0354;
+    pub const PTR_PRESS_START: u32 = 0x800B_0284;
 }
 
 /// Texture slot (0x800DFF00 table, RAW.md) the font lives in.
@@ -164,6 +170,12 @@ pub struct HudTables {
     pub ready: String,
     pub race_1_lap: String,
     pub race_n_laps: String,
+    pub best_lap: String,
+    pub no_laps: String,
+    pub total_time: String,
+    pub did_not_finish: String,
+    pub hits: String,
+    pub press_start: String,
 }
 
 impl HudTables {
@@ -187,6 +199,12 @@ impl HudTables {
             ready: exe_ptr_str(exe, addr::PTR_READY)?,
             race_1_lap: exe_ptr_str(exe, addr::PTR_RACE_1_LAP)?,
             race_n_laps: exe_ptr_str(exe, addr::PTR_RACE_N_LAPS)?,
+            best_lap: exe_ptr_str(exe, addr::PTR_BEST_LAP)?,
+            no_laps: exe_ptr_str(exe, addr::PTR_NO_LAPS)?,
+            total_time: exe_ptr_str(exe, addr::PTR_TOTAL_TIME)?,
+            did_not_finish: exe_ptr_str(exe, addr::PTR_DID_NOT_FINISH)?,
+            hits: exe_ptr_str(exe, addr::PTR_HITS)?,
+            press_start: exe_ptr_str(exe, addr::PTR_PRESS_START)?,
         })
     }
 
@@ -214,6 +232,13 @@ impl HudTables {
     /// left, else centred. `abr` is the game's 7th argument (0, 0x20, 0x40,
     /// 0x60; 0x60 = opaque).
     pub fn text(&self, s: &[u8], x: i32, y: i32, align: u8, size: Size, colour: u8, abr: u8) -> Vec<Sprite> {
+        self.text_w(s, x, y, align, size, colour, abr).0
+    }
+
+    /// `text` plus the measured width the game keeps in DAT_800B0B22
+    /// (callers place labels next to the previous string with it).
+    #[allow(clippy::too_many_arguments)]
+    pub fn text_w(&self, s: &[u8], x: i32, y: i32, align: u8, size: Size, colour: u8, abr: u8) -> (Vec<Sprite>, i32) {
         let ch = size.cell_h();
         let sp = size.spacing();
         let mut y = y;
@@ -299,7 +324,7 @@ impl HudTables {
             }
             i += 1;
         }
-        out
+        (out, width)
     }
 }
 
@@ -354,6 +379,45 @@ pub struct HudState {
     /// Kart +0x4C7: finished (the race HUD gives way to results).
     pub finished: bool,
     pub minigame: Option<Minigame>,
+    /// After the player's finish: the results panel (FUN_8004cea0) and
+    /// "PRESS START". Drawn when `finished` or in mode 10.
+    pub results: Option<Results>,
+}
+
+/// What FUN_8004cea0 (the 1-player finish/results panel) and the
+/// "PRESS START" prompt read. Times are clock units (300 = 1 s).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Results {
+    /// Kart +0x384: best lap (0 = no lap completed).
+    pub best_lap: i32,
+    /// The best lap equals the course record (0x800E0190 table) and
+    /// DAT_800B07E2 & 2 is clear: the game flashes it orange.
+    pub best_lap_record: bool,
+    /// Kart +0x38C: the counter the record flash follows ((c & 0x1F) < 0x10 = orange).
+    pub flash_counter: i32,
+    /// Sum of the kart's lap times +0x35C.. over the race's laps.
+    pub total_time: i32,
+    /// Kart +0x4BE: final place (the "+gap" shows from 2nd down).
+    pub place: u8,
+    /// Sum of the race leader's (kart DAT_800D8F94) lap times.
+    pub leader_total: i32,
+    /// Kart +0x492 / +0x494: hits given / taken.
+    pub hits_given: i16,
+    pub hits_taken: i16,
+    /// "PRESS START" shown (DAT_800B0F88 or DAT_800B0EBE set).
+    pub press_start: bool,
+    /// The frame counter the prompt blinks with (shown while c % 60 < 45).
+    pub frame: i32,
+}
+
+/// "%i:%i%i.%i%i" (hundredths) as FUN_8004cea0 formats times; `plus` = the
+/// "+%i:%i%i.%i%i" gap format.
+pub fn time_text_cs(t: i32, plus: bool) -> String {
+    let t = t / 3;
+    let m = t / 6000;
+    let s = t / 100 - m * 60;
+    let c = t % 100;
+    format!("{}{}:{}{}.{}{}", if plus { "+" } else { "" }, m, s / 10, s % 10, c / 10, c % 10)
 }
 
 impl Default for HudState {
@@ -369,6 +433,7 @@ impl Default for HudState {
             position_flag: 0,
             finished: false,
             minigame: None,
+            results: None,
         }
     }
 }
@@ -383,6 +448,30 @@ pub mod kart {
     pub const MINIGAME_BUTTON: usize = 0x4DA;
     /// Race time of this kart (sum of its lap times, same units as DAT_800B0A94).
     pub const RACE_TIME: usize = 0x358;
+    pub const LAP_TIMES: usize = 0x35C;
+    pub const BEST_LAP: usize = 0x384;
+    pub const COUNTER: usize = 0x38C;
+    pub const HITS_GIVEN: usize = 0x492;
+    pub const HITS_TAKEN: usize = 0x494;
+    pub const RACE_POS: usize = 0x4BE;
+}
+
+impl Results {
+    /// Panel fields from the player's record, the leader's record and the
+    /// lap count. `best_lap_record`, `press_start` and `frame` stay default.
+    pub fn from_records(rec: &[u8], leader: &[u8], laps: u8) -> Results {
+        let sum = |r: &[u8]| (0..laps as usize).map(|k| le::i32(r, kart::LAP_TIMES + 4 * k)).sum();
+        Results {
+            best_lap: le::i32(rec, kart::BEST_LAP),
+            flash_counter: le::i32(rec, kart::COUNTER),
+            total_time: sum(rec),
+            place: rec[kart::RACE_POS],
+            leader_total: sum(leader),
+            hits_given: le::i16(rec, kart::HITS_GIVEN),
+            hits_taken: le::i16(rec, kart::HITS_TAKEN),
+            ..Results::default()
+        }
+    }
 }
 
 impl HudState {
@@ -453,9 +542,62 @@ impl HudTables {
                 out.extend(self.text(l.as_bytes(), 0x30, 0xD1, 1, Size::Medium, 4, 0x60));
             }
         }
-        // FUN_80050b2c: race timer (1-player race position)
-        if c70 == 0 {
+        // FUN_8004f688 case 1 with +0x4C7 set, and case 10: FUN_8004cea0
+        if st.finished || st.mode == 10 {
+            if let Some(r) = st.results {
+                out.extend(self.results(st, &r));
+            }
+        }
+        // FUN_80050b2c: race timer (1-player race; not after the finish)
+        if c70 == 0 && st.mode == 1 && !st.finished {
             out.extend(self.text(timer_text(st.race_time).as_bytes(), 0x100, 0xD2, 0, Size::Medium, 4, 0x60));
+        }
+        out
+    }
+
+    /// FUN_8004cea0 (1 player; viewport centre (0x100, 0x78)) and the
+    /// "PRESS START" prompt (FUN_80051698 / FUN_80050db8), in add order.
+    pub fn results(&self, st: &HudState, r: &Results) -> Vec<Sprite> {
+        let (cx, cy) = (0x100, 0x78);
+        let mut out = Vec::new();
+        // best lap
+        if r.best_lap == 0 {
+            out.extend(self.text(self.no_laps.as_bytes(), cx, cy, 0, Size::Medium, 4, 0x60));
+        } else {
+            let col = if r.best_lap_record && (r.flash_counter & 0x1F) < 0x10 { 7 } else { 4 };
+            let (v, w) = self.text_w(time_text_cs(r.best_lap, false).as_bytes(), cx, cy, 0, Size::Medium, col, 0x60);
+            out.extend(v);
+            out.extend(self.text(self.best_lap.as_bytes(), cx - w / 2 - 8, cy, 8, Size::Small, 5, 0x60));
+        }
+        // total time, and the gap to the winner from 2nd place down
+        let y = cy + 0x11;
+        if st.lap == st.laps {
+            let (v, w) = self.text_w(time_text_cs(r.total_time, false).as_bytes(), cx, y, 0, Size::Medium, 4, 0x60);
+            out.extend(v);
+            let half = w / 2;
+            out.extend(self.text(self.total_time.as_bytes(), cx - half - 8, y, 8, Size::Small, 5, 0x60));
+            if r.place >= 2 {
+                let gap = time_text_cs(r.total_time - r.leader_total, true);
+                out.extend(self.text(gap.as_bytes(), cx + half + 8, y, 2, Size::Small, 7, 0x60));
+            }
+        } else {
+            out.extend(self.text(self.did_not_finish.as_bytes(), cx, y, 0, Size::Medium, 4, 0x60));
+        }
+        // hits
+        let y = cy + 0x22;
+        let hits = format!("+{} -{}", r.hits_given, r.hits_taken);
+        let (v, w) = self.text_w(hits.as_bytes(), cx, y, 0, Size::Medium, 4, 0x60);
+        out.extend(v);
+        out.extend(self.text(self.hits.as_bytes(), cx - w / 2 - 8, y, 8, Size::Small, 5, 0x60));
+        // place (+0x4CA)
+        let p = st.position.clamp(1, 6);
+        let y = cy - 0x18;
+        out.extend(self.text(&[b'0' + p], cx, y, 0, Size::Large, 7, 0x60));
+        let dx = self.suffix_dx[(p - 1) as usize] as i32;
+        out.extend(self.text(self.suffixes[(p - 1) as usize].as_bytes(), cx + dx, y - 5, 0, Size::Small, 4, 0x60));
+        // PRESS START, blinking
+        if r.press_start && r.frame.rem_euclid(0x3C) < 0x2D {
+            out.extend(self.text(self.press_start.as_bytes(), 0x100, 0xD2, 0, Size::Medium, 4, 0x60));
         }
         out
     }

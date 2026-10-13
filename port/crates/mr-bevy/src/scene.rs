@@ -207,7 +207,7 @@ pub fn setup(
                     mesh_handles.push((i, mesh));
                 }
             }
-            commands.insert_resource(BannerState { banners: b, sin: SinTable(sin.0.clone()), tex_key, cache, meshes: mesh_handles });
+            commands.insert_resource(BannerState { banners: b, sin: SinTable(sin.0.clone()), tex_key, meshes: mesh_handles });
         }
     }
 
@@ -397,7 +397,6 @@ pub struct BannerState {
     pub banners: dat::Banners,
     pub sin: SinTable,
     pub tex_key: (u16, u16),
-    pub cache: psxmesh::MatCache,
     pub meshes: Vec<(usize, Handle<Mesh>)>,
 }
 
@@ -428,10 +427,7 @@ pub fn update_banners(
     p: Res<crate::Player>,
     settings: Res<crate::settings::Settings>,
     mut st: ResMut<BannerState>,
-    mut tex: ResMut<VramTextures>,
-    mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut mats: ResMut<Assets<StandardMaterial>>,
     mut q: Query<(&BannerMesh, &mut Visibility)>,
 ) {
     if !p.is_changed() {
@@ -443,10 +439,12 @@ pub fn update_banners(
     let st = &mut *st;
     for (i, handle) in st.meshes.clone() {
         let polys = banner_polys(&st.banners, i, &st.sin, phase, st.tex_key);
-        let parts = psxmesh::build_cached(&polys, &mut tex, &mut images, &mut meshes, &mut mats, &mut st.cache, world);
-        for (tmp, _) in parts {
-            if let Some(m) = meshes.remove(&tmp) {
-                let _ = meshes.insert(&handle, m);
+        // the cloth's mesh rewritten in place (one texture: one mesh); no
+        // temporary assets (a mesh added and removed in one frame tripped
+        // bevy_render's mesh allocator: "use-after-free" errors)
+        for (_, m) in psxmesh::meshes_by_key(&polys, world) {
+            if let Some(mut dst) = meshes.get_mut(&handle) {
+                *dst = m;
             }
         }
     }

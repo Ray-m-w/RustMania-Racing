@@ -132,6 +132,38 @@ pub fn build_cached(
     cache: &mut MatCache,
     to_bevy: impl Fn([i32; 3]) -> Vec3,
 ) -> Vec<(Handle<Mesh>, Handle<StandardMaterial>)> {
+    let mut out = Vec::new();
+    for (key, mesh) in meshes_by_key(polys, to_bevy) {
+        let mat = cache.0.entry(key).or_insert_with(|| {
+            let mut m = StandardMaterial {
+                base_color: Color::WHITE,
+                unlit: true,
+                cull_mode: None,
+                double_sided: true,
+                depth_bias: cache.1,
+                ..default()
+            };
+            if let Some((tp, cl)) = key.0 {
+                m.base_color_texture = Some(textures.get(images, tp, cl));
+                m.alpha_mode = if key.1 { AlphaMode::Blend } else { cutout_mode() };
+                if key.1 {
+                    m.base_color = Color::srgba(1.0, 1.0, 1.0, 0.5);
+                }
+            } else if key.1 {
+                m.alpha_mode = AlphaMode::Blend;
+                m.base_color = Color::srgba(1.0, 1.0, 1.0, 0.5);
+            }
+            mats.add(m)
+        });
+        out.push((meshes.add(mesh), mat.clone()));
+    }
+    out
+}
+
+/// The opaque polygons' meshes, one per (texture, semi) key in key order
+/// (no assets created: `build_cached` adds them; animated geometry such as
+/// the banner rewrites its existing mesh assets in place with them).
+pub fn meshes_by_key(polys: &[PsxPoly], to_bevy: impl Fn([i32; 3]) -> Vec3) -> Vec<((Option<(u16, u16)>, bool), Mesh)> {
     let mut groups: HashMap<(Option<(u16, u16)>, bool), Vec<&PsxPoly>> = HashMap::new();
     // semi-transparent polygons go to the effects pass (`semi_prims`)
     for p in polys.iter().filter(|p| !p.semi) {
@@ -174,28 +206,7 @@ pub fn build_cached(
             .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
             .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, col)
             .with_inserted_indices(Indices::U32(idx));
-        let mat = cache.0.entry(key).or_insert_with(|| {
-            let mut m = StandardMaterial {
-                base_color: Color::WHITE,
-                unlit: true,
-                cull_mode: None,
-                double_sided: true,
-                depth_bias: cache.1,
-                ..default()
-            };
-            if let Some((tp, cl)) = key.0 {
-                m.base_color_texture = Some(textures.get(images, tp, cl));
-                m.alpha_mode = if key.1 { AlphaMode::Blend } else { cutout_mode() };
-                if key.1 {
-                    m.base_color = Color::srgba(1.0, 1.0, 1.0, 0.5);
-                }
-            } else if key.1 {
-                m.alpha_mode = AlphaMode::Blend;
-                m.base_color = Color::srgba(1.0, 1.0, 1.0, 0.5);
-            }
-            mats.add(m)
-        });
-        out.push((meshes.add(mesh), mat.clone()));
+        out.push((key, mesh));
     }
     out
 }

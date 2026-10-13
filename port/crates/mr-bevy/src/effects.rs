@@ -464,6 +464,7 @@ impl Plugin for EffectsPlugin {
         app.add_plugins(crate::psxfx::PsxFxPlugin)
             .init_resource::<FxFrame>()
             .init_resource::<KartLodHidden>()
+            .init_resource::<FxLookahead>()
             .add_systems(Startup, setup.after(crate::scene::setup))
             .add_systems(Update, (capture_source, session_source, draw.after(capture_source).after(session_source)))
             .add_systems(Update, fx_shots.after(capture_source))
@@ -530,19 +531,134 @@ fn capture_source(
     *fx = out;
 }
 
+/// What the effects are drawn from at one tick of a live session: the
+/// particle lists, item state, kart records, frame counter and camera.
+#[derive(Clone)]
+pub struct FxSource {
+    /// `Session::ticks` of this state.
+    pub ticks: u64,
+    particles: Option<Particles>,
+    sparks: Option<Sparks>,
+    flats: Option<mr_sim::particles::Flats>,
+    items: mr_sim::items::ItemState,
+    recs: Vec<(usize, Vec<u8>)>,
+    frame: i32,
+    cam: FxCamera,
+}
+
+impl FxSource {
+    pub fn of(s: &mr_sim::session::Session) -> FxSource {
+        FxSource {
+            ticks: s.ticks,
+            particles: s.particles().cloned(),
+            sparks: s.sparks().cloned(),
+            flats: s.flats().cloned(),
+            items: s.items().clone(),
+            recs: s.kart_records().map(|(slot, _, _, r)| (slot, r.to_vec())).collect(),
+            frame: s.globals.frame,
+            cam: FxCamera { roll: s.camera.roll as i32, yaw: s.camera.yaw as i32, eye: s.camera.pos },
+        }
+    }
+}
+
+/// The coming tick's effect state, computed by the low-latency look-ahead
+/// (pacing.rs `predict`, on the throw-away copy of the session): the
+/// effects interpolate toward it exactly as the karts do.
+#[derive(Resource, Default)]
+pub struct FxLookahead(pub Option<FxSource>);
+
+fn lerp_i(a: i32, b: i32, t: f32) -> i32 {
+    (a as f64 + (b as f64 - a as f64) * t as f64).round() as i32
+}
+
+fn lerp3(a: [i32; 3], b: [i32; 3], t: f32) -> [i32; 3] {
+    std::array::from_fn(|k| lerp_i(a[k], b[k], t))
+}
+
+/// Lerp the i32 at `o` of two byte records into `out`.
+fn lerp_word(out: &mut [u8], a: &[u8], b: &[u8], o: usize, t: f32) {
+    let r = |x: &[u8]| i32::from_le_bytes([x[o], x[o + 1], x[o + 2], x[o + 3]]);
+    out[o..o + 4].copy_from_slice(&lerp_i(r(a), r(b), t).to_le_bytes());
+}
+
+/// The effect state shown at weight `t` between `a` (from) and `b` (to), as
+/// the karts are shown: everything that exists in both (a particle, spark,
+/// flat quad, projectile or kart continuing from `a` to `b`) at the
+/// interpolated position; the rest (counters, frames, colours, what spawns
+/// or dies) from the nearer endpoint. Display only: the session is not
+/// touched.
+fn interp_source(a: &FxSource, b: &FxSource, t: f32, ma: &mut Mem, mb: &mut Mem) -> (FxSource, bool) {
+    let near_b = t >= 0.5;
+    let mut out = if near_b { b.clone() } else { a.clone() };
+    if let (Some(pa), Some(pb), Some(po)) = (&a.particles, &b.particles, out.particles.as_mut()) {
+        for i in 0..pa.list.len().min(pb.list.len()) {
+            let (x, y) = (&pa.list[i], &pb.list[i]);
+            if x.life > 0 && y.life > 0 && x.sprite == y.sprite && x.kind == y.kind && y.life <= x.life {
+                po.list[i].pos = lerp3(x.pos, y.pos, t);
+            }
+        }
+    }
+    if let (Some(sa), Some(sb), Some(so)) = (&a.sparks, &b.sparks, out.sparks.as_mut()) {
+        for i in 0..sa.list.len().min(sb.list.len()) {
+            let (x, y) = (&sa.list[i], &sb.list[i]);
+            if x.life < 0x80 && y.life < 0x80 && y.life <= x.life {
+                so.list[i].pos = lerp3(x.pos, y.pos, t);
+            }
+        }
+    }
+    if let (Some(fa), Some(fb), Some(fo)) = (&a.flats, &b.flats, out.flats.as_mut()) {
+        for i in 0..fa.list.len().min(fb.list.len()) {
+            let (x, y) = (&fa.list[i], &fb.list[i]);
+            if x.life != 0 && y.life != 0 && (y.life & 0x7FFF) <= (x.life & 0x7FFF) && x.slot == y.slot {
+                fo.list[i].pos = lerp3(x.pos, y.pos, t);
+            }
+        }
+    }
+    for (slot, rec) in out.recs.iter_mut() {
+        let (Some((_, ra)), Some((_, rb))) = (a.recs.iter().find(|r| r.0 == *slot), b.recs.iter().find(|r| r.0 == *slot)) else { continue };
+        for o in [0usize, 4, 8] {
+            lerp_word(rec, ra, rb, o, t);
+        }
+        // a status effect's own points (+0x300.., +0x330..) while it lasts
+        if ra[0x4F1] == rb[0x4F1] && ra[0x4F1] != 0 {
+            for o in [0x300usize, 0x304, 0x308, 0x330, 0x338, 0x340] {
+                lerp_word(rec, ra, rb, o, t);
+            }
+        }
+    }
+    out.cam.eye = lerp3(a.cam.eye, b.cam.eye, t);
+    // items: written to game memory; projectiles in flight in both move
+    a.items.write(ma);
+    b.items.write(mb);
+    let mut moved = false;
+    for i in 0..4u32 {
+        let p = 0x800D_DC50 + 0x48 * i;
+        if ma.u8(p + 0x2E) != 0 && mb.u8(p + 0x2E) != 0 {
+            moved = true;
+        }
+    }
+    (out, moved)
+}
+
 /// A live mr-sim session: its item state, kart records, frame counter and
 /// camera roll written into a scratch game-layout memory, then the same
 /// conversions as for captures; particles and sparks straight from
 /// `Session::particles()` / `sparks()` (track A owns them in the race state).
+/// Presentation: the effects are drawn at the karts' display state: between
+/// the last two ticks (classic), or between the last tick and the coming one
+/// (`low_latency`: `FxLookahead`), at `Time<Fixed>`'s overstep.
 #[allow(clippy::too_many_arguments)]
 fn session_source(
     p: Res<crate::Player>,
     cap: Option<Res<crate::capture::CaptureReplay>>,
     t: Option<Res<FxTables>>,
     settings: Res<crate::settings::Settings>,
+    time: Res<Time<Fixed>>,
+    la: Res<FxLookahead>,
+    feed: Res<crate::karts::KartFeed>,
     mut fx: ResMut<FxFrame>,
     mut hidden: ResMut<KartLodHidden>,
-    mut st: Local<(u64, Option<Mem>)>,
+    mut st: Local<SourceCache>,
 ) {
     let Some(t) = t else { return };
     if fx.manual || cap.is_some() {
@@ -550,41 +666,94 @@ fn session_source(
     }
     let crate::Driver::Sim(run) = &p.driver else { return };
     let s = &run.session;
-    if st.1.is_some() && st.0 == s.ticks {
-        return;
+    let st = &mut *st;
+    if st.now.as_ref().map(|n| n.ticks) != Some(s.ticks) {
+        st.prev = st.now.take();
+        st.now = Some(FxSource::of(s));
     }
-    st.0 = s.ticks;
-    let m = st.1.get_or_insert_with(|| Mem::new(vec![0; 0x20_0000], vec![0; 0x400]));
-    s.items().write(m);
-    let mut recs = Vec::new();
-    for (slot, _, _, rec) in s.kart_records() {
-        m.write(0x800C_30A8 + 0x504 * slot as u32, rec);
-        recs.push((slot, rec.to_vec()));
+    let now = st.now.as_ref().unwrap();
+    let lookahead = crate::pacing::low_latency();
+    let (from, to) = if lookahead {
+        (Some(now), la.0.as_ref().filter(|l| l.ticks == now.ticks + 1))
+    } else {
+        (st.prev.as_ref().filter(|q| q.ticks + 1 == now.ticks), Some(now))
+    };
+    let a = time.overstep_fraction().clamp(0.0, 1.0);
+    let ma = st.ma.get_or_insert_with(|| Mem::new(vec![0; 0x20_0000], vec![0; 0x400]));
+    let mb = st.mb.get_or_insert_with(|| Mem::new(vec![0; 0x20_0000], vec![0; 0x400]));
+    let (src, m): (FxSource, &mut Mem) = match (from, to) {
+        (Some(f), Some(g)) => {
+            let (o, moved) = interp_source(f, g, a, ma, mb);
+            // memory of the nearer endpoint, projectiles in flight lerped
+            let (near, far) = if a >= 0.5 { (mb, &*ma) } else { (ma, &*mb) };
+            if moved {
+                for i in 0..4u32 {
+                    let pa = 0x800D_DC50 + 0x48 * i;
+                    if far.u8(pa + 0x2E) != 0 && near.u8(pa + 0x2E) != 0 {
+                        for o in [0u32, 4, 8] {
+                            let (x, y) = if a >= 0.5 { (far.i32(pa + o), near.i32(pa + o)) } else { (near.i32(pa + o), far.i32(pa + o)) };
+                            near.write(pa + o, &lerp_i(x, y, a).to_le_bytes());
+                        }
+                    }
+                }
+            }
+            (o, near)
+        }
+        _ => {
+            let n = now.clone();
+            n.items.write(ma);
+            (n, ma)
+        }
+    };
+    for (slot, rec) in &src.recs {
+        m.write(0x800C_30A8 + 0x504 * *slot as u32, rec);
     }
-    let frame = s.globals.frame;
-    let cam = FxCamera { roll: s.camera.roll as i32, yaw: s.camera.yaw as i32, eye: s.camera.pos };
+    let cam = src.cam;
     let mut out = FxFrame::default();
-    if let Some(parts) = s.particles() {
+    if let Some(parts) = &src.particles {
         out.billboards.extend(parts.list.iter().filter_map(|p| t.particle(p)));
     }
-    if let Some(sparks) = s.sparks() {
+    if let Some(sparks) = &src.sparks {
         out.streaks.extend(sparks.list.iter().filter_map(|k| t.spark(k)));
     }
-    if let Some(f) = s.flats() {
+    if let Some(f) = &src.flats {
         out.flats = f.list.iter().filter(|f| f.life != 0).copied().collect();
     }
     out.eye = cam.eye;
-    items_from_mem(&t, m, cam, frame, &mut out.billboards);
+    items_from_mem(&t, m, cam, src.frame, &mut out.billboards);
     let mut h = 0u8;
-    for (slot, rec) in &recs {
-        if kart_all(&t, rec, cam, frame, settings.faithful_draw_distance(), &mut out) {
+    for (slot, rec) in &src.recs {
+        if kart_all(&t, rec, cam, src.frame, settings.faithful_draw_distance(), &mut out) {
             h |= 1 << slot;
         }
     }
     if hidden.0 != h {
         hidden.0 = h;
     }
+    // MRM_FX_LAG: per frame, the player kart's displayed position (karts.rs:
+    // the feed endpoints at the overstep) minus the position the effects use
+    // now, and minus the last real tick's (what they used before)
+    if std::env::var("MRM_FX_LAG").is_ok() {
+        let pos = |r: &[u8]| [0usize, 4, 8].map(|o| i32::from_le_bytes([r[o], r[o + 1], r[o + 2], r[o + 3]]) as f64);
+        let fr = |v: &[crate::karts::KartFrame]| v.iter().find(|k| k.slot == 0).map(|k| pos(&k.record));
+        if let (Some(p0), Some(p1), Some((_, r))) = (fr(&feed.prev), fr(&feed.now), src.recs.iter().find(|r| r.0 == 0)) {
+            let disp: [f64; 3] = std::array::from_fn(|k| p0[k] + (p1[k] - p0[k]) * a as f64);
+            let d = |q: [f64; 3]| ((q[0] - disp[0]).powi(2) + (q[1] - disp[1]).powi(2) + (q[2] - disp[2]).powi(2)).sqrt();
+            let real = now.recs.iter().find(|r| r.0 == 0).map(|r| pos(&r.1)).unwrap_or(disp);
+            eprintln!("fxlag a {a:.3} new {:.0} old {:.0}", d(pos(r)), d(real));
+        }
+    }
     *fx = out;
+}
+
+/// session_source's state: the last two real ticks' sources and two
+/// scratch game-layout memories.
+#[derive(Default)]
+struct SourceCache {
+    prev: Option<FxSource>,
+    now: Option<FxSource>,
+    ma: Option<Mem>,
+    mb: Option<Mem>,
 }
 
 const S: f32 = 1.0 / crate::UNITS;

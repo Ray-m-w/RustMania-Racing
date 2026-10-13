@@ -310,6 +310,26 @@ drawn by one pass after Bevy's main transparent pass, for the chase camera:
   15-bit, and the water's animated strips (0xA / 0xC; the decode
   alignment open above).
 
+- **Display timing (Session 5, finishing).** The effects are drawn at the
+  karts' presentation state, not at the last tick: effects.rs keeps an
+  `FxSource` (particles, sparks, flat quads, item state, kart records,
+  frame counter, camera) per tick and interpolates between the same two
+  endpoints as the karts at `Time<Fixed>`'s overstep: the last two ticks
+  (classic), or the last tick and the coming one (`low_latency`: pacing.rs
+  `predict` also takes the `FxSource` of its throw-away tick:
+  `FxLookahead`). Whatever continues from one endpoint to the other (a
+  particle / spark / flat in the same slot with its life running down, a
+  projectile in flight, a kart and its status effect's points) is drawn
+  at the interpolated position; counters, animation frames, colours and
+  what spawns or dies come from the nearer endpoint. The simulation is
+  only read. `MRM_FX_LAG=1` prints, per frame, the player kart's displayed
+  position minus the effects' position: autopilot race to tick 900, mean /
+  p99 / max world units, low_latency on: now 0 / 1 / 1, the old way
+  (last real tick) 3137 / 6318 / 7804; off: 0 / 1 / 1 vs 1764 / 5533 /
+  8129 (the effects were up to a tick behind, resp. ahead of, the karts).
+  Visual: analysis/s5/fxinterp/exhaust_old_new.png (left old, right new;
+  the exhaust flames at 0:11.9 sit at the pipes).
+
 ## Animated textures (RAW type 0x22): FUN_8007A9DC -> FUN_800311AC
 
 Every race frame FUN_8007A9DC calls FUN_800311AC(slot, 0, frame), which

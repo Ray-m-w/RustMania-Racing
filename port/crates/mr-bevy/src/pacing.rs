@@ -137,7 +137,7 @@ fn frames(s: &mr_sim::session::Session) -> Vec<KartFrame> {
 /// RunFixedMainLoop, after the fixed ticks of this frame: (low latency)
 /// the display endpoints become (last real tick, the coming tick run with
 /// the buttons held now).
-fn predict(mut p: ResMut<Player>, mut feed: ResMut<KartFeed>, latch: Res<PadLatch>, mut la: ResMut<Lookahead>) {
+fn predict(mut p: ResMut<Player>, mut feed: ResMut<KartFeed>, latch: Res<PadLatch>, mut la: ResMut<Lookahead>, mut fx_la: Option<ResMut<crate::effects::FxLookahead>>) {
     if !latch.low_latency {
         return;
     }
@@ -167,6 +167,10 @@ fn predict(mut p: ResMut<Player>, mut feed: ResMut<KartFeed>, latch: Res<PadLatc
     let snap = s.snapshot();
     let ok = s.tick(b).is_ok();
     let next = ok.then(|| (session_pose(s), frames(s), s.record().to_vec()));
+    // the effects' state at the coming tick (effects.rs interpolates toward it)
+    if let Some(f) = fx_la.as_mut() {
+        f.0 = ok.then(|| crate::effects::FxSource::of(s));
+    }
     s.restore(&snap);
     la.failed = !ok;
     let (pose, fr, kart) = next.unwrap_or_else(|| (now_pose, now_frames.clone(), now_kart.clone()));

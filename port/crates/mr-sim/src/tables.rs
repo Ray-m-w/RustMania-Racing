@@ -90,6 +90,9 @@ pub struct Tables {
     pub sin: Vec<i16>,
     pub atan: Vec<i16>,
     pub sqrt: Vec<i16>,
+    /// The 192 halfwords before the square-root table: SquareRoot0 of a
+    /// negative argument (a wrapped squared distance) reads them.
+    pub sqrt_neg: Vec<i16>,
     pub surface: Vec<[u8; 8]>,
     pub wall_step: Vec<i16>,
     pub vehicle: Vec<[u8; 8]>,
@@ -113,6 +116,7 @@ impl Tables {
             sin: exe.i16s(SIN_ADDR, 5120),
             atan: exe.i16s(ATAN_ADDR, 1025),
             sqrt: exe.i16s(SQRT_ADDR, 192),
+            sqrt_neg: exe.i16s(SQRT_ADDR - 2 * 192, 192),
             surface: rows(SURFACE_ADDR, N_SURFACES),
             wall_step: exe.i16s(WALL_STEP_ADDR, 16),
             vehicle: rows(VEHICLE_ADDR, N_VEHICLES),
@@ -208,6 +212,8 @@ pub fn square_root0(t: &Tables, a: i32) -> i32 {
     let e = lz & !1;
     let n = if e - 24 < 0 { a >> (24 - e) } else { a.wrapping_shl((e - 24) as u32) };
     let sh = (31 - e) >> 1;
-    let r = (t.sqrt[(n - 0x40) as usize] as i32).wrapping_shl(sh as u32);
+    let i = n - 0x40;
+    let v = if i < 0 { t.sqrt_neg[(i + 192) as usize] } else { t.sqrt[i as usize] };
+    let r = (v as i32).wrapping_shl(sh as u32);
     ((r as u32) >> 12) as i32
 }

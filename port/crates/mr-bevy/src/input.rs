@@ -20,9 +20,11 @@ pub const CROSS: u16 = 1 << 14;
 pub const SQUARE: u16 = 1 << 15;
 
 /// Keyboard: arrows steer, X = cross (accelerate), Z = square, S = circle,
-/// A = triangle, Enter = start, Q/W = L1/R1 (psxrecomp's default layout).
+/// A = triangle, Enter = start, Q/W = L1/R1 (psxrecomp's default layout),
+/// E/R = L2/R2 (weapon slot 2, character special).
 /// Gamepad: south = cross, west = square, east = circle, north = triangle,
-/// right trigger = cross, left trigger = circle, left stick folds into the D-pad.
+/// right trigger = cross, left trigger = circle, shoulders = L1/R1, stick
+/// clicks L3/R3 = L2/R2, left stick folds into the D-pad.
 pub fn sample(keys: &ButtonInput<KeyCode>, pads: &Query<&Gamepad>) -> u16 {
     let mut m = 0u16;
     let k = |c: KeyCode| keys.pressed(c);
@@ -37,6 +39,8 @@ pub fn sample(keys: &ButtonInput<KeyCode>, pads: &Query<&Gamepad>) -> u16 {
     if k(KeyCode::Enter) { m |= START; }
     if k(KeyCode::KeyQ) { m |= L1; }
     if k(KeyCode::KeyW) { m |= R1; }
+    if k(KeyCode::KeyE) { m |= L2; }
+    if k(KeyCode::KeyR) { m |= R2; }
     for g in pads.iter() {
         let p = |b: GamepadButton| g.pressed(b);
         if p(GamepadButton::South) || p(GamepadButton::RightTrigger2) { m |= CROSS; }
@@ -50,6 +54,8 @@ pub fn sample(keys: &ButtonInput<KeyCode>, pads: &Query<&Gamepad>) -> u16 {
         if p(GamepadButton::Start) { m |= START; }
         if p(GamepadButton::LeftTrigger) { m |= L1; }
         if p(GamepadButton::RightTrigger) { m |= R1; }
+        if p(GamepadButton::LeftThumb) { m |= L2; }
+        if p(GamepadButton::RightThumb) { m |= R2; }
         let x = g.left_stick().x;
         if x < -0.4 { m |= LEFT; }
         if x > 0.4 { m |= RIGHT; }

@@ -110,15 +110,48 @@ fn main() {
         let nk = ma.i16(0x800B_0DFE) as u32 + ma.i16(0x800B_0C98) as u32;
         let mut others: Vec<KartState> = (1..nk).map(|s| oracle::load_kart(&ma, s)).collect();
         let rules = mr_sim::collide::ContactRules { karts: ma.i16(0x800B_0DFE) as i32, tagged: ma.i8(0x800B_07FE) };
-        let mut gg = g.clone();
         let w = &world;
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
-            mr_sim::tick_with_karts(&mut k, &mut others, &mut gg, w, &inp, &rules, buttons);
-            gg
-        }));
-        match r {
-            Ok(gg) => g = gg,
-            Err(_) => panics += 1,
+        if a.iter().any(|x| x == "--all-karts") {
+            // Every kart: the contact pass over all pairs, kart 0's update,
+            // then the AI karts' updates (player -1, their buttons +0x44E).
+            let mut all = vec![k];
+            all.extend(others);
+            for s in 1..nk as usize {
+                let src = cap.read(vb, KART_ARRAY + 0x504 * s as u32, RECORD_SIZE).unwrap().to_vec();
+                patch(&mut all[s], &src);
+            }
+            let bs: Vec<u16> = (0..nk).map(|s| mb.u16(KART_ARRAY + 0x504 * s + 0x44E)).collect();
+            let mut gg = g.clone();
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                mr_sim::collide::frame_contacts_all(&mut all, &mut gg, w, &rules);
+                mr_sim::render::aim_at_course(&mut all[0], &mut gg, w);
+                mr_sim::tick(&mut all[0], &mut gg, w, &inp, buttons);
+            }));
+            if r.is_err() {
+                panics += 1;
+            }
+            for s in 1..nk as usize {
+                let mut g2 = gg.clone();
+                let mut ks = all[s].clone();
+                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    mr_sim::update::kart_update(&mut ks, &mut g2, w, &inp, bs[s], -1);
+                    g2
+                }));
+                if let Ok(g2) = r {
+                    gg = g2;
+                }
+            }
+            g = gg;
+        } else {
+            let mut gg = g.clone();
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                mr_sim::tick_with_karts(&mut k, &mut others, &mut gg, w, &inp, &rules, buttons);
+                gg
+            }));
+            match r {
+                Ok(gg) => g = gg,
+                Err(_) => panics += 1,
+            }
         }
         // FUN_8007A7F4 with the oracle's request bits (set during this frame,
         // cleared at the next frame's start) and voice timers.
@@ -197,7 +230,7 @@ fn main() {
         for v in *va..*vb {
             drv.vblank_render(&mut pcm);
             for k in drv.take_keyons() {
-                ours.push((v as i64 + 1 + off, k));
+                ours.push((v as i64 + 2 + off, k));
             }
         }
     }
@@ -209,6 +242,7 @@ fn main() {
     let mut used = vec![false; ours.len()];
     let (mut matched, mut exact_vb, mut pitch_ok, mut vol_ok, mut adsr_ok, mut voice_ok) = (0, 0, 0, 0, 0, 0);
     let mut missed: BTreeMap<u32, usize> = BTreeMap::new();
+    let mut dvb: BTreeMap<i64, usize> = BTreeMap::new();
     let mut examples: Vec<String> = Vec::new();
     for e in &theirs {
         let j = ours.iter().enumerate().position(|(j, (v, k))| !used[j] && k.addr == e.addr && (v - e.vb).abs() <= 1);
@@ -218,16 +252,25 @@ fn main() {
                 matched += 1;
                 let (v, k) = ours[j];
                 exact_vb += (v == e.vb) as usize;
+                *dvb.entry(v - e.vb).or_insert(0usize) += 1;
                 pitch_ok += (k.pitch == e.pitch) as usize;
                 let vo = k.vol_l == e.vol_l && k.vol_r == e.vol_r;
                 vol_ok += vo as usize;
                 adsr_ok += (k.adsr1 == e.adsr1 && k.adsr2 == e.adsr2) as usize;
                 voice_ok += (k.voice == e.voice) as usize;
+                if a.iter().any(|x| x == "--voices") && matched <= 40 {
+                    println!("  vb {} addr {:#x} voice port {} oracle {}", e.vb, e.addr, k.voice, e.voice);
+                }
                 if (k.pitch != e.pitch || !vo) && examples.len() < 12 {
                     examples.push(format!("vb {} addr {:#x}: pitch {:#x}/{:#x} vol {:#x},{:#x}/{:#x},{:#x}", e.vb, e.addr, k.pitch, e.pitch, k.vol_l, k.vol_r, e.vol_l, e.vol_r));
                 }
             }
-            None => *missed.entry(e.addr).or_default() += 1,
+            None => {
+                *missed.entry(e.addr).or_default() += 1;
+                if opt("--show-missed").map(|x| u32::from_str_radix(x.trim_start_matches("0x"), 16).unwrap()) == Some(e.addr) {
+                    println!("  missed {:#x} at vb {} voice {} pitch {:#x} vol {:#x}", e.addr, e.vb, e.voice, e.pitch, e.vol_l);
+                }
+            }
         }
     }
     let mut extra: BTreeMap<u32, usize> = BTreeMap::new();
@@ -245,6 +288,7 @@ fn main() {
         let v = drv_vag(&drv, addr);
         format!("{addr:#07x} (vag {v:?}, ids {:?})", ids_for_vag(&drv, v))
     };
+    println!("  VBlank (port - oracle) of the matches: {dvb:?}");
     println!("  missed (oracle only), by sample:");
     for (a, c) in &missed {
         println!("    {} x{c}", name(*a));

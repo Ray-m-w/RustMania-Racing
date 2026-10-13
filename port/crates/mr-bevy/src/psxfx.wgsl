@@ -16,8 +16,10 @@ struct FxView {
     world_from_clip: mat4x4<f32>,
     // x, y, width, height of the viewport (physical pixels)
     viewport: vec4<f32>,
-    // x: |normal.y| above which an occluder counts as ground; y: 1 = test
-    // depth; z: the projection's near plane (depth = near / view z)
+    // x: |normal.y| above which an occluder counts as ground; y: unused (the
+    // depth test is per primitive: flag DEPTH); z: the projection's near
+    // plane (depth = near / view z); w: 1 = orthographic (the HUD: depths
+    // compared directly)
     params: vec4<f32>,
 };
 
@@ -28,6 +30,10 @@ struct FxView {
 @group(0) @binding(1) var depth_tex: texture_depth_2d;
 #endif
 @group(1) @binding(0) var page: texture_2d<f32>;
+// The page as the scenery shows it (texture_filter: smooth = bilinear +
+// mips, sRGB); flag SMOOTH. Else the raw page again.
+@group(1) @binding(1) var page_f: texture_2d<f32>;
+@group(1) @binding(2) var page_s: sampler;
 
 struct VIn {
     @location(0) pos: vec4<f32>,
@@ -86,14 +92,34 @@ fn world_at(p: vec2<i32>, d: f32) -> vec3<f32> {
 const TEXTURED: u32 = 1u;
 const SEMI_TEXELS: u32 = 2u;
 const OPAQUE_TEXELS: u32 = 4u;
+const DEPTH: u32 = 8u;
+const SMOOTH: u32 = 16u;
+
+fn srgb(c: f32) -> f32 {
+    if (c <= 0.0031308) {
+        return c * 12.92;
+    }
+    return 1.055 * pow(c, 1.0 / 2.4) - 0.055;
+}
 
 @fragment
 fn fs(in: VOut) -> @location(0) vec4<f32> {
+    // derivatives first (uniform control flow)
+    let uvn = in.uv / 256.0;
+    let gx = dpdx(uvn);
+    let gy = dpdy(uvn);
     let fp = vec2<i32>(floor(in.clip.xy));
-    if (view.params.y > 0.5) {
+    if ((in.flags & DEPTH) != 0u) {
         let ds = scene_depth(fp);
-        // reverse-Z, infinite far: depth = near / view z (0 = sky / nothing)
-        if (ds > 0.0 && view.params.z / ds < in.vdepth) {
+        var hidden = false;
+        if (view.params.w > 0.5) {
+            // orthographic reverse-Z: a larger depth is nearer
+            hidden = ds > in.clip.z + 1e-6;
+        } else {
+            // reverse-Z, infinite far: depth = near / view z (0 = sky / nothing)
+            hidden = ds > 0.0 && view.params.z / ds < in.vdepth;
+        }
+        if (hidden) {
             var exempt = false;
             if (in.ctr.w >= 0.0) {
                 let ps = world_at(fp, ds);
@@ -115,7 +141,16 @@ fn fs(in: VOut) -> @location(0) vec4<f32> {
     var c = in.col.rgb;
     if ((in.flags & TEXTURED) != 0u) {
         let t = textureLoad(page, clamp(vec2<i32>(floor(in.uv)), vec2<i32>(0), vec2<i32>(255)), 0);
-        if (t.a == 0.0) {
+        var rgb = t.rgb;
+        if ((in.flags & SMOOTH) != 0u) {
+            // filtered colour (linear light from the sRGB page, back to the
+            // game's space), cut out where the filtered coverage is < 0.5
+            let f = textureSampleGrad(page_f, page_s, uvn, gx, gy);
+            if (f.a < 0.5) {
+                discard;
+            }
+            rgb = vec3<f32>(srgb(f.r), srgb(f.g), srgb(f.b));
+        } else if (t.a == 0.0) {
             discard;
         }
         let stp = t.a < 0.75;
@@ -125,7 +160,7 @@ fn fs(in: VOut) -> @location(0) vec4<f32> {
         if ((in.flags & OPAQUE_TEXELS) != 0u && stp) {
             discard;
         }
-        c = min(t.rgb * c, vec3<f32>(1.0));
+        c = min(rgb * c, vec3<f32>(1.0));
     }
     c = min(c, vec3<f32>(1.0));
 #ifdef LINEAR_OUT

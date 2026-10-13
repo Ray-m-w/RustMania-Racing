@@ -268,6 +268,7 @@ pub fn shadow_prim(rec: &ShadowRec, pos: [Vec3; 4], eye: [i32; 3], cm: [i32; 9],
             ground_eps: 0.5 * ext,
             ground_radius: 2.0 * ext,
             depth_pull: 0.0,
+            ..Default::default()
         },
         z,
         colour,

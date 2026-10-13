@@ -40,7 +40,7 @@ use bevy::render::camera::ExtractedCamera;
 use bevy::render::extract_component::{ExtractComponent, ExtractComponentPlugin};
 use bevy::render::extract_resource::{ExtractResource, ExtractResourcePlugin};
 use bevy::render::render_asset::RenderAssets;
-use bevy::render::render_resource::binding_types::{texture_2d, texture_depth_2d, texture_depth_2d_multisampled, uniform_buffer_sized};
+use bevy::render::render_resource::binding_types::{sampler, texture_2d, texture_depth_2d, texture_depth_2d_multisampled, uniform_buffer_sized};
 use bevy::render::render_resource::*;
 use bevy::render::renderer::{RenderContext, ViewQuery};
 use bevy::render::texture::GpuImage;
@@ -51,14 +51,15 @@ use bevy::shader::{Shader, ShaderDefVal};
 use mr_assets::vram::{self, Vram};
 
 /// How a primitive is blended (the tpage ABR bits when semi-transparent).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum Blend {
+    #[default]
     Opaque,
     /// 0 B/2+F/2, 1 B+F, 2 B-F, 3 B+F/4
     Abr(u8),
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct FxVert {
     /// Bevy world position.
     pub pos: Vec3,
@@ -69,7 +70,8 @@ pub struct FxVert {
     pub rgb: [f32; 3],
 }
 
-/// One quad (PS1 vertex order: triangles 0,1,2 and 1,3,2).
+/// One quad (PS1 vertex order: triangles 0,1,2 and 1,3,2), or a triangle
+/// (`tri`: 0,1,2).
 #[derive(Clone, Debug)]
 pub struct FxPrim {
     pub v: [FxVert; 4],
@@ -88,7 +90,50 @@ pub struct FxPrim {
     /// test only: the ordering-table bias some sprites carry (FUN_80011E3C
     /// sorts at OTZ * 4 + bias * 4).
     pub depth_pull: f32,
+    /// The camera that draws it: `VIEW_MAIN` (chase camera), `VIEW_FAR`
+    /// (the far pass: sky + DAT layer 1), `VIEW_HUD`.
+    pub view: u8,
+    /// Sort bucket: lower buckets are drawn first, each far to near (the
+    /// game's ground list = -1: drawn under everything else).
+    pub bucket: i8,
+    /// Depth-tested even with `fx_depth_test = false` (scenery, the HUD).
+    pub always_depth: bool,
+    /// Colour from the page as `texture_filter` shows the scenery
+    /// (VramTextures: bilinear + mips when smooth); the texel's STP bit and
+    /// transparency still come from the raw page.
+    pub smooth: bool,
+    /// A triangle (v[0..3]); v[3] is ignored.
+    pub tri: bool,
+    /// Not drawn when the triangle v0, v1, v2 faces away from the eye (the
+    /// game's NCLIP test: front = counter-clockwise seen from a y-up view).
+    pub cull_back: bool,
 }
+
+impl Default for FxPrim {
+    fn default() -> Self {
+        FxPrim {
+            v: [FxVert::default(); 4],
+            page: None,
+            blend: Blend::Opaque,
+            center: Vec3::ZERO,
+            ground_eps: -1.0,
+            ground_radius: 0.0,
+            depth_pull: 0.0,
+            view: VIEW_MAIN,
+            bucket: 0,
+            always_depth: false,
+            smooth: false,
+            tri: false,
+            cull_back: false,
+        }
+    }
+}
+
+/// `FxPrim::view` values (and `PsxFxView` ids).
+pub const VIEW_MAIN: u8 = 0;
+pub const VIEW_FAR: u8 = 1;
+pub const VIEW_HUD: u8 = 2;
+const VIEWS: usize = 3;
 
 /// What the sources queue this frame (cleared by `build_frame`).
 #[derive(Resource, Default)]
@@ -96,27 +141,34 @@ pub struct FxPrims {
     pub list: Vec<FxPrim>,
 }
 
-/// The chase camera's view: the pass runs for views with this marker.
+/// The pass runs for cameras with this marker (`VIEW_MAIN` / `VIEW_FAR` /
+/// `VIEW_HUD`), drawing the primitives queued for that view.
 #[derive(Component, Clone, Copy, ExtractComponent)]
-pub struct PsxFxView;
+pub struct PsxFxView(pub u8);
 
 /// One draw of the packed frame.
 #[derive(Clone, Debug)]
 struct GpuDraw {
     page: Option<AssetId<Image>>,
+    /// The filtered page (`FxPrim::smooth`), else the raw page again.
+    smooth: Option<AssetId<Image>>,
     /// 0 opaque, 1..=4 ABR 0..3
     pipe: u8,
     first: u32,
     count: u32,
 }
 
+/// One view's packed primitives.
+#[derive(Clone, Default)]
+struct ViewFrame {
+    verts: Vec<f32>,
+    draws: Vec<GpuDraw>,
+}
+
 /// The packed frame for the render world.
 #[derive(Resource, Clone, Default, ExtractResource)]
 pub struct FxGpuFrame {
-    verts: Vec<f32>,
-    draws: Vec<GpuDraw>,
-    /// Depth-test against the scene.
-    depth_test: bool,
+    views: [ViewFrame; VIEWS],
     /// Blend in linear light (fx_blend = linear).
     linear: bool,
 }
@@ -246,7 +298,13 @@ impl Plugin for PsxFxPlugin {
             .init_resource::<FxGpuFrame>()
             .add_plugins((ExtractResourcePlugin::<FxGpuFrame>::default(), ExtractComponentPlugin::<PsxFxView>::default()))
             .add_systems(Update, mark_camera)
-            .add_systems(PostUpdate, build_frame.after(bevy::transform::TransformSystems::Propagate));
+            .add_systems(
+                PostUpdate,
+                (push_semi, build_frame)
+                    .chain()
+                    .after(bevy::transform::TransformSystems::Propagate)
+                    .after(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate),
+            );
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
         render_app
             .insert_resource(FxShaders { main, comp })
@@ -255,14 +313,49 @@ impl Plugin for PsxFxPlugin {
     }
 }
 
-/// Give the chase camera the pass marker and a depth texture the pass can
-/// read (TEXTURE_BINDING; the target's depth texture is shared by the
-/// cameras that draw into it, usages OR'ed).
-fn mark_camera(mut commands: Commands, mut q: Query<(Entity, &mut Camera3d), (With<crate::ChaseCamera>, Without<PsxFxView>)>) {
-    for (e, mut c3) in q.iter_mut() {
+/// Give the chase, far-pass and HUD cameras the pass marker and a depth
+/// texture the pass can read (TEXTURE_BINDING; the target's depth texture is
+/// shared by the cameras that draw into it, usages OR'ed).
+#[allow(clippy::type_complexity)]
+fn mark_camera(
+    mut commands: Commands,
+    mut q: Query<(Entity, &mut Camera3d, Has<crate::ChaseCamera>, Has<crate::scene::FarCamera>, Has<crate::hud::HudCamera>), Without<PsxFxView>>,
+) {
+    for (e, mut c3, chase, far, hud) in q.iter_mut() {
+        let id = if chase {
+            VIEW_MAIN
+        } else if far {
+            VIEW_FAR
+        } else if hud {
+            VIEW_HUD
+        } else {
+            continue;
+        };
         let u = TextureUsages::from_bits_truncate(c3.depth_texture_usages.0) | TextureUsages::TEXTURE_BINDING | TextureUsages::RENDER_ATTACHMENT;
         c3.depth_texture_usages = u.into();
-        commands.entity(e).insert(PsxFxView);
+        commands.entity(e).insert(PsxFxView(id));
+    }
+}
+
+/// Semi-transparent scene / model polygons (psxmesh::FxSemi) of every
+/// visible entity, placed by its transform.
+fn push_semi(q: Query<(&crate::psxmesh::FxSemi, &GlobalTransform, &InheritedVisibility)>, mut prims: ResMut<FxPrims>) {
+    for (semi, gt, vis) in q.iter() {
+        if !vis.get() {
+            continue;
+        }
+        let a = gt.affine();
+        let identity = a == bevy::math::Affine3A::IDENTITY;
+        for p in semi.0.iter() {
+            let mut q = p.clone();
+            if !identity {
+                for v in q.v.iter_mut() {
+                    v.pos = a.transform_point3(v.pos);
+                }
+                q.center = a.transform_point3(q.center);
+            }
+            prims.list.push(q);
+        }
     }
 }
 
@@ -271,69 +364,105 @@ const VERT_F32: usize = 20;
 const FLAG_TEXTURED: u32 = 1;
 const FLAG_SEMI_TEXELS: u32 = 2;
 const FLAG_OPAQUE_TEXELS: u32 = 4;
+const FLAG_DEPTH: u32 = 8;
+const FLAG_SMOOTH: u32 = 16;
 
-/// Sort (far to near, as the ordering table draws) and pack.
+/// Sort (per view: by bucket, then far to near, as the ordering table
+/// draws) and pack.
+#[allow(clippy::too_many_arguments)]
 fn build_frame(
     mut prims: ResMut<FxPrims>,
     mut pages: ResMut<FxPages>,
-    vt: Option<Res<crate::vramtex::VramTextures>>,
+    vt: Option<ResMut<crate::vramtex::VramTextures>>,
     mut images: ResMut<Assets<Image>>,
     opts: Res<FxOptions>,
-    cam: Query<&GlobalTransform, With<crate::ChaseCamera>>,
+    cams: Query<(&GlobalTransform, &PsxFxView)>,
     mut out: ResMut<FxGpuFrame>,
 ) {
     let list = std::mem::take(&mut prims.list);
-    let (Some(vt), Ok(ct)) = (vt, cam.single()) else {
-        if !out.draws.is_empty() {
+    let Some(mut vt) = vt else {
+        if out.views.iter().any(|v| !v.draws.is_empty()) {
             *out = FxGpuFrame::default();
         }
         return;
     };
-    if list.is_empty() && out.draws.is_empty() {
+    if list.is_empty() && out.views.iter().all(|v| v.draws.is_empty()) {
         return;
     }
-    let eye = ct.translation();
-    let fwd = ct.forward().as_vec3();
-    let mut order: Vec<(f32, usize)> = list.iter().enumerate().map(|(i, p)| ((p.center - eye).dot(fwd) - p.depth_pull, i)).collect();
-    // far to near; equal depths keep submission order
-    order.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal).then(a.1.cmp(&b.1)));
-    let mut f = FxGpuFrame { verts: Vec::with_capacity(list.len() * 6 * VERT_F32), draws: Vec::new(), depth_test: opts.depth_test, linear: opts.linear };
-    let mut page_ids: HashMap<(u16, u16), AssetId<Image>> = HashMap::new();
-    let white = pages.white(&mut images).id();
-    for &(_, i) in &order {
-        let p = &list[i];
-        let page = p.page.map(|(tp, cl)| *page_ids.entry((tp, cl)).or_insert_with(|| pages.get(&vt.vram, &mut images, tp, cl).id()));
-        // (pipeline, texel phase, output scale, alpha) per draw
-        let mut phases: Vec<(u8, u32, f32, f32)> = Vec::with_capacity(2);
-        match (p.blend, page.is_some()) {
-            (Blend::Opaque, _) => phases.push((0, 0, 1.0, 1.0)),
-            (Blend::Abr(a), textured) => {
-                if textured {
-                    phases.push((0, FLAG_OPAQUE_TEXELS, 1.0, 1.0));
-                }
-                let (scale, alpha) = match a & 3 {
-                    0 => (1.0, 0.5),
-                    3 => (0.25, 1.0),
-                    _ => (1.0, 1.0),
-                };
-                phases.push((1 + (a & 3), if textured { FLAG_SEMI_TEXELS } else { 0 }, scale, alpha));
-            }
+    let mut eyes: [Option<(Vec3, Vec3)>; VIEWS] = [None; VIEWS];
+    for (gt, v) in cams.iter() {
+        if let Some(e) = eyes.get_mut(v.0 as usize) {
+            *e = Some((gt.translation(), gt.forward().as_vec3()));
         }
-        for (pipe, phase, scale, alpha) in phases {
-            let flags = phase | if page.is_some() { FLAG_TEXTURED } else { 0 };
-            let first = (f.verts.len() / VERT_F32) as u32;
-            for k in [0usize, 1, 2, 1, 3, 2] {
-                let v = &p.v[k];
-                f.verts.extend_from_slice(&[v.pos.x, v.pos.y, v.pos.z, 1.0]);
-                f.verts.extend_from_slice(&[v.uv[0], v.uv[1], flags as f32, scale]);
-                f.verts.extend_from_slice(&[v.rgb[0], v.rgb[1], v.rgb[2], alpha]);
-                f.verts.extend_from_slice(&[p.center.x, p.center.y, p.center.z, p.ground_eps]);
-                f.verts.extend_from_slice(&[p.depth_pull, p.ground_radius, 0.0, 0.0]);
+    }
+    let mut f = FxGpuFrame { views: Default::default(), linear: opts.linear };
+    let mut page_ids: HashMap<(u16, u16), AssetId<Image>> = HashMap::new();
+    let mut smooth_ids: HashMap<(u16, u16), AssetId<Image>> = HashMap::new();
+    let white = pages.white(&mut images).id();
+    for (vi, vf) in f.views.iter_mut().enumerate() {
+        let Some((eye, fwd)) = eyes[vi] else { continue };
+        let mut order: Vec<(i8, f32, usize)> = list
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.view as usize == vi)
+            .filter(|(_, p)| !p.cull_back || (p.v[1].pos - p.v[0].pos).cross(p.v[2].pos - p.v[0].pos).dot(eye - p.v[0].pos) >= 0.0)
+            .map(|(i, p)| (p.bucket, (p.center - eye).dot(fwd) - p.depth_pull, i))
+            .collect();
+        if order.is_empty() {
+            continue;
+        }
+        // buckets in order; within one, far to near; equal depths keep submission order
+        order.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)).then(a.2.cmp(&b.2)));
+        vf.verts.reserve(order.len() * 6 * VERT_F32);
+        for &(_, _, i) in &order {
+            let p = &list[i];
+            let page = p.page.map(|(tp, cl)| *page_ids.entry((tp, cl)).or_insert_with(|| pages.get(&vt.vram, &mut images, tp, cl).id()));
+            let smooth = match (p.page, p.smooth) {
+                (Some((tp, cl)), true) => Some(*smooth_ids.entry((tp, cl)).or_insert_with(|| vt.get(&mut images, tp, cl).id())),
+                _ => None,
+            };
+            // (pipeline, texel phase, output scale, alpha) per draw
+            let mut phases: Vec<(u8, u32, f32, f32)> = Vec::with_capacity(2);
+            match (p.blend, page.is_some()) {
+                (Blend::Opaque, _) => phases.push((0, 0, 1.0, 1.0)),
+                (Blend::Abr(a), textured) => {
+                    if textured {
+                        phases.push((0, FLAG_OPAQUE_TEXELS, 1.0, 1.0));
+                    }
+                    let (scale, alpha) = match a & 3 {
+                        0 => (1.0, 0.5),
+                        3 => (0.25, 1.0),
+                        _ => (1.0, 1.0),
+                    };
+                    phases.push((1 + (a & 3), if textured { FLAG_SEMI_TEXELS } else { 0 }, scale, alpha));
+                }
             }
-            let pg = Some(page.unwrap_or(white));
-            match f.draws.last_mut() {
-                Some(d) if d.page == pg && d.pipe == pipe && d.first + d.count == first => d.count += 6,
-                _ => f.draws.push(GpuDraw { page: pg, pipe, first, count: 6 }),
+            let mut common = if page.is_some() { FLAG_TEXTURED } else { 0 };
+            if p.always_depth || opts.depth_test {
+                common |= FLAG_DEPTH;
+            }
+            if smooth.is_some() {
+                common |= FLAG_SMOOTH;
+            }
+            let idx: &[usize] = if p.tri { &[0, 1, 2] } else { &[0, 1, 2, 1, 3, 2] };
+            for (pipe, phase, scale, alpha) in phases {
+                let flags = phase | common;
+                let first = (vf.verts.len() / VERT_F32) as u32;
+                for &k in idx {
+                    let v = &p.v[k];
+                    vf.verts.extend_from_slice(&[v.pos.x, v.pos.y, v.pos.z, 1.0]);
+                    vf.verts.extend_from_slice(&[v.uv[0], v.uv[1], flags as f32, scale]);
+                    vf.verts.extend_from_slice(&[v.rgb[0], v.rgb[1], v.rgb[2], alpha]);
+                    vf.verts.extend_from_slice(&[p.center.x, p.center.y, p.center.z, p.ground_eps]);
+                    vf.verts.extend_from_slice(&[p.depth_pull, p.ground_radius, 0.0, 0.0]);
+                }
+                let n = idx.len() as u32;
+                let pg = Some(page.unwrap_or(white));
+                let sm = Some(smooth.or(page).unwrap_or(white));
+                match vf.draws.last_mut() {
+                    Some(d) if d.page == pg && d.smooth == sm && d.pipe == pipe && d.first + d.count == first => d.count += n,
+                    _ => vf.draws.push(GpuDraw { page: pg, smooth: sm, pipe, first, count: n }),
+                }
             }
         }
     }
@@ -366,7 +495,14 @@ fn init_pipes(mut commands: Commands, shaders: Res<FxShaders>) {
         ),
         page_layout: BindGroupLayoutDescriptor::new(
             "psxfx_page",
-            &BindGroupLayoutEntries::single(ShaderStages::FRAGMENT, texture_2d(TextureSampleType::Float { filterable: false })),
+            &BindGroupLayoutEntries::sequential(
+                ShaderStages::FRAGMENT,
+                (
+                    texture_2d(TextureSampleType::Float { filterable: false }),
+                    texture_2d(TextureSampleType::Float { filterable: true }),
+                    sampler(SamplerBindingType::Filtering),
+                ),
+            ),
         ),
         comp_layout: BindGroupLayoutDescriptor::new(
             "psxfx_comp",
@@ -441,14 +577,15 @@ fn comp_descriptor(p: &FxPipes, samples: u32, format: TextureFormat, linear: boo
 
 #[derive(Default)]
 struct PassState {
-    tex: Option<(UVec2, TextureFormat, Texture, TextureView)>,
+    /// The working copy per view id.
+    tex: HashMap<u8, (UVec2, TextureFormat, Texture, TextureView)>,
     fx_ids: HashMap<(u8, bool, TextureFormat), CachedRenderPipelineId>,
     comp_ids: HashMap<(u32, TextureFormat, bool), CachedRenderPipelineId>,
 }
 
 #[allow(clippy::too_many_arguments)]
 fn fx_pass(
-    view: ViewQuery<(&ExtractedCamera, &ExtractedView, &ViewTarget, &ViewDepthTexture, &Msaa), With<PsxFxView>>,
+    view: ViewQuery<(&ExtractedCamera, &ExtractedView, &ViewTarget, &ViewDepthTexture, &Msaa, &PsxFxView)>,
     frame: Option<Res<FxGpuFrame>>,
     pipes: Option<Res<FxPipes>>,
     cache: Res<PipelineCache>,
@@ -457,10 +594,12 @@ fn fx_pass(
     mut ctx: RenderContext,
 ) {
     let (Some(frame), Some(pipes)) = (frame, pipes) else { return };
-    if frame.draws.is_empty() {
+    let (camera, ev, target, depth, msaa, fx_view_id) = view.into_inner();
+    let vid = fx_view_id.0;
+    let Some(vf) = frame.views.get(vid as usize) else { return };
+    if vf.draws.is_empty() {
         return;
     }
-    let (camera, ev, target, depth, msaa) = view.into_inner();
     let Some(size) = camera.physical_target_size else { return };
     let fmt = ev.target_format;
     if !matches!(fmt, TextureFormat::Rgba8UnormSrgb | TextureFormat::Bgra8UnormSrgb) {
@@ -490,7 +629,7 @@ fn fx_pass(
     }
     let device = ctx.render_device().clone();
     // the gamma-space working copy
-    if st.tex.as_ref().map(|t| (t.0, t.1)) != Some((size, fx_fmt)) {
+    if st.tex.get(&vid).map(|t| (t.0, t.1)) != Some((size, fx_fmt)) {
         let tex = device.create_texture(&TextureDescriptor {
             label: Some("psxfx_frame"),
             size: Extent3d { width: size.x, height: size.y, depth_or_array_layers: 1 },
@@ -502,9 +641,9 @@ fn fx_pass(
             view_formats: &[],
         });
         let tv = tex.create_view(&TextureViewDescriptor::default());
-        st.tex = Some((size, fx_fmt, tex, tv));
+        st.tex.insert(vid, (size, fx_fmt, tex, tv));
     }
-    let (_, _, fx_tex, fx_view) = st.tex.as_ref().unwrap();
+    let (_, _, fx_tex, fx_view) = &st.tex[&vid];
     // view uniform: clip_from_world, world_from_clip, viewport, params
     let clip_from_world = ev.clip_from_world.unwrap_or_else(|| ev.clip_from_view * ev.world_from_view.to_matrix().inverse());
     let world_from_clip = clip_from_world.inverse();
@@ -515,13 +654,15 @@ fn fx_pass(
         }
     }
     let vp = ev.viewport.as_vec4();
-    // infinite reverse-Z perspective: clip_from_view[3][2] is the near plane
+    // infinite reverse-Z perspective: clip_from_view[3][2] is the near plane;
+    // orthographic (the HUD): clip_from_view[3][3] = 1, depth compared as is
     let near = ev.clip_from_view.w_axis.z;
-    for x in [vp.x, vp.y, vp.z, vp.w, 0.6, if frame.depth_test { 1.0 } else { 0.0 }, near, 0.0] {
+    let ortho = if ev.clip_from_view.w_axis.w == 1.0 { 1.0 } else { 0.0 };
+    for x in [vp.x, vp.y, vp.z, vp.w, 0.6, 1.0, near, ortho] {
         u.extend_from_slice(&x.to_le_bytes());
     }
     let ubuf = device.create_buffer_with_data(&BufferInitDescriptor { label: Some("psxfx_view"), contents: &u, usage: BufferUsages::UNIFORM });
-    let vbytes: Vec<u8> = frame.verts.iter().flat_map(|x| x.to_le_bytes()).collect();
+    let vbytes: Vec<u8> = vf.verts.iter().flat_map(|x| x.to_le_bytes()).collect();
     let vbuf = device.create_buffer_with_data(&BufferInitDescriptor { label: Some("psxfx_verts"), contents: &vbytes, usage: BufferUsages::VERTEX });
     let view_bg = device.create_bind_group(
         "psxfx_view",
@@ -529,12 +670,15 @@ fn fx_pass(
         &BindGroupEntries::sequential((ubuf.as_entire_binding(), depth.view())),
     );
     let page_layout = cache.get_bind_group_layout(&pipes.page_layout);
-    let mut page_bgs: HashMap<AssetId<Image>, BindGroup> = HashMap::new();
-    for d in &frame.draws {
-        if let Some(pg) = d.page {
-            if !page_bgs.contains_key(&pg) {
-                if let Some(gi) = gpu_images.get(pg) {
-                    page_bgs.insert(pg, device.create_bind_group("psxfx_page", &page_layout, &BindGroupEntries::single(&gi.texture_view)));
+    let mut page_bgs: HashMap<(AssetId<Image>, AssetId<Image>), BindGroup> = HashMap::new();
+    for d in &vf.draws {
+        if let (Some(pg), Some(sm)) = (d.page, d.smooth) {
+            if !page_bgs.contains_key(&(pg, sm)) {
+                if let (Some(gi), Some(gs)) = (gpu_images.get(pg), gpu_images.get(sm)) {
+                    page_bgs.insert(
+                        (pg, sm),
+                        device.create_bind_group("psxfx_page", &page_layout, &BindGroupEntries::sequential((&gi.texture_view, &gs.texture_view, &gs.sampler))),
+                    );
                 }
             }
         }
@@ -565,8 +709,8 @@ fn fx_pass(
         pass.set_viewport(v.x as f32, v.y as f32, v.z.max(1) as f32, v.w.max(1) as f32, 0.0, 1.0);
         pass.set_vertex_buffer(0, *vbuf.slice(..));
         pass.set_bind_group(0, &*view_bg, &[]);
-        for d in &frame.draws {
-            let Some(bg) = d.page.and_then(|p| page_bgs.get(&p)) else { continue };
+        for d in &vf.draws {
+            let Some(bg) = d.page.zip(d.smooth).and_then(|k| page_bgs.get(&k)) else { continue };
             let Some(pl) = cache.get_render_pipeline(ids[d.pipe as usize]) else { continue };
             pass.set_pipeline(pl);
             pass.set_bind_group(1, &**bg, &[]);

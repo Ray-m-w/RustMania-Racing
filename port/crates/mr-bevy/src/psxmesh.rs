@@ -7,9 +7,14 @@
 //!   neutral and up to 2x brightens. Modulation happens in the game's (gamma)
 //!   space; the vertex colour is converted to linear so Bevy's linear-space
 //!   multiply gives the same result;
-//! - untextured polygons are plain Gouraud colour (rgb / 255).
+//! - untextured polygons are plain Gouraud colour (rgb / 255);
+//! - semi-transparent polygons are not meshes: they become `FxSemi`
+//!   primitives (`semi_prims`) that the PS1 effects pass (psxfx.rs) draws
+//!   with the GPU's ABR blending in the game's colour space, depth-tested
+//!   against the scene, in the ordering table's order.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
@@ -26,6 +31,60 @@ pub struct PsxPoly {
     /// Some((tpage, clut)) when textured.
     pub tex: Option<(u16, u16)>,
     pub semi: bool,
+    /// Blend mode when `semi` (0 B/2+F/2, 1 B+F, 2 B-F, 3 B+F/4).
+    pub abr: u8,
+    /// The game culls this polygon's back face (NCLIP; front = counter-
+    /// clockwise seen from a y-up view, GPU vertex order 0, 1, 2). Applied to
+    /// the semi-transparent ones (an additive back face would add twice);
+    /// opaque meshes stay two-sided.
+    pub cull: bool,
+}
+
+/// Semi-transparent polygons of an entity, in its local space (Bevy units):
+/// pushed every frame to the effects pass while the entity is visible
+/// (`psxfx::push_semi`), placed by its `GlobalTransform`.
+#[derive(Component, Clone)]
+pub struct FxSemi(pub Arc<Vec<crate::psxfx::FxPrim>>);
+
+/// The semi-transparent polygons of `polys` as effects-pass primitives for
+/// camera `view` (psxfx::VIEW_MAIN / VIEW_FAR) and sort bucket `bucket`
+/// (-1 = the game's ground list, drawn under everything else). None when
+/// there are none.
+pub fn semi_prims(polys: &[PsxPoly], view: u8, bucket: i8, to_bevy: impl Fn([i32; 3]) -> Vec3) -> Option<FxSemi> {
+    use crate::psxfx::{Blend, FxPrim, FxVert};
+    let mut out = Vec::new();
+    for p in polys.iter().filter(|p| p.semi && p.pos.len() >= 3) {
+        let n = p.pos.len().min(4);
+        let mut v = [FxVert::default(); 4];
+        let mut center = Vec3::ZERO;
+        for (i, slot) in v.iter_mut().enumerate().take(n) {
+            let pos = to_bevy(p.pos[i]);
+            center += pos;
+            let t = p.uv.get(i).copied().unwrap_or([0, 0]);
+            let c = p.rgb.get(i).copied().unwrap_or([128, 128, 128]);
+            let k = if p.tex.is_some() { 128.0 } else { 255.0 };
+            // texel centres (as the meshes): floor() picks the texel, the
+            // filtered path samples its centre
+            *slot = FxVert { pos, uv: [t[0] as f32 + 0.5, t[1] as f32 + 0.5], rgb: [c[0] as f32 / k, c[1] as f32 / k, c[2] as f32 / k] };
+        }
+        out.push(FxPrim {
+            v,
+            page: p.tex.map(|(tp, cl)| (tp & !0x60, cl)),
+            blend: Blend::Abr(p.abr & 3),
+            center: center / n as f32,
+            // scenery: plain depth test, always; a hair of tolerance for
+            // decals coplanar with opaque scenery
+            depth_pull: 0.01,
+            view,
+            bucket,
+            always_depth: true,
+            smooth: true,
+            tri: n == 3,
+            cull_back: p.cull,
+            ..Default::default()
+        });
+    }
+    (!out.is_empty()).then(|| FxSemi(Arc::new(out)))
 }
 
 /// Alpha mode of opaque textured polygons (colour-0 texels cut out): a hard
@@ -74,7 +133,8 @@ pub fn build_cached(
     to_bevy: impl Fn([i32; 3]) -> Vec3,
 ) -> Vec<(Handle<Mesh>, Handle<StandardMaterial>)> {
     let mut groups: HashMap<(Option<(u16, u16)>, bool), Vec<&PsxPoly>> = HashMap::new();
-    for p in polys {
+    // semi-transparent polygons go to the effects pass (`semi_prims`)
+    for p in polys.iter().filter(|p| !p.semi) {
         groups.entry((p.tex, p.semi)).or_default().push(p);
     }
     let mut out = Vec::new();

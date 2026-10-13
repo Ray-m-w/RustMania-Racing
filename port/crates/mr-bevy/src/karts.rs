@@ -73,8 +73,9 @@ pub fn model_path(exe: &[u8], table: u32, i: u8, ext: &str) -> Option<String> {
 /// Meshes shared by every kart with this (character, vehicle).
 struct RigTemplate {
     model: KartModel,
-    /// ((model 0 vehicle / 1 driver, slot part), meshes) for rigid parts.
-    parts: Vec<((usize, usize), Vec<(Handle<Mesh>, Handle<StandardMaterial>)>)>,
+    /// ((model 0 vehicle / 1 driver, slot part), meshes, semi-transparent
+    /// polygons) for rigid parts.
+    parts: Vec<((usize, usize), Vec<(Handle<Mesh>, Handle<StandardMaterial>)>, Option<psxmesh::FxSemi>)>,
     /// Neck polygons (per neck, per polygon), built per kart.
     necks: Vec<Vec<PsxPoly>>,
 }
@@ -128,7 +129,7 @@ impl ModelLib {
                             continue;
                         }
                     }
-                    parts.push(((mi, slot), psxmesh::build(&polys, tex, images, meshes, mats, local)));
+                    parts.push(((mi, slot), psxmesh::build(&polys, tex, images, meshes, mats, local), psxmesh::semi_prims(&polys, crate::psxfx::VIEW_MAIN, 0, local)));
                 }
             }
             self.templates.insert((character, vehicle), RigTemplate { model, parts, necks });
@@ -187,16 +188,20 @@ pub fn sync_rigs(
             warn!("kart slot {}: no model for character {} / vehicle {}", k.slot, k.character, k.vehicle);
             continue;
         };
-        let parts: Vec<_> = t.parts.iter().map(|(id, m)| (*id, m.clone())).collect();
+        let parts: Vec<_> = t.parts.iter().map(|(id, m, s)| (*id, m.clone(), s.clone())).collect();
         let necks: Vec<Vec<PsxPoly>> = t.necks.clone();
         let slot = k.slot;
         commands
             .spawn((Transform::default(), Visibility::default(), KartRigRoot { slot, character: k.character, vehicle: k.vehicle }))
             .with_children(|c| {
-                for ((model, part), ms) in parts {
+                for ((model, part), ms, semi) in parts {
                     c.spawn((Transform::default(), Visibility::default(), RigPart { slot, model, part })).with_children(|c| {
                         for (mesh, mat) in ms {
                             c.spawn((Mesh3d(mesh), MeshMaterial3d(mat)));
+                        }
+                        // semi-transparent polygons (canopies etc.): the effects pass
+                        if let Some(s) = semi {
+                            c.spawn((Transform::default(), Visibility::default(), s));
                         }
                     });
                 }

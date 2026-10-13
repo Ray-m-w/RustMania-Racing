@@ -16,7 +16,11 @@
 //! Drawing: a pool of quad entities, one per primitive, whose meshes are
 //! rewritten in place when the layout changes (the item HUD animates every
 //! frame). The GPU draws the game's last-added primitive first, so earlier
-//! primitives get a nearer z.
+//! primitives get a nearer z. Semi-transparent primitives are not meshes:
+//! they go to the PS1 effects pass (psxfx.rs, `VIEW_HUD`) every frame, which
+//! blends them with the GPU's ABR equations on the game's (gamma) values,
+//! honours the texel STP bit, and is depth-tested against the opaque HUD
+//! primitives (so the game's drawing order holds both ways).
 
 use std::collections::HashMap;
 
@@ -82,6 +86,8 @@ struct HudRes {
     mats: HashMap<MatKey, Handle<StandardMaterial>>,
     pool: Vec<(Entity, Handle<Mesh>)>,
     last: Option<Vec<Prim>>,
+    /// The semi-transparent primitives of the last layout (effects pass).
+    fx: Vec<crate::psxfx::FxPrim>,
     /// Game pixels the view is wider than 512 (widescreen), split evenly
     /// left and right; the layout was last drawn for `last_extra`.
     extra: f32,
@@ -120,7 +126,7 @@ fn setup(mut commands: Commands) {
     let env = mr_assets::raw::LoadEnv::from_exe(&exe, crate::scene::DOCK).expect("env");
     let dec = mr_assets::raw::decode(&file, &env).expect("decode RAW");
     let slots = hud::slot_attrs(&dec.slots);
-    commands.insert_resource(HudRes { tables, items, slots, mats: HashMap::new(), pool: Vec::new(), last: None, extra: 0.0, last_extra: 0.0 });
+    commands.insert_resource(HudRes { tables, items, slots, mats: HashMap::new(), pool: Vec::new(), last: None, fx: Vec::new(), extra: 0.0, last_extra: 0.0 });
     commands.spawn((
         Camera3d::default(),
         Camera { order: 10, clear_color: ClearColorConfig::None, ..default() },
@@ -536,6 +542,7 @@ fn draw(
     mut meshes: ResMut<Assets<Mesh>>,
     mut mats: ResMut<Assets<StandardMaterial>>,
     mut vis: Query<(&mut Visibility, &mut MeshMaterial3d<StandardMaterial>), With<HudQuad>>,
+    mut fx: ResMut<crate::psxfx::FxPrims>,
 ) {
     let (Some(mut res), Some(mut tex)) = (res, tex) else { return };
     let prims: Vec<Prim> = match (input.state, items.state.as_ref()) {
@@ -544,10 +551,12 @@ fn draw(
         _ => Vec::new(),
     };
     if res.last.as_ref() == Some(&prims) && res.last_extra == res.extra {
+        fx.list.extend(res.fx.iter().cloned());
         return;
     }
     let n = prims.len();
     let shifts = anchor_shifts(&prims, res.extra);
+    res.fx.clear();
     for (i, p) in prims.iter().enumerate() {
         let z = (n - i) as f32 * 0.01;
         let (key, mut pos, mut uv, c) = geometry(p, &res.slots, z);
@@ -556,6 +565,11 @@ fn draw(
         }
         if key.2 {
             inset_uvs(&mut uv);
+        }
+        if key.3 {
+            // semi-transparent: the effects pass (quads only: SPRT / FT4);
+            // the pooled entity stays hidden
+            res.fx.push(fx_prim(p, key, &pos, &uv));
         }
         let mat = match res.mats.get(&key) {
             Some(m) => m.clone(),
@@ -589,7 +603,8 @@ fn draw(
             m.insert_attribute(Mesh::ATTRIBUTE_UV_0, uv);
             m.insert_attribute(Mesh::ATTRIBUTE_COLOR, colours);
             let h = meshes.add(m);
-            let e = commands.spawn((Mesh3d(h.clone()), MeshMaterial3d(mat), Transform::IDENTITY, Visibility::Inherited, RenderLayers::layer(HUD_LAYER), HudQuad)).id();
+            let show = if key.3 { Visibility::Hidden } else { Visibility::Inherited };
+            let e = commands.spawn((Mesh3d(h.clone()), MeshMaterial3d(mat), Transform::IDENTITY, show, RenderLayers::layer(HUD_LAYER), HudQuad)).id();
             res.pool.push((e, h));
         } else {
             let (e, h) = res.pool[i].clone();
@@ -600,8 +615,9 @@ fn draw(
                 m.insert_attribute(Mesh::ATTRIBUTE_COLOR, colours);
             }
             if let Ok((mut v, mut mm)) = vis.get_mut(e) {
-                if *v != Visibility::Inherited {
-                    *v = Visibility::Inherited;
+                let show = if key.3 { Visibility::Hidden } else { Visibility::Inherited };
+                if *v != show {
+                    *v = show;
                 }
                 if mm.0 != mat {
                     mm.0 = mat;
@@ -618,4 +634,33 @@ fn draw(
     }
     res.last = Some(prims);
     res.last_extra = res.extra;
+    fx.list.extend(res.fx.iter().cloned());
+}
+
+/// A semi-transparent SPRT / FT4 as an effects-pass quad (HUD camera space):
+/// the GPU's modulation texel * rgb / 128 (raw sprites unmodulated), ABR from
+/// the primitive. `pos` / `uv` are `geometry`'s two triangles (v0 v1 v2, v1
+/// v3 v2).
+fn fx_prim(p: &Prim, key: MatKey, pos: &[[f32; 3]], uv: &[[f32; 2]]) -> crate::psxfx::FxPrim {
+    use crate::psxfx::{Blend, FxPrim, FxVert, VIEW_HUD};
+    let (rgb, raw) = match *p {
+        Prim::Sprt(s) => (s.rgb, s.raw),
+        Prim::Ft4(q) => (q.rgb, false),
+        _ => ([128; 3], false),
+    };
+    let k = |c: u8| if raw { 1.0 } else { c as f32 / 128.0 };
+    let corner = [0usize, 1, 2, 4];
+    let v: [FxVert; 4] = std::array::from_fn(|j| {
+        let (q, t) = (pos[corner[j]], uv[corner[j]]);
+        FxVert { pos: Vec3::from_array(q), uv: [t[0] * 256.0, t[1] * 256.0], rgb: [k(rgb[0]), k(rgb[1]), k(rgb[2])] }
+    });
+    FxPrim {
+        v,
+        page: Some((key.0, key.1)),
+        blend: Blend::Abr(key.4 & 3),
+        center: (v[0].pos + v[1].pos + v[2].pos + v[3].pos) * 0.25,
+        view: VIEW_HUD,
+        always_depth: true,
+        ..Default::default()
+    }
 }

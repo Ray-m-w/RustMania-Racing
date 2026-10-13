@@ -274,7 +274,41 @@ drawn by one pass after Bevy's main transparent pass, for the chase camera:
   hides it. Status billboards keep their OT bias as a pull toward the eye
   (OTZ = view z / 4 assumed: the PSYQ default ZSF4 [INFER]).
 - Options: `fx_blend = psx | linear` (linear: the same equations in
-  linear light), `fx_depth_test = true | false`.
+  linear light; covers the scenery and HUD primitives below too),
+  `fx_depth_test = true | false` (effects only: scenery and HUD
+  primitives are always depth-tested).
+- **Scenery, kart models and the HUD (Session 5, finishing).** Every
+  semi-transparent polygon goes through the same pass, not only effects:
+  DAT scenery (DOCK: 877 layer-0 polygons, nearly all ABR 1 = additive:
+  the water, glows; ABR 0 and 2 on a few), the far-pass layer-1 stand-ins
+  (`faithful_draw_distance`: a second instance of the pass after the far
+  camera's own main pass, `VIEW_FAR`), vehicle models (canopies etc.,
+  15 MDLs have 1..6 such polygons) and the HUD's semi-transparent SPRT /
+  FT4 (`VIEW_HUD`: the HUD camera's pass, orthographic depth). psxmesh
+  keeps them out of the meshes (`psxmesh::semi_prims` -> `FxSemi`
+  component, pushed every frame while the entity is visible, placed by its
+  transform). Order: the ground list's polygons in a bucket drawn first,
+  everything else (near-list scenery, kart polygons, effects) far to near
+  by centre depth; depth-tested against the opaque scene (a 0.01-unit
+  tolerance for coplanar decals). Back faces are culled as the game does
+  (NCLIP: front = counter-clockwise in a y-up view, GPU order v0 v1 v2;
+  DAT kind bit 1 / MDL flag bit 7 = two-sided): an additive back face would
+  add twice (the first version, two-sided, made the water ~1.6x too
+  bright). Scenery samples colour through the `texture_filter` look
+  (bilinear + mips from VramTextures when smooth, in the game's space),
+  STP and transparency from the raw texel. The HUD's semi primitives now
+  honour STP and are depth-tested against the opaque HUD primitives, so
+  the GPU's drawing order holds both ways.
+  The frame clear is the game's: GP0 fill 0x025F1300 = rgb (0, 19, 95) on
+  DOCK (the port had a made-up lavender; additive water over it was far too
+  pale). Water region means (512x240, `--faithful-view`, race3e):
+  VB 800 oracle 45/22/140, port 48/28/151 (before: 42/24/70; linear
+  fallback with the new clear 52/24/113); VB 3350 oracle 42/22/139, port
+  48/27/150 (before 40/24/68). Side by side:
+  analysis/s5/semi/sbs_water.png (VB 800, 1350, 3350 with 2x crops);
+  default look analysis/s5/semi/default/b_*.png. Residual: 8-bit vs
+  15-bit, and the water's animated strips (0xA / 0xC; the decode
+  alignment open above).
 
 ## Animated textures (RAW type 0x22): FUN_8007A9DC -> FUN_800311AC
 

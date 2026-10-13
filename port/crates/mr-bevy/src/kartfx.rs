@@ -399,6 +399,7 @@ pub fn quad_prim(t: &FxTables, q: &Quad3, eye: Vec3, rot: Quat) -> Option<FxPrim
         ground_radius: 0.0,
         // FUN_800313BC sorts at (OTZ + bias) * 4, OTZ = view z / 4 [INFER]
         depth_pull: -(q.bias as f32) * 4.0 * 32.0 / crate::UNITS,
+        ..Default::default()
     })
 }
 

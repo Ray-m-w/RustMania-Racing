@@ -49,6 +49,10 @@ use crate::PlayerKart;
 /// Course index of DOCK in the game's course table (0x800ACAA0; RAW.md).
 pub const DOCK: u32 = 3;
 
+/// The frame clear colour on DOCK (GP0 0x02 fill at the start of each race
+/// frame: 0x025F1300 = rgb 0, 19, 95) [GP0, analysis/s5/fx/race3e/gpu].
+pub const DOCK_CLEAR: [u8; 3] = [0, 0x13, 0x5F];
+
 /// Decoded course VRAM + the texture slot table (0x800DFF00) models use.
 pub fn load_vram(disc: &mut mr_disc::Disc, exe: &[u8], course: u32) -> (Vram, [Option<SlotAttr>; 32], [Option<dat::TexSlot>; 32]) {
     let path = raw::course_raw_path(exe, course).expect("course name");
@@ -90,6 +94,8 @@ pub fn model_polys(m: &Mdl, slots: &[Option<SlotAttr>; 32]) -> Vec<PsxPoly> {
                 rgb: ord.iter().map(|&i| poly.colors.get(i).copied().unwrap_or([128, 128, 128])).collect(),
                 tex: slot.map(|s| mdl::tpage_clut(flag, s, poly)),
                 semi: poly.semi_transparent(),
+                abr: (flag >> 5) & 3,
+                cull: !poly.double_sided(),
             });
         }
     }
@@ -110,6 +116,8 @@ pub fn part_polys(part: &mdl::Part, slots: &[Option<SlotAttr>; 32]) -> Vec<PsxPo
                 rgb: ord.iter().map(|&i| poly.colors.get(i).copied().unwrap_or([128, 128, 128])).collect(),
                 tex: slot.map(|s| mdl::tpage_clut(flag, s, poly)),
                 semi: poly.semi_transparent(),
+                abr: (flag >> 5) & 3,
+                cull: !poly.double_sided(),
             }
         })
         .collect()
@@ -164,6 +172,10 @@ pub fn setup(
         let ground = !far && o.loaded_flags() & 0xC0 != 0;
         let c = if far { &mut far_cache } else if ground { &mut ground_cache } else { &mut cache };
         let parts = psxmesh::build_cached(&polys, &mut tex, &mut images, &mut meshes, &mut mats, c, world);
+        // Semi-transparent polygons (water, glows): the effects pass, in the
+        // far camera's pass for layer 1, under everything for the ground list.
+        let view = if far { crate::psxfx::VIEW_FAR } else { crate::psxfx::VIEW_MAIN };
+        let semi = psxmesh::semi_prims(&polys, view, if ground { -1 } else { 0 }, world);
         commands
             .spawn((Transform::default(), Visibility::default(), crate::TrackObject(i)))
             .with_children(|c| {
@@ -173,6 +185,9 @@ pub fn setup(
                     } else {
                         c.spawn((Mesh3d(mesh), MeshMaterial3d(mat)));
                     }
+                }
+                if let Some(s) = semi {
+                    c.spawn((Transform::default(), Visibility::default(), s));
                 }
             });
     }
@@ -220,6 +235,8 @@ pub fn setup(
                 rgb: q.iter().map(|(_, c)| *c).collect(),
                 tex: None,
                 semi: false,
+                abr: 0,
+                cull: false,
             })
             .collect();
         // Horizon colour for the enhanced look's haze (lighting.rs): the
@@ -353,6 +370,8 @@ pub fn object_polys(dat: &Dat, o: &dat::Object, sin: &SinTable, slots: &[Option<
                 rgb: ord.iter().map(|&k| mesh.vertices[p.idx[k] as usize].rgb()).collect(),
                 tex: slot.map(|s| dat::prim_tpage_clut(s, g, p)),
                 semi: g.semi_transparent(),
+                abr: g.blend_bits(),
+                cull: !g.double_sided(),
             });
         }
     }
@@ -395,6 +414,8 @@ pub fn banner_polys(b: &dat::Banners, i: usize, sin: &SinTable, phase: (u16, u16
                 rgb: ord.iter().map(|&k| [q.shade[k]; 3]).collect(),
                 tex: Some(tex),
                 semi: false,
+                abr: 0,
+                cull: false,
             }
         })
         .collect()

@@ -653,6 +653,7 @@ pub fn flat_prims(t: &FxTables, f: &mr_sim::particles::Flat, eye: [i32; 3], out:
             ground_eps: 0.25 * (pos[0] - pos[3]).length().max((pos[1] - pos[2]).length()),
             ground_radius: (pos[0] - pos[3]).length().max((pos[1] - pos[2]).length()),
             depth_pull: 0.0,
+            ..Default::default()
         });
     };
     let (a, b, c, d) = ([u, vv], [u1, vv], [u, v1], [u1, v1]);
@@ -706,6 +707,7 @@ pub fn billboard_prim(b: &Billboard, right: Vec3, up: Vec3) -> FxPrim {
         // OT index = OTZ * 4 + bias * 4 with OTZ = view z / 4 (ZSF4 0x100,
         // the PSYQ default [INFER]): bias b moves the sprite -4b view units
         depth_pull: (-(b.bias as f32) * 4.0 * 32.0 * S).max(0.0),
+        ..Default::default()
     }
 }
 
@@ -728,6 +730,7 @@ pub fn streak_prim(s: &Streak, eye: Vec3) -> FxPrim {
         ground_eps: 0.0,
         ground_radius: (b - a).length(),
         depth_pull: 0.0,
+        ..Default::default()
     }
 }
 

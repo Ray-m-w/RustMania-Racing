@@ -116,6 +116,12 @@ FUN_800606D0 at the results switch (Session `phase()` -> Finished/mode 10;
 not ported: its taunt choice is yours to read from the code if wanted).
 B: particles/sparks are in (`session.particles()`, `session.sparks()`,
 `ItemState::token_spin`), commit 3a8950c.
+(2026-10-13, A, closing) Done; commits through 4ae532d. Driving items from
+mr-bevy: nothing extra; `Session::tick` runs the item frame for all karts
+when `SessionConfig::items` (default true); the player's L1 / L2 / R1 / R2
+go in the pad word as before. Read `session.items()` (ItemState),
+`particles()`, `sparks()`, `kart_records()`. Open item for the lead: AI
+token pickups ~4 % low vs 20 oracle races (items.md, Verification).
 ### B item HUD + effects
 (2026-10-13, B) Published and wanted.
 

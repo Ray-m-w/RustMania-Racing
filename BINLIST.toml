@@ -112,27 +112,27 @@ pin = "Ghidra_12.1.4_build, asset ghidra_12.1.4_PUBLIC_20260921.zip"
 sha256 = "ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db"
 published_hash = "ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db (release body SHA-256 line, as recorded by the quarry)"
 date = "2026-10-12"
-note = "sha256 recomputed this session over the quarry's .cache\ghidra_12.1.4_PUBLIC_20260921.zip: MATCH with the quarry record and the published hash"
+note = "sha256 recomputed this session over the quarry's .cache/ghidra_12.1.4_PUBLIC_20260921.zip: MATCH with the quarry record and the published hash"
 
 [[artifact]]
 name = "ghidra_psx_ldr (PS-X EXE loader + PSYQ FunctionID data), installed extension (used in place)"
-kind = "Ghidra extension built by the quarry from source; installed at %APPDATA%\ghidra\ghidra_12.1.4_PUBLIC\Extensions\ghidra_psx_ldr"
+kind = "Ghidra extension built by the quarry from source; installed at %APPDATA%/ghidra/ghidra_12.1.4_PUBLIC/Extensions/ghidra_psx_ldr"
 origin = "https://github.com/lab313ru/ghidra_psx_ldr (per quarry BINLIST.toml id tool-ghidra-psx-ldr); submodule data/psyq = lab313ru/psx_psyq_signatures"
 pin = "3050da64925b9aad299489468000dc62b835c09a; submodule data/psyq e9e46e7e133ef275a79bfce650924f98edb086bc"
 sha256 = ""                      # git commit hash is the identity
 published_hash = ""
 date = "2026-10-12"
-note = "both commit ids re-read this session with git rev-parse HEAD in the quarry's .cache\ghidra_psx_ldr checkout: MATCH. The installed build output itself was not re-hashed."
+note = "both commit ids re-read this session with git rev-parse HEAD in the quarry's .cache/ghidra_psx_ldr checkout: MATCH. The installed build output itself was not re-hashed."
 
 [[artifact]]
 name = "Eclipse Temurin JDK 21.0.12+1 (used in place from quarry)"
-kind = "Java runtime for Ghidra headless; at F:\Muppet Racemania\third_party\jdk-21.0.12.1+1\jdk-21.0.12.1+1, not copied; JAVA_HOME per process only"
+kind = "Java runtime for Ghidra headless; at F:/Muppet Racemania/third_party/jdk-21.0.12.1+1/jdk-21.0.12.1+1, not copied; JAVA_HOME per process only"
 origin = "https://github.com/adoptium/temurin21-binaries release jdk-21.0.12.1+1, asset OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.zip (per quarry BINLIST.toml id tool-jdk)"
 pin = "jdk-21.0.12.1+1"
 sha256 = "f9d6e191ab098c0d416e7d588a24420a8621cd2f4720dab2459b8b7b2d2d8b4e"
 published_hash = "f9d6e191ab098c0d416e7d588a24420a8621cd2f4720dab2459b8b7b2d2d8b4e (release .zip.sha256.txt)"
 date = "2026-10-12"
-note = "hashes COPIED from the quarry's record (BINLIST.toml + third_party\jdk-21.0.12.1+1.prov), not recomputed: the zip is no longer present in the quarry"
+note = "hashes COPIED from the quarry's record (BINLIST.toml + third_party/jdk-21.0.12.1+1.prov), not recomputed: the zip is no longer present in the quarry"
 
 # ---------------------------------------------------------------- Rust port (port/)
 

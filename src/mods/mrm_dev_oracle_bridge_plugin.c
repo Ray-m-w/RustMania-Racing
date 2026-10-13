@@ -4,7 +4,7 @@
  * mrm.dev.oracle-bridge is enabled (mods/state.toml beside the exe); release
  * packaging excludes it (tools/build.ps1).
  *
- * One named shared-memory block, "Local\mrm_oracle_bridge_v3":
+ * One named shared-memory block, "Local\mrm_oracle_bridge_v4":
  *   - a copy of main RAM + scratchpad taken in the restore callback;
  *   - capture: every VBlank, the RAM regions listed in the header are copied
  *     into a ring slot stamped with the VBlank count since the last savestate
@@ -12,17 +12,23 @@
  *   - replay: a route written into the header and armed by the client starts
  *     at the next savestate restore and REPLACES player 1's pad (pad
  *     transform) while active, keyed on the same VBlank count. No TCP timing is
- *     involved, so a route lands on the same guest frames in every run.
+ *     involved, so a route lands on the same guest frames in every run;
+ *   - pokes (v4): up to MAX_POKES RAM writes armed by the client with the
+ *     route. Each is applied in the restore callback (before the RAM
+ *     snapshot) and/or held at every VBlank until the next restore. Used to
+ *     switch game features off for a capture (e.g. AI weapons and the turbo
+ *     meter: hold the karts' +0x4D4 charge timers at 0xFFFF and +0x48A at 0).
  * Layout is mirrored in tools/oracle/bridge.py; bump BRIDGE_VERSION on change.
  */
 #include "mod_plugins.h"
 
+#include <stddef.h>
 #include <string.h>
 #include <windows.h>
 
-#define BRIDGE_NAME "Local\\mrm_oracle_bridge_v3"
+#define BRIDGE_NAME "Local\\mrm_oracle_bridge_v4"
 #define BRIDGE_MAGIC 0x424D524Du /* 'MRMB' */
-#define BRIDGE_VERSION 3u
+#define BRIDGE_VERSION 4u
 #define HEADER_SIZE 4096u
 #define RAMSNAP_SIZE (0x200000u + 0x400u) /* main RAM + scratchpad */
 #define NSLOTS 4096u
@@ -31,6 +37,9 @@
 #define MAX_REGIONS 32u
 #define MAX_STEPS 8192u
 #define STEPS_SIZE (MAX_STEPS * 12u) /* step table after the header */
+#define MAX_POKES 64u
+#define POKE_AT_RESTORE 1u
+#define POKE_EVERY_VBLANK 2u
 
 #pragma pack(push, 1)
 typedef struct {
@@ -41,6 +50,13 @@ typedef struct {
     uint32_t buttons;         /* active-high PS1 button mask */
     uint8_t lx, ly, rx, ry;   /* 0x80 = centred */
 } BridgeStep;
+typedef struct {
+    uint32_t addr;            /* guest address */
+    uint32_t value;           /* little-endian value, low `size` bytes */
+    uint8_t size;             /* 1, 2 or 4 */
+    uint8_t when;             /* POKE_AT_RESTORE | POKE_EVERY_VBLANK */
+    uint16_t pad;
+} BridgePoke;
 typedef struct {
     uint32_t magic, version, nslots, slot_size; /* 0 */
     uint64_t write_seq;                         /* 16: slots written so far */
@@ -55,10 +71,16 @@ typedef struct {
     uint32_t vb_total;                          /* 308 */
     uint32_t source_calls;                      /* 312 */
     uint32_t ramsnap_gen;                       /* 316: restore_gen of the RAM snapshot */
-    uint8_t reserved[512 - 320];
-    uint8_t reserved2[HEADER_SIZE - 512];
+    uint32_t pokes_armed;                       /* 320: client sets the count; taken at restore */
+    uint32_t pokes_active;                      /* 324: count in force since the last restore */
+    uint8_t reserved[512 - 328];
+    BridgePoke pokes[MAX_POKES];                /* 512..1280 */
+    uint8_t reserved2[HEADER_SIZE - 512 - MAX_POKES * 12u];
 } BridgeHeader;
 #pragma pack(pop)
+/* The client (tools/oracle/bridge.py) hard-codes these offsets. */
+typedef char bridge_header_is_4096[sizeof(BridgeHeader) == HEADER_SIZE ? 1 : -1];
+typedef char bridge_pokes_at_512[offsetof(BridgeHeader, pokes) == 512 ? 1 : -1];
 
 static BridgeHeader* g_hdr;
 static uint8_t* g_slots;
@@ -112,11 +134,23 @@ static void bridge_capture(void) {
     g_hdr->write_seq++;
 }
 
+static void bridge_apply_pokes(uint32_t when) {
+    uint32_t i, n = g_hdr->pokes_active < MAX_POKES ? g_hdr->pokes_active : MAX_POKES;
+    for (i = 0; i < n; i++) {
+        const BridgePoke* p = &g_hdr->pokes[i];
+        if (!(p->when & when)) continue;
+        if (p->size == 1) psx_mod_write_byte(p->addr, (uint8_t)p->value);
+        else if (p->size == 2) psx_mod_write_half(p->addr, (uint16_t)p->value);
+        else if (p->size == 4) psx_mod_write_word(p->addr, p->value);
+    }
+}
+
 static void bridge_vblank(void) {
     bridge_open();
     if (!g_hdr) return;
     g_hdr->vb_total++;
     g_hdr->vb_since_restore++;
+    bridge_apply_pokes(POKE_EVERY_VBLANK);
     bridge_capture();
 }
 
@@ -125,6 +159,11 @@ static void bridge_restored(void) {
     if (!g_hdr) return;
     g_hdr->restore_gen++;
     g_hdr->vb_since_restore = 0;
+    /* Pokes armed with this run take effect now (before the snapshot, so
+     * ram0 shows them); a load without armed pokes clears them. */
+    g_hdr->pokes_active = g_hdr->pokes_armed;
+    g_hdr->pokes_armed = 0;
+    bridge_apply_pokes(POKE_AT_RESTORE);
     /* Exact guest state at the restore point: the Rust simulation's initial
      * state and the loaded (and loader-processed) track data. */
     {

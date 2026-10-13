@@ -1,0 +1,10 @@
+[package]
+name = "mr-audio"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+# std only (ADR-0002): decoders and the SPU voice model. Output to the sound
+# device lives in mr-bevy (bevy_audio).
+[dependencies]
+mr-disc = { path = "../mr-disc" }

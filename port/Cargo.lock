@@ -2215,6 +2215,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mr-audio"
+version = "0.1.0"
+dependencies = [
+ "mr-disc",
+]
+
+[[package]]
 name = "mr-bevy"
 version = "0.1.0"
 dependencies = [

@@ -30,7 +30,7 @@ line wins; every key with its help: `settings::KNOWN`):
 | `aspect` | native | native / 4:3 | native = the window's aspect, vertical FOV kept (73.7 deg), wider windows see more to the sides, HUD elements pinned to their left / centre / right; 4:3 = the game's view, pillarboxed |
 | `msaa` | 4 | off / 2 / 4 / 8 | multisample anti-aliasing on every camera |
 | `texture_filter` | smooth | nearest / smooth | nearest = PS1 point sampling; smooth = bilinear + mipmaps + anisotropic, cut-out edges without fringes (alpha to coverage with MSAA) |
-| `lighting` | faithful | faithful / enhanced | enhanced = prototype haze toward the sky's horizon colour over distance (vertex colours unchanged); not default until the owner decides |
+| `lighting` | enhanced | faithful / enhanced | enhanced = haze toward the sky's horizon colour over distance (vertex colours unchanged; default by the owner's decision, 2026-10-13); faithful = the game's vertex colours only |
 | `resolution` | 1600x900 | WxH | window size |
 | `fullscreen` | false | true/false | borderless fullscreen |
 | `faithful_view` | false | true/false | preset: all of the above at the game's look + a 1280x960 window (oracle side-by-sides) |

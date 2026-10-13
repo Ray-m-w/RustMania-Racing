@@ -37,7 +37,7 @@ pub const KNOWN: &[Opt] = &[
     Opt { key: "aspect", default: "native", allowed: "native|4:3", help: "native = the window's aspect (horizontal FOV widened, vertical FOV kept, HUD pinned to its edges); 4:3 = the game's view, pillarboxed" },
     Opt { key: "msaa", default: "4", allowed: "off|1|2|4|8", help: "multisample anti-aliasing samples (off = 1)" },
     Opt { key: "texture_filter", default: "smooth", allowed: "nearest|smooth", help: "nearest = PS1 point sampling; smooth = bilinear + mipmaps (cut-out edges bled, no fringes)" },
-    Opt { key: "lighting", default: "faithful", allowed: "faithful|enhanced", help: "faithful = the game's baked vertex colours only; enhanced = prototype atmospheric depth over them (owner decides)" },
+    Opt { key: "lighting", default: "enhanced", allowed: "faithful|enhanced", help: "enhanced (default, owner decision 2026-10-13) = distance haze toward the sky's horizon colour over the game's vertex colours; faithful = the game's baked vertex colours only" },
     Opt { key: "resolution", default: "1600x900", allowed: "", help: "window size WxH in logical pixels" },
     Opt { key: "fullscreen", default: "false", allowed: "true|false", help: "borderless fullscreen on the current monitor" },
     Opt { key: "vsync", default: "true", allowed: "true|false", help: "wait for the display's refresh (false = uncapped, for measuring)" },
@@ -281,8 +281,8 @@ impl Settings {
             return Lighting::Faithful;
         }
         match self.get("lighting") {
-            Some("enhanced") => Lighting::Enhanced,
-            _ => Lighting::Faithful,
+            Some("faithful") => Lighting::Faithful,
+            _ => Lighting::Enhanced,
         }
     }
 
@@ -348,7 +348,7 @@ mod tests {
         assert_eq!(s.msaa_samples(), 4);
         assert_eq!(s.texture_filter(), TexFilter::Smooth);
         assert_eq!(s.aspect(), Aspect::Native);
-        assert_eq!(s.lighting(), Lighting::Faithful);
+        assert_eq!(s.lighting(), Lighting::Enhanced);
 
         let (pairs, bad) = parse_text("# c\nmsaa = 8\n  Texture-Filter=nearest # trailing\nbroken line\n");
         assert_eq!(pairs, vec![("msaa".into(), "8".into()), ("texture_filter".into(), "nearest".into())]);
@@ -372,5 +372,6 @@ mod tests {
         f.apply_args(&args(&["--faithful-view"]));
         assert!(f.faithful_draw_distance());
         assert_eq!((f.aspect(), f.texture_filter(), f.resolution()), (Aspect::FourThree, TexFilter::Nearest, (1280, 960)));
+        assert_eq!(f.lighting(), Lighting::Faithful);
     }
 }

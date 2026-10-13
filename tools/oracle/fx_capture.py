@@ -33,8 +33,7 @@ FX_REGIONS = [
     (0x800B0700, 0x900),             # game globals (HUD scales, frame counter, sparkle globals, ...)
     (0x800B4540, 0x400),             # spark streaks: 32 x 0x20 (FUN_800326b4 / FUN_800327d0)
     (0x800DDC50, 0x120),             # projectiles: 4 x 0x48 (FUN_80030d78 draws)
-    (0x800E2370, 0x400),             # pickups (DAT_800b0a52 count; FUN_8007e21c draws)
-    (0x800E1B70, 0x200),             # second pickup list (*DAT_800d1c94 count)
+    (0x800E1B70, 0x1400),            # pickups: item boxes 0..0x3F, turbo tokens 0x40.. (0x800E2370)
     (0x800D75D0, 0x2C0),             # course ambient particles: 16 x 0x2c
     (0x800DFF00, 0x180),             # texture slot table (tpage, clut) + 0x800E0040.. slots
     (0x800D1C70, 0x40),              # list pointers d1c78 / d1c7c / d1c94 / d1c9c

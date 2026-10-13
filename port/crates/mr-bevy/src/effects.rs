@@ -90,6 +90,8 @@ pub struct FxTables {
     pub tokens: Vec<[u8; 8]>,
     pub sin: Vec<i16>,
     pub types: Vec<[u8; 4]>,
+    /// 0x800A8848: 16 view frames (u, v, uw) of the type-2 weapon.
+    pub anim: Vec<[i16; 3]>,
 }
 
 fn exe_off(a: u32) -> usize {
@@ -122,7 +124,9 @@ impl FxTables {
         let s = exe_off(0x800A_88C0);
         let sin = (0..4096 + 1024).map(|k| i16::from_le_bytes([exe[s + 2 * k], exe[s + 2 * k + 1]])).collect();
         let types = Particles::from_exe(exe).types;
-        FxTables { defs, slots, tokens, sin, types }
+        let a = exe_off(0x800A_8848);
+        let anim = (0..16).map(|k| std::array::from_fn(|j| i16::from_le_bytes([exe[a + 6 * k + 2 * j], exe[a + 6 * k + 2 * j + 1]]))).collect();
+        FxTables { defs, slots, tokens, sin, types, anim }
     }
 
     fn slot_attr(&self, slot: usize, clut_off: u16, abr: u16) -> (u16, u16) {
@@ -182,6 +186,8 @@ impl FxTables {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FxCamera {
     pub roll: i32,
+    /// +0x52: yaw (the type-2 projectile picks its view frame with it).
+    pub yaw: i32,
 }
 
 /// Pickups and projectiles from game memory (the oracle capture source;
@@ -256,6 +262,26 @@ pub fn items_from_mem(t: &FxTables, m: &Mem, cam: FxCamera, frame: i32, out: &mu
             out.push(b(0xC0, 0xC0, ang, 0, 0x40, 0x56, 0x29, 0x29, 0x15, 5));
         } else if flags & 0x400 == 0 {
             out.push(b(0x64, 0x118, ang, 0, 0xC0, 0xC0, 0x13, 0x37, 0x15, 0xF));
+        } else {
+            // FUN_80030AD8(x, y, z, vx, vz, slot): one of the 16 view frames
+            // of 0x800A8848 by the flight direction ratan2(vx, vz) seen from
+            // the camera yaw, wobbling with the slot's phase
+            let (vx, vz) = (m.i16(a + 0xC) as f64, m.i16(a + 0x14) as f64);
+            let head = (vx.atan2(vz) * 2048.0 / std::f64::consts::PI).round() as i32 & 0xFFF;
+            let mut d = (head - cam.yaw) as i16 as i32;
+            if d > 0x800 {
+                d -= 0x1000;
+            } else if d < -0x800 {
+                d += 0x1000;
+            }
+            let k = (((d + 0x92) as i16 as i32 & 0xFFF) / 0x125) as usize;
+            let w = t.sin[(((frame & 0xF) * 0x100 + (i as i32) * 0x200) & 0xFFF) as usize] as i32;
+            let w = if w < 0 { w + 0x7F } else { w } >> 7;
+            if let Some(f) = t.anim.get(k) {
+                let mut bb = b(0xC0, 0xC0, (cam.roll + w) & 0xFFF, 0, f[0] as u8, f[1] as u8, f[2] as i32, 0x1F, 0x14, 7);
+                bb.anchor = 0;
+                out.push(bb);
+            }
         }
     }
 }
@@ -455,7 +481,7 @@ fn capture_source(cap: Option<Res<crate::capture::CaptureReplay>>, rows: Option<
     out.billboards.extend(parts.list.iter().filter_map(|p| t.particle(p)));
     let sparks = Sparks::read(&m);
     out.streaks.extend(sparks.list.iter().filter_map(|s| t.spark(s)));
-    let cam = FxCamera { roll: m.i16(0x800C_4F40 + 0x54) as i32 };
+    let cam = FxCamera { roll: m.i16(0x800C_4F40 + 0x54) as i32, yaw: m.i16(0x800C_4F40 + 0x52) as i32 };
     items_from_mem(&t, &m, cam, m.i32(0x800B_0D90), &mut out.billboards);
     for k in 0..6u32 {
         kart_effects(&t, m.slice(0x800C_30A8 + 0x504 * k, 0x504), cam, m.i32(0x800B_0D90), &mut out.billboards);
@@ -486,7 +512,7 @@ fn session_source(p: Res<crate::Player>, cap: Option<Res<crate::capture::Capture
         recs.push(rec.to_vec());
     }
     let frame = s.globals.frame;
-    let cam = FxCamera { roll: s.camera.roll as i32 };
+    let cam = FxCamera { roll: s.camera.roll as i32, yaw: s.camera.yaw as i32 };
     let mut out = FxFrame::default();
     if let Some(parts) = s.particles() {
         out.billboards.extend(parts.list.iter().filter_map(|p| t.particle(p)));

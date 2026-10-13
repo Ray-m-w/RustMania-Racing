@@ -19,6 +19,11 @@ normally 2, 3 in heavy scenes). In order:
    FUN_80025D8C (body matrix +0x18C), ..., FUN_80069648 (projectiles: hits on
    karts), camera FUN_80070418, ...
 
+60 Hz mode (Session 5): `SessionConfig::logic_hz = 60` runs the same code at
+dt = 1, with the once-per-tick terms of the game kept at the game's rate per
+second (once per pair of ticks, or rescaled): kart-physics-ledger.md section
+12. dt = 2 runs exactly the game's code.
+
 mr-sim ports 2 (contacts, `collide.rs`) and 3 (`update.rs`, `ground.rs`,
 `progress.rs`) for kart 0. `mr_sim::tick` = step 3; `mr_sim::tick_with_karts` =
 the contact pass, then step 3.

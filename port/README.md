@@ -37,6 +37,23 @@ line wins; every key with its help: `settings::KNOWN`):
 
 `--layer-report F` writes the draw-distance classification of every DAT object.
 
+Logic rate and input latency (Session 5, track G; same settings mechanism):
+| key | default | values | what |
+|---|---|---|---|
+| `logic_hz` | 30 | 30 / 60 | 30 = the game's logic (2 VBlanks per tick, exact against the original); 60 = the 60 Hz mode (1 VBlank per tick, the game's per-tick terms kept at their per-second rates; within the feel tolerance of 30: ../docs/spec/kart-physics-ledger.md section 12). Not the default until the owner has driven it |
+| `low_latency` | true | true/false | the pad is sampled every display frame (a tap between two ticks still counts) and the display shows the coming tick as soon as its buttons are known (it runs that tick on a throw-away copy of the session and interpolates toward it; the simulation is untouched). false = the Session 4 display (interpolated one tick behind) |
+
+`--latency-log SECONDS` measures input-to-display latency (synthetic LEFT
+presses; per press: sample -> first frame showing a tick computed with it,
+and -> shown at full weight) and exits. 120 Hz display, app-side (the render
+and present chain after the frame is the same in every mode):
+| logic | low_latency | first frame shows the press (mean / p95 ms) | full weight (mean / p95 ms) |
+|---|---|---|---|
+| 30 Hz | false (Session 4) | 16.5 / 26.3 | 50.1 / 59.5 |
+| 30 Hz | true | 1.5 / 1.9 | 11.2 / 26.2 |
+| 60 Hz | false | 5.5 / 9.7 | 22.6 / 26.7 |
+| 60 Hz | true | 1.0 / 1.6 | 3.9 / 9.2 |
+
 Sound (bevy_audio; the race music streams from TUNES/*.XA on the disc, the
 game's XA queue picks the track): `--no-audio`, `--no-music`,
 `--volume V` / `--music-volume V` / `--sfx-volume V` (linear, 1.0 = the
@@ -63,4 +80,6 @@ the clock, files (except through mr-disc at load) or the renderer.
 ```
 cargo test --workspace --offline
 cargo run --release --bin mr-verify     # needs captures in ../analysis/oracle
+cargo run --release -p mr-sim --example feel60            # 60 Hz mode vs 30 Hz: the feel tolerance table (~30 s)
+cargo run --release -p mr-sim --example hz30_fingerprint  # whole-state hashes of long 30 Hz races (diff before / after a sim change)
 ```

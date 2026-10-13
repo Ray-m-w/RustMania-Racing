@@ -77,3 +77,23 @@ let s = Settings::global();   // same values outside systems (before the App exi
   page (tpage, clut), `Blend::Abr(n)` / `Opaque`, centre, ground_eps,
   depth_pull) into `ResMut<psxfx::FxPrims>` during Update.
 ### G 60 Hz
+(2026-10-13, G) Options in settings.rs `KNOWN` (G rows): `logic_hz` (30|60,
+default 30: 60 = the 60 Hz mode, not default until the owner drives it),
+`low_latency` (true|false, default true). `--latency-log SECONDS` (tool flag).
+What E / F should know:
+- mr-sim: `SessionConfig::logic_hz`, `Session::logic_hz()`,
+  `vblanks_per_tick()` (2 or 1), `tick_seconds()`, `set_logic_hz(hz)` (at a
+  pair boundary), `snapshot()` / `restore()`. `RaceGlobals::hz60` (`beat()`
+  = first tick of a 30 Hz pair, `pair_end()`); a sim term that runs once per
+  game tick should use them (ledger section 12). `RaceGlobals::frame` and
+  `dt` stay in VBlanks: anything animated from `globals.frame` / `dt` is
+  right at both rates; anything counting `session.ticks` or `Player::tick`
+  runs twice as fast at 60 Hz.
+- mr-bevy (pacing.rs): with `low_latency` the display endpoints are (last
+  real tick, the coming tick run on a throw-away snapshot): `Player.prev` /
+  `Player.pose` / `prev_kart` / `kart` and `KartFeed.prev` / `now` are
+  rewritten every frame the buttons or the tick change (RunFixedMainLoop,
+  after the fixed ticks); keep interpolating with `Time<Fixed>`'s overstep
+  as before. Item / particle state (`session.items()`, `particles()`) is the
+  last real tick's: up to one tick behind the karts on screen (it was one
+  tick ahead before). `sim_tick` takes its buttons from `PadLatch`.

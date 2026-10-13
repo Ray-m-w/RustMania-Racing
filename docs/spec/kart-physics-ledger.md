@@ -344,6 +344,8 @@ Not ported: what the AI does with the player's kart after the finish (see
 the revisit list), the results screen / mode-10 timer 0x800B0AF0.
 
 ## 10. 60 Hz logic (dt = 1) — first pass
+(Session 3's findings, kept as found. Session 5 made the sim dt-correct for
+dt = 1 behind a flag: section 12, "60 Hz mode".)
 - Position history: the game's ring is 12 entries (12 VBlanks at dt = 1),
   but the chase camera walks 16 VBlanks back, so dt = 1 hit
   `unreachable_in_scope!` in camera.rs. Fixed: the sim's ring is
@@ -412,3 +414,75 @@ Verified:
   p90 deltas <= 0.012 / 0.057 (limit 0.10), mean finishing positions within
   0.5 places (limit 1.5): PASS;
 - the finished player driven by the AI past the finish (tests/race.rs).
+
+## 12. 60 Hz mode (Session 5, track G)
+`SessionConfig::logic_hz = 60` (mr-bevy: `logic_hz = 60`): every
+`Session::tick` is one VBlank (dt = 1, 0x800B0AEC = 1), 60 per second. Two
+ticks make a *pair*, one tick of the game's 30 Hz logic; `RaceGlobals::hz60`
+holds the mode and the phase (`beat()` = first tick of a pair, `pair_end()` =
+second; at 30 Hz both are true on every tick, so every 30 Hz code path is the
+game's: proven below). Fixed point throughout; no floats.
+
+Already dt-correct, unchanged (the game supports dt 2 and 3): every sub-step
+loop (thrust, drag, grip, side / forward caps, steering, power-turn grip,
+gravity, water float, wheel spin, sway springs with their per-sub-step random
+kicks, bounce, pitch / roll easing, body lean, smoothed sway, special-move
+path, status-0x20 pull, pickups' bounce and scale, particles, sparks,
+projectiles' motion and homing); every timer counted in VBlanks (countdown,
+race clock, lap / race / finish times, start hold, engine rev, catch-up,
+weapon recharge — a new type at every crossing of a multiple of 8 —, spin,
+respawn, blink, warn, flash, shape, boost glow, drift, lurch, holds, start
+boost, meter drain, effect clocks, voice timers, item blink timers,
+projectile age / sound timer, water animation phases and chases); the frame
+counter 0x800B0D90 (VBlanks: animation phases are the same functions of game
+time); velocities from position differences (/ dt); per-tick pushes that the
+next update adds per sub-step (contact push-apart, slope push, drag status
+0x2000) and the boost's bounce kick (per sub-step); the camera (reps(dt));
+the position-history ring (24 entries, section 10).
+
+Changed for dt = 1 (each only when `hz60.on`):
+
+| term | game (per tick) | 60 Hz mode | why / evidence (examples/feel60.rs) |
+|---|---|---|---|
+| velocity frame (0x80067028) | converted once per tick with the heading after both sub-steps of steering: the first VBlank already moves in the second's frame | on the first tick of a pair the frame is heading + this tick's yaw (the turn the second tick repeats with the same buttons); the second tick uses its own heading | without it a power slide built 2 % more side speed (2245 vs 2199 after 0.4 s) and the DOCK hairpin cost the AI-driven kart +0.22 s per pass (200 entries from the same states); with it 2196 vs 2199, hairpin 4.724 vs 4.735 s |
+| frame-conversion truncation | 2 roundings toward zero per 1/30 s | the kart -> world remainder is carried into the next world -> kart conversion (`KartState::hz60_vel`, used while +0x2F4 / +0x2FC still hold that result): 2 roundings per 1/30 s | top speed -0.22 % without, 0.00 % with |
+| power-turn yaw (0x80066500) | `steer * v * dt >> 6` with the steer value as the tick starts (a tick behind the steering) | the steer value at the start of the pair on both ticks (`KartState::hz60_steer`) | with the mid-pair value a power turn turned ~25 % further per tap |
+| sway input (0x80068090) | side speed / 2 added per tick | side speed / 4 per tick | a level, not a difference: per-second rate kept (cosmetic) |
+| effect wobble (0x80068790) | sway[5] += 0x200, sway[10/11] += sin >> 5 / >> 6 per tick | 0x100, sin >> 6 / >> 7 | per-second rate kept (cosmetic) |
+| stacked landing (0x80040378) | bounce kick -1000, added in both sub-steps of the next update | -2000 (one sub-step) | same velocity change |
+| random tries per tick | FUN_8005C2EC's rand(); pointer step FUN_8007D304; splash byte after the camera; splash sound try; skid try (coast hold 2, 4, 6); random jump (effects 0x13 / 0x14); projectile hop, whine, trail; status-effect tries (particles, spins, sounds, effect 15's angle step) | once per pair (first tick); the skid window 1..6 (three tries, as 2, 4, 6) | the stream and every random event at the game's rate per second |
+| per-tick random values | engine pitch byte, impact pitch byte, hover-chassis bounce kick, trigger-flight end jitter, status-effect rumble | `RaceGlobals::replay_draws`: consumed on the first tick, read without consuming on the second | rate kept, a value every tick |
+| kart particles FUN_8007F03C | every tick | once per pair, with dt 2 (its spawn tries and draws per pair); particles still move every tick | rate kept |
+| AI FUN_800912F8 (and the autopilot) | every tick | once per pair with dt 2 (its timers, +0x4CB), buttons held for the second tick (`Hz60::ai_hold`) | decisions, rand() draws and weapon rolls at the game's rate |
+| path position FUN_8009004C | one kart per tick, round robin | one kart per pair; the round robin advances at the pair's end | each kart refreshed at the game's interval |
+| pickups FUN_8007BBF0 (collect) | positions tested every tick | tested on the first tick of a pair (the game's 30 Hz sampling); objects still animate every tick | tested every tick: +8 % tokens, +7 % boxes / fires (beyond 2 sigma) |
+| load frame | the first frame holds the countdown | the first pair | countdown, GO, race clock on the same game time (tests/hz60.rs) |
+
+Looked at, left as the game's: the wall-top allowance `[0x800A88AA][dt + 5]`
+(96 at dt 1, 288 at dt 2: the drop under gravity in one tick) — the dt 2
+value at 60 Hz changed nothing measurable; collision tests (walls, kart pairs,
+projectile vs kart) run every tick (finer sampling: a hit can come a VBlank
+earlier); race positions every tick.
+
+Proof that 30 Hz is unchanged: `cargo test --workspace` (every oracle test
+unchanged; 119 green); `mr-verify` on lap1P3 and race3P: output and traces
+byte-identical before / after (the pre-Session-5 build from a worktree);
+`examples/hz30_fingerprint.rs`: whole-state hashes every 500 ticks of 7 long
+sessions (full races with items, idle and AI players, recorded routes)
+identical before / after; mr-bevy oracle-grid lap1 route: trace identical to
+the Session 2 trace and exact against the oracle to tick 686 (the original's
+dt = 3 frame), with `low_latency` on and off.
+
+Feel tolerance (60 Hz vs the faithful 30 Hz port; `cargo run --release -p
+mr-sim --example feel60`: scripted drives, 80 AI-driven player races, 1 s
+recorded-input windows, 100 six-kart races per mode, ~30 s CPU, no oracle):
+39 of 39 rows within limits — accel / top speed / 3 s distance within 0.5 %,
+jump height and airtime equal, length +0.9 %, full-lock yaw rate equal,
+radius -0.5 %; player (AI-driven) race time -0.03 %, laps within 1 %, line
+median 0.019 track widths, lateral quantiles within 0.012; recorded inputs
+median 494 units / 0.18 deg after 1 s; AI lap means per kart within 0.9 %
+(limit 3 %), pooled +0.42 % (limit 1 %); item use (fires, boxes, tokens,
+turbo, special moves, hits) within 2 * sqrt(sd_a^2/n + sd_b^2/n). Full table:
+docs/notes/2026-10-13.md, "Session 5, G 60 Hz".
+Open: with items the AI leans slower at 60 Hz (+0.4 to +0.9 % pooled over
+runs; items off +0.2 %), cause not isolated (every item rate in tolerance).

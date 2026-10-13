@@ -24,9 +24,9 @@ along the path or hover by type. Pickups shrink when taken and come back.
    special-move branch (0x800653D0 + FUN_800913F4), turbo (0x80066CD4),
    status-bit branches, the trigger warp FUN_80061FC0 in the contact phase.
 2. After the kart loop and the render pass (`items::after_kart_loop`):
-   FUN_8006C388 effects, [FUN_8007F03C kart particles: not ported, random
-   draws only skipped in analysis], FUN_8007A9DC blink timers, FUN_8007BBF0
-   pickups, FUN_80069648 projectiles.
+   FUN_8006C388 effects, FUN_8007F03C kart particles (kart_fx.rs, below),
+   FUN_8007A9DC blink timers, FUN_8007BBF0 pickups, FUN_80069648
+   projectiles.
 3. After the camera: humans' splash draw, FUN_8008727C / FUN_800327D0
    (track B's particle and spark lists).
 
@@ -137,6 +137,42 @@ value ("-1 HIT" = 0xF / -1), +0x4E6 / +0x4B5 / +0x4EF / +0x4B3 trigger warp.
   0x10000000 normal from the alt surface, 0x1000000 wheels stop; render:
   0x20000 aim at +0x300, 0x400000 body tilted by +0x30C, 0x8000000 no shadow.
 
+## Kart particles FUN_8007F03C (kart_fx.rs, 2026-10-13)
+Runs after FUN_8006C388 on the live kart records (the session writes each
+kart's state into its record first). The first loop (track objects,
+0x800B0C58 of them) is not ported: 0 on DOCK in every oracle race. Then
+for each kart within 10000 TER units of a human camera on every axis
+(0x800C4F40 + 0x34, the previous frame's), in this order, each spawn with
+its own random bytes from 0x800B0BCC (the AI's random source, so every
+draw matters):
+- ground sparks (FUN_800326B4, 3 bytes): on the ground, +0x174 & 2 clear,
+  and +0x16E <= +0x348 * (0x80 - +0x180) / 0x8000, or no wheels down
+  (+0x171 = 0) without status 0x200000;
+- unless status 0x1000: on surface 0xB (+0x400 > 0x100, else a byte
+  < 0x40) the splash (kind 0x15, 6 bytes, colour 0x800AC1D8 by byte / 0x56);
+  otherwise outside a special move with +0x4E7 = -1 and wheels down: a
+  random wheel's dust (kind 2, colour +0x4BB..+0x4BD, size wheel +0x36 x
+  +0x442): sliding (|+0x390| < |+0x394| or +0x4C9) 4 bytes, else when
+  drifting (+0x486 > 0x40) 2 bytes, and only a driven wheel (+0x3A & 1;
+  otherwise the rest of the kart is skipped);
+- the trail: spray (kind 0xF) while floating (+0x4C8) or when near the
+  ground (+0x31C - y < 0x1000 and +0x400 > 0x200, or in a special move)
+  with +0x4C5; else dust on surfaces 1 / 2 (kind 0xB) and 4 / 0xF (kind
+  0x14, colour 0x800ACD15): 2 bytes, then 4..6 for the spawn;
+- rain hits (weather 0x800B0B9A == 2 or 0x800B07E2 & 9; off on DOCK),
+  dt tries of 1 or 7 bytes;
+- running normally (status & 0x1001 clear, +0x4E7 = -1, +0x442 > 0x20):
+  without light points (+0x172 = 0) exhaust puffs from wheel parts flagged
+  0x40 (kind 10, MulMatrix0 of +0x1AC and the part matrix +0x20C + 0x12 i);
+  with them one random light point (kind by its type +0x12E: 4, 8, 5 with
+  the 0x800AC198 colours, 10);
+- the turbo / special / skid puff (kind 0x11, 7 bytes);
+- the pickup and item sparkles around the driver (kinds 1 and 0x11, 7
+  bytes each).
+The kart-kart contact sparks of FUN_80040428 (collide.rs, three streaks
+midway between the two karts' +0x176 points, at ride height) are spawned
+too (they used to be skipped draws).
+
 ## Trigger warp FUN_80061FC0 (progress.rs `teleport`)
 DOCK's two trigger objects (0x800D1C9C, 3 points each): touched (first
 point within 16 units >> 10), the kart shrinks (60 VBlanks), flies to the
@@ -157,7 +193,8 @@ projectiles + records), savestate slot 2, 3 laps + finish:
   except the restore frame (tick 0) and the finish (the harness merges the
   results-switch frame with the next); the player's special move in
   i_items3 differs only in steer lag / sway / look point (stack slots).
-  The FUN_8007F03C random-byte skip is searched (0 on ~93 % of ticks).
+  Written before FUN_8007F03C was ported: its random-byte step was
+  searched (0 on ~93 % of ticks).
 - Free run (`mr-items free`): the player kart, pickups and projectiles from
   the port's own previous tick; AI karts, globals, the random pointer and
   the rand() seed from the oracle each tick (inputs, as in Session 3);
@@ -166,40 +203,52 @@ projectiles + records), savestate slot 2, 3 laps + finish:
   player produced by the port's projectiles.
 - All karts free (`mr-items freeall`): every kart, pickups and projectiles
   from the port; only the frame-start random pointer, the rand() seed and
-  the FUN_8007F03C skip from the oracle. Exact on every tick for all six
-  karts over 4,815 ticks on s_1, s_11, s_15, s_20.
-- AI item use (`mr-items rows` / `race`, tools/oracle/item_stats.py): 20
-  independent oracle races s_1..s_20 (tools/oracle/capture_seeds.py: player
-  idle, a different poked rand() seed and random pointer each) vs 100 port
-  races (5 seeds from each start, `Session` free, nothing injected).
-  Per-race totals over the five AI karts; tolerance = 2 * sqrt(sd_o^2/n_o +
-  sd_p^2/n_p).
+  the searched FUN_8007F03C step from the oracle. Exact on every tick for
+  all six karts over 4,815 ticks on s_1, s_11, s_15, s_20.
+- Nothing from the oracle after tick 1 (`freeall --own-rng`, with
+  FUN_8007F03C and the contact sparks ported, 2026-10-13): s_1, s_11,
+  s_15, s_20 exact on every tick to the end (4,815 ticks) for all six
+  karts, the pickups, the projectiles, the random pointer 0x800B0BCC, the
+  rand() seed, the particle and spark ring indices 0x800B0C60 / 0x800B07EB
+  and particle slot 0 (the item captures hold only that slot of
+  0x800E0C20; its +0x32 bit 0x200 is the drawer's). i_race3, i_items1/2/3
+  (the player driving) the same up to the player's finish (3511, 3674,
+  3661, 3605); every kart differs from the next tick, the results-switch
+  frame the capture merges (as in `tf`); i_items3's player differs from
+  the special move (2325) only in look point / sway (stack slots).
+  A port race from tick 1 with the capture's own seed (`race --seed 0`)
+  reproduces the oracle's rows (every kart field) to the end on s_1,
+  s_11, s_20.
+- AI item use (`mr-items rows` / `race`, tools/oracle/item_stats.py): the
+  20 independent oracle races s_1..s_20 (tools/oracle/capture_seeds.py:
+  player idle, a different poked rand() seed and random pointer each) vs
+  20 port races, one per start (`race --seed 100k+1`: another rand() seed
+  and random pointer at tick 1, then nothing injected). Per-race totals
+  over the five AI karts; tolerance = 2 * sqrt(sd_o^2/n_o + sd_p^2/n_p).
 
   Race window (each kart until it finishes):
 
   | stat | oracle mean (sd) [min..max] | port mean (sd) | diff | tol | ok |
   |---|---|---|---|---|---|
-  | fires | 40.0 (3.4) [34..48] | 38.7 (3.0) | -1.26 | 1.66 | yes |
-  | boxes | 38.6 (3.5) [32..46] | 37.4 (2.9) | -1.25 | 1.67 | yes |
-  | tokens | 434.3 (24.0) [397..480] | 416.3 (27.9) | -17.96 | 12.08 | NO |
-  | turbo ticks | 615.7 (91.7) [440..812] | 573.4 (99.5) | -42.34 | 45.58 | yes |
-  | special moves | 2.3 (0.9) [1..4] | 2.4 (1.1) | +0.14 | 0.47 | yes |
+  | fires | 40.0 (3.4) [34..48] | 39.8 (3.3) | -0.20 | 2.15 | yes |
+  | boxes | 38.6 (3.5) [32..46] | 38.5 (3.5) | -0.15 | 2.22 | yes |
+  | tokens | 434.3 (24.0) [397..480] | 419.4 (39.9) | -14.85 | 20.83 | yes |
+  | turbo ticks | 615.7 (91.7) [440..812] | 583.2 (84.8) | -32.50 | 55.87 | yes |
+  | special moves | 2.3 (0.9) [1..4] | 2.4 (1.1) | +0.05 | 0.64 | yes |
   | character specials | 0 | 0 | 0 | 0 | yes |
-  | hits dealt | 13.9 (3.4) [8..21] | 14.4 (3.4) | +0.53 | 1.65 | yes |
-  | hits taken | 13.8 (3.3) [8..21] | 14.2 (3.4) | +0.49 | 1.63 | yes |
-  | hit rate | 0.35 (0.09) | 0.37 (0.09) | +0.02 | 0.05 | yes |
+  | hits dealt | 13.9 (3.4) [8..21] | 11.9 (3.2) | -1.95 | 2.07 | yes |
+  | hits taken | 13.8 (3.3) [8..21] | 11.8 (3.1) | -2.00 | 2.03 | yes |
+  | hit rate | 0.35 (0.09) | 0.30 (0.09) | -0.05 | 0.06 | yes |
 
-  Whole run (4,815 ticks, past the AI's finish): the same except tokens
-  620.0 vs 599.8 (tol 17.4, NO) and turbo 1011 vs 930 (tol 70.3, NO).
-  Fires by lap: oracle 0.34/0.33/0.32, port 0.34/0.32/0.33. First special
-  move: median tick 2302 (44 karts) vs 1684 (227). Character specials are
-  0 in both: the idle player is last, and an AI kart uses R1 / R2 specials
-  only when it is behind kart 0 (docs/spec/ai.md, AI items).
-  Open: the port collects ~4 % fewer tokens (about 3 standard errors) and
-  ~3 % fewer boxes/fires (inside tolerance). freeall is exact, so the sim
-  matches given the game's random streams; the suspect is the stream
-  itself: FUN_8007F03C's per-frame random-byte draws are not ported (the
-  pointer walks exe text 0x8001F94C..0x8001FF28, whose bytes are far from
-  uniform, so which bytes the AI reads depends on every consumer). Tried
-  without effect: an unconditional skip drawn from the measured excess
-  (`--rng-mimic`), and another race's frame-start streams (`--streams`).
+  Whole run (4,815 ticks): all within tolerance too (tokens 620.0 vs
+  599.1, tol 26.4; turbo 1011 vs 938, tol 91.2). Fires by lap: oracle
+  0.34/0.33/0.32, port 0.32/0.34/0.34. Character specials are 0 in both:
+  the idle player is last, and an AI kart uses R1 / R2 specials only when
+  it is behind kart 0 (docs/spec/ai.md, AI items).
+  Since the port race with the oracle's own seed is the oracle's race row
+  for row, what is left between the two columns is the sampling of seeds.
+  History: before FUN_8007F03C was ported (100 port races) tokens were
+  416 vs 434 (tol 12.1, NO); the same 20 races started at the restore
+  frame tick 0 (`race --from0`, where the port's clock ends 10 VBlanks
+  ahead and even the capture's own seed differs from tick 3) gave tokens
+  410 vs 434 (tol 18.1, NO) and hit rate 0.42 vs 0.35 (tol 0.06, NO).

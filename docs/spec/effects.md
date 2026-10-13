@@ -103,6 +103,10 @@ draws): particles from FUN_80068C6C, FUN_80069334, FUN_80069648,
 FUN_8006EA2C, FUN_8007BBF0, FUN_8007F03C, FUN_80082708, FUN_8008650C and
 the item cases 0x8006CE58..0x8006E1D4; sparks from FUN_8003E91C,
 FUN_80040428, FUN_80069648, FUN_8007F03C. [CODE: callers]
+FUN_8007F03C's kart particles (dust, splash, spray, exhaust, light
+points, turbo puff, sparkles) and FUN_80040428's contact sparks are in
+the session's lists since 2026-10-13 (track A, docs/spec/items.md "Kart
+particles"); effects.rs draws them with the rest.
 
 ## Pickups and projectiles (drawn from track A's item state)
 

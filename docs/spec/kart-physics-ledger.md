@@ -13,12 +13,13 @@ places it is not one-for-one:
   remains for the Session 3 items-off analysis (mr-ai). Item-use
   statistics against oracle races: docs/notes/2026-10-12.md, Session 4 A.
 - Items, not one-for-one (Session 4):
-  * FUN_8007F03C (kart particles: dust, spray, smoke, near a human camera)
-    is not ported; its random-byte draws (0 on ~93 % of frames, up to ~30)
-    are absent from a session, so a session's random pointer runs a little
-    behind the game's (the analysis harness searches them per frame:
-    `Session::rng_skip_items`). FUN_8008650C (weather; off on DOCK) and
-    FUN_800330D4's splash particles likewise (its random draw is kept).
+  * FUN_8007F03C (kart particles) is ported (2026-10-13, items/kart_fx.rs)
+    except its first loop (track objects; none on DOCK), and the kart-kart
+    contact sparks of FUN_80040428 are spawned (collide.rs). With them a
+    session's random pointer, rand() seed and particle / spark rings match
+    the game's on every tick (items.md, Verification). FUN_8008650C
+    (weather; off on DOCK) and FUN_800330D4's splash particles are not
+    ported (its random draw is kept).
   * The special move reads two stack slots the skipped physics block would
     set (steer rate 0x58(sp), sideways speed 0x48(sp)); the session keeps
     the previous kart update's (`RaceGlobals::stack`): exact for AI karts;

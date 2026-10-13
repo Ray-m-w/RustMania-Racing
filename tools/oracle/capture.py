@@ -58,6 +58,28 @@ def active_high(spec):
     return m
 
 
+def _pid_alive(pid):
+    """True if a process with this id exists. (Never os.kill(pid, 0): on
+    Windows that terminates the process.)"""
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        h = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return False
+        code = ctypes.c_ulong()
+        ok = k32.GetExitCodeProcess(h, ctypes.byref(code))
+        k32.CloseHandle(h)
+        return bool(ok) and code.value == 259  # STILL_ACTIVE
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
 class OracleLock:
     """One savestate-driven run at a time on the shared oracle (several agents
     capture in parallel). Exclusive lock file in the system temp dir; waits."""
@@ -72,7 +94,8 @@ class OracleLock:
             except FileExistsError:
                 try:
                     pid = int(open(self.PATH).read() or 0)
-                    os.kill(pid, 0)  # raises if the holder is gone
+                    if not _pid_alive(pid):
+                        raise OSError("stale lock")
                 except (ValueError, OSError):
                     try:
                         os.remove(self.PATH)

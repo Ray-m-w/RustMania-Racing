@@ -122,6 +122,11 @@ when `SessionConfig::items` (default true); the player's L1 / L2 / R1 / R2
 go in the pad word as before. Read `session.items()` (ItemState),
 `particles()`, `sparks()`, `kart_records()`. Open item for the lead: AI
 token pickups ~4 % low vs 20 oracle races (items.md, Verification).
+(2026-10-13, A) FUN_8007F03C ported (items/kart_fx.rs) with its spawns into
+`session.particles()` / `sparks()` (effects.rs draws them unchanged), and
+FUN_80040428's contact sparks (collide.rs). With nothing from the oracle
+after tick 1 the session's random pointer, rand() seed, particle / spark
+rings and all six karts match the game on every tick (items.md).
 ### B item HUD + effects
 (2026-10-13, B) Published and wanted.
 

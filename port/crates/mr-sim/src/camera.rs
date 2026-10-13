@@ -4,11 +4,12 @@
 //! with the result (FUN_8002CEBC, called from FUN_80078F38 before the world
 //! is drawn). Spec: docs/spec/camera.md.
 //!
-//! Scope: the in-race chase camera (mode 0) of a one-player race. The other
-//! camera modes (intro fly-by, finish orbit, replay, cut-scene sync, boss
-//! arenas, split screen) are recognised by the same mode selection as the game
-//! and panic through `unreachable_in_scope!` so a test notices if a route
-//! reaches them.
+//! Scope: the modes of a one-player race: 10 (intro, countdown >= 300),
+//! 0 (chase) and 2 (trackside cameras after the finish). The other camera
+//! modes (pre-race orbit, finish orbit, replay, cut-scene sync, boss arenas,
+//! overhead, split screen) are recognised by the same mode selection as the
+//! game and panic through `unreachable_in_scope!` so a test notices if a
+//! route reaches them.
 //!
 //! Fixed point exactly as the game: angles 4096 = 360 degrees, matrices 4.12,
 //! MIPS `div` truncation, 32-bit wrapping products, arithmetic shifts.
@@ -416,6 +417,18 @@ pub struct CameraKart {
     pub roll_mode: i8,
     /// +0x4FE i8: -1 normally; otherwise the camera watches another object.
     pub watch_target: i8,
+    /// +0x4BF u8: laps completed (the finish rule compares it with 0x800B0DA6).
+    pub lap: u8,
+    /// +0x38C i32 and +0x440 i16: the finish rule's "still driving" tests
+    /// (+0x38C < 181 keeps the chase camera; +0x440 >= 1000 the orbit).
+    pub finish_wait: i32,
+    pub finish_score: i16,
+    /// +0x498 / +0x49A: TER path segment / point (FUN_8009004C).
+    pub path_seg: i16,
+    pub path_pt: i16,
+    /// +0x4DF: nonzero = the kart runs the course backward (path walks use
+    /// FUN_80090670 instead of FUN_80090424).
+    pub path_backward: u8,
 }
 
 impl CameraKart {
@@ -438,6 +451,12 @@ impl CameraKart {
             finished: rec[0x4C7],
             roll_mode: rec[0x4D6] as i8,
             watch_target: rec[0x4FE] as i8,
+            lap: rec[0x4BF],
+            finish_wait: g_i32(rec, 0x38C),
+            finish_score: g_i16(rec, 0x440),
+            path_seg: g_i16(rec, 0x498),
+            path_pt: g_i16(rec, 0x49A),
+            path_backward: rec[0x4DF],
         }
     }
 }
@@ -447,10 +466,17 @@ impl CameraKart {
 pub struct CameraGlobals {
     /// 0x800B0AEC: VBlanks per tick (2 in a race).
     pub dt: i32,
-    /// 0x800B0C70: counts up after the player finishes; 0 while racing.
-    pub finish_timer: i32,
-    /// 0x800B07F8 (i16): finish_timer value at which the finish orbit starts (300).
-    pub finish_orbit_at: i16,
+    /// 0x800B0C70: the race-start countdown (480 at race load, 0 from GO).
+    pub countdown: i32,
+    /// 0x800B07F8 (i16): 300; while countdown >= this the intro camera
+    /// (mode 10) runs, below it the start game (chase camera).
+    pub countdown_len: i16,
+    /// 0x800B0DA6 (i16): laps of the race.
+    pub laps: i16,
+    /// 0x800B07E6 (i16) and 0x800B0803 (i8): the finish rule's gate
+    /// (both 0 in a 1P DOCK race).
+    pub finish_gate_a: i16,
+    pub finish_gate_b: i8,
     /// 0x800B0D46 (i16): game state (1 = race running).
     pub game_state: i16,
     /// 0x800B0FAC: event type (3 on DOCK; 0x1D/0x1E/30 are special events).
@@ -474,8 +500,11 @@ impl CameraGlobals {
     pub fn dock_race() -> Self {
         CameraGlobals {
             dt: 2,
-            finish_timer: 0,
-            finish_orbit_at: 300,
+            countdown: 0,
+            countdown_len: 300,
+            laps: 3,
+            finish_gate_a: 0,
+            finish_gate_b: 0,
             game_state: 1,
             event: 3,
             alt_rule: 0,
@@ -495,8 +524,11 @@ impl CameraGlobals {
         let cutscene_sync = p1 != 0 && p2 != 0 && i16_at(p1) == i16_at(p2);
         CameraGlobals {
             dt: i32_at(0x800B_0AEC),
-            finish_timer: i32_at(0x800B_0C70),
-            finish_orbit_at: i16_at(0x800B_07F8),
+            countdown: i32_at(0x800B_0C70),
+            countdown_len: i16_at(0x800B_07F8),
+            laps: i16_at(0x800B_0DA6),
+            finish_gate_a: i16_at(0x800B_07E6),
+            finish_gate_b: rd(0x800B_0803, 1)[0] as i8,
             game_state: i16_at(0x800B_0D46),
             event: i32_at(0x800B_0FAC),
             alt_rule: rd(0x800B_0BD2, 1)[0],
@@ -524,6 +556,9 @@ pub struct CameraGround {
     /// 0x800B0B04: height of the nearest surface at or below y
     /// (falls back to nearest_y).
     pub below_y: i32,
+    /// 0x800B0AE0 != 0: a surface at or below y (or, failing that, the
+    /// nearest one) was found. Read by the trackside camera (mode 2).
+    pub below_found: bool,
     /// 0x800B0C84 != 0: a surface with flag 0x40 (byte 14) was found.
     pub alt_found: bool,
     /// 0x800B0C9C: its height (closest to y).
@@ -531,6 +566,23 @@ pub struct CameraGround {
     /// 0x800B0A54: minimum height of type-3 surfaces (byte 15 == 3), or the
     /// level default (0xA5AC0 on DOCK) when none.
     pub type3_min_y: i32,
+}
+
+/// What the camera asks of the rest of the game while it runs: the ground
+/// query, BIOS rand(), the TER path walk and the random byte stream.
+pub trait CameraEnv {
+    /// FUN_8003DDB0(x, y, z) results.
+    fn ground(&mut self, x: i32, y: i32, z: i32) -> CameraGround;
+    /// PsyQ rand() (0..=0x7FFF).
+    fn rand(&mut self) -> i32;
+    /// FUN_80090424(seg, pt, n) (forward) or FUN_80090670 (backward) with
+    /// 0x800B0A20 clear: the (0x800B0B20, 0x800B0F3C) it leaves.
+    fn walk(&mut self, seg: i16, pt: i16, n: i16, backward: bool) -> (i16, i16);
+    /// The TER path point (x, y, z), in TER units (world >> 5):
+    /// *(0x800B0AC4 + 16 * (*(i16*)(0x800B0C50 + 36 * seg) + pt)).
+    fn path_point(&mut self, seg: i16, pt: i16) -> [i32; 3];
+    /// `*(*0x800B0BCC)++`: the next byte of the game's random byte stream.
+    fn rng_byte(&mut self) -> u8;
 }
 
 /// Everything one camera tick reads.
@@ -544,11 +596,13 @@ pub struct CameraInput {
 // Tick
 // ---------------------------------------------------------------------------
 
-/// Mode selection (0x80070418..0x80070820) for the cases in scope.
+/// Mode selection (0x80070418..0x80070820).
 fn select_mode(cam: &mut CameraState, inp: &CameraInput) -> i16 {
     let g = &inp.globals;
-    // Scripted sub-state countdown (0x800704E4..0x80070550).
-    if g.finish_timer == 0 {
+    let k = &inp.kart;
+    // Scripted sub-state countdown (0x800704E4..0x80070550); stopped while
+    // the race-start countdown runs.
+    if g.countdown == 0 {
         let t = (cam.sub_timer as i32).wrapping_sub(g.dt) as i16;
         cam.sub_timer = t;
         if t < 0 {
@@ -570,23 +624,43 @@ fn select_mode(cam: &mut CameraState, inp: &CameraInput) -> i16 {
     if g.event == 0x1D || g.event == 0x1E {
         unreachable_in_scope!("special event camera (0x800B0FAC = 0x1D/0x1E)");
     }
-    let mode: i16 = match g.game_state {
+    // The finish rule (0x80070660 / 0x800706E0): the trackside camera once
+    // the kart has done its laps.
+    let finish_rule = || -> i16 {
+        if k.lap as i32 != g.laps as i32 && (g.finish_gate_a == 0 || g.finish_gate_b != 0) {
+            if k.finish_wait < 181 {
+                0
+            } else if k.finish_score < 1000 {
+                2
+            } else {
+                unreachable_in_scope!("finish orbit camera (mode 1: +0x440 >= 1000)")
+            }
+        } else {
+            2
+        }
+    };
+    let mut mode: i16 = match g.game_state {
+        0 | 17 => unreachable_in_scope!("pre-race orbit camera (mode 1, game state 0/17)"),
+        18 => unreachable_in_scope!("camera mode 11 (game state 18)"),
         1 | 2 => {
             if g.alt_rule != 0 {
                 unreachable_in_scope!("alternate race camera rule (0x800B0BD2 != 0)");
             }
-            if inp.kart.finished != 0 {
-                unreachable_in_scope!("finished-kart camera (kart+0x4C7 != 0)");
+            if k.finished != 0 {
+                finish_rule()
+            } else {
+                0
             }
-            0
         }
-        _ => unreachable_in_scope!("camera outside game state 1/2"),
+        10 => finish_rule(),
+        _ => 0,
     };
     if g.cutscene_sync {
         unreachable_in_scope!("cut-scene synchronised camera (modes 3/9)");
     }
-    if mode == 0 && g.finish_timer >= g.finish_orbit_at as i32 {
-        unreachable_in_scope!("finish orbit camera (mode 10)");
+    // 0x800707A8: the intro camera while the countdown is at or above 300.
+    if mode == 0 && g.countdown >= g.countdown_len as i32 {
+        mode = 10;
     }
     if g.overhead > 6 && mode != 1 {
         unreachable_in_scope!("overhead camera (0x800B0E38 > 6, mode 12)");
@@ -594,18 +668,15 @@ fn select_mode(cam: &mut CameraState, inp: &CameraInput) -> i16 {
     mode
 }
 
-/// One camera tick: FUN_80070418(cam, kart) for the in-race chase camera.
+/// One camera tick: FUN_80070418(cam, kart). Modes ported: 0 (in-race
+/// chase), 10 (intro behind the kart while the countdown is >= 300) and 2
+/// (trackside cameras after the finish).
 ///
-/// `ground` is the terrain query FUN_8003DDB0 at (x, y, z); it is called once,
-/// at the eye's new x/z and goal height. `rand` is PsyQ rand() (0..=0x7FFF),
-/// drawn only on the tick the mode changes.
-pub fn tick(
-    cam: &mut CameraState,
-    inp: &CameraInput,
-    t: &CameraTables,
-    ground: &mut dyn FnMut(i32, i32, i32) -> CameraGround,
-    rand: &mut dyn FnMut() -> i32,
-) {
+/// `env` supplies the terrain query FUN_8003DDB0 (mode 0: once, at the
+/// eye's new x/z and goal height; mode 2: at a new trackside point),
+/// rand() (drawn on a change to mode 0 or 10), the TER path walk and the
+/// random byte stream (mode 2).
+pub fn tick(cam: &mut CameraState, inp: &CameraInput, t: &CameraTables, env: &mut dyn CameraEnv) {
     let g = &inp.globals;
     let k = &inp.kart;
     let dt = g.dt;
@@ -631,71 +702,163 @@ pub fn tick(
     if g.num_karts == 0 {
         unreachable_in_scope!("camera with no karts");
     }
-    if k.watch_target != -1 {
+    if mode == 0 && k.finished == 0 && k.watch_target != -1 {
         unreachable_in_scope!("camera watching another object (kart+0x4FE != -1)");
     }
     let lift = k.mount[1].wrapping_sub(k.mount[3]); // (s16)(+0x184 - +0x188)
-    let local = [-(k.mount[0] as i32), lift as i32, -(k.mount[2] as i32)];
-    let mut look = [0i32; 3];
-    for r in 0..3 {
-        let mut s: i32 = 0;
-        for c in 0..3 {
-            s = s.wrapping_add(local[c].wrapping_mul(k.matrix[r][c] as i32));
-        }
-        look[r] = k.pos[r].wrapping_add(s >> 7);
-    }
-
-    // Mode 0 block (0x80071954..0x80071C24).
-    if changed {
-        cam.rand_a = (div_pow2(rand(), 14)) as u8;
-    }
-    let mut follow: i32 = 22400; // sp+0x50: eye height above ground
-    if let Some(trail) = &k.trail {
-        let dx = k.pos[0].wrapping_sub(cam.pos[0]) >> 5;
-        let dz = k.pos[2].wrapping_sub(cam.pos[2]) >> 5;
-        let d = t.sqrt0(dx.wrapping_mul(dx).wrapping_add(dz.wrapping_mul(dz)));
-        if d < 1025 && g.finish_timer == 0 {
-            follow = div_pow2((2048 - d).wrapping_mul(follow), 10);
-        }
-        // Walk the history 16 VBlanks back (0x80071A28..0x80071A8C).
-        let mut seg = 0usize;
-        let mut sub: i32;
-        let mut total: i32 = 0;
-        'walk: loop {
-            sub = 0;
-            if seg + 1 >= TRAIL_LEN {
-                unreachable_in_scope!("trail shorter than 16 VBlanks (dt < 2)");
+    let rotate = |local: [i32; 3]| -> [i32; 3] {
+        let mut o = [0i32; 3];
+        for r in 0..3 {
+            let mut s: i32 = 0;
+            for c in 0..3 {
+                s = s.wrapping_add(local[c].wrapping_mul(k.matrix[r][c] as i32));
             }
-            let cnt = trail[seg].count;
-            while sub < cnt {
-                total += 1;
-                sub += 1;
-                if total == 16 {
-                    break 'walk;
+            o[r] = s >> 7;
+        }
+        o
+    };
+    let mount = rotate([-(k.mount[0] as i32), lift as i32, -(k.mount[2] as i32)]);
+    let look = [0, 1, 2].map(|i| k.pos[i].wrapping_add(mount[i]));
+
+    let mut follow: i32 = 22400; // sp+0x50: eye height above ground (mode 0)
+    match mode {
+        0 => {
+            // 0x80071954..0x80071C24.
+            if changed {
+                cam.rand_a = (div_pow2(env.rand(), 14)) as u8;
+            }
+            if let Some(trail) = &k.trail {
+                let dx = k.pos[0].wrapping_sub(cam.pos[0]) >> 5;
+                let dz = k.pos[2].wrapping_sub(cam.pos[2]) >> 5;
+                let d = t.sqrt0(dx.wrapping_mul(dx).wrapping_add(dz.wrapping_mul(dz)));
+                if d < 1025 && g.countdown == 0 {
+                    follow = div_pow2((2048 - d).wrapping_mul(follow), 10);
+                }
+                // Walk the history 16 VBlanks back (0x80071A28..0x80071A8C).
+                let mut seg = 0usize;
+                let mut sub: i32;
+                let mut total: i32 = 0;
+                'walk: loop {
+                    sub = 0;
+                    if seg + 1 >= TRAIL_LEN {
+                        unreachable_in_scope!("trail shorter than 16 VBlanks");
+                    }
+                    let cnt = trail[seg].count;
+                    while sub < cnt {
+                        total += 1;
+                        sub += 1;
+                        if total == 16 {
+                            break 'walk;
+                        }
+                    }
+                    seg += 1;
+                }
+                let a = &trail[seg];
+                let b = &trail[seg + 1];
+                for i in 0..3 {
+                    goal[i] = a.pos[i].wrapping_add(mips_div(b.pos[i].wrapping_sub(a.pos[i]).wrapping_mul(sub), a.count));
+                }
+                goal[1] = goal[1].wrapping_add((lift as i32) << 5);
+                w_target = [128, 96, 128];
+                pitch_div = 8;
+                yaw_div = 8;
+                if d < 1024 {
+                    w_target[0] = 0;
+                    w_target[2] = 0;
+                } else if d < 2048 {
+                    let w = (((d - 1024) << 7) >> 10) as i16;
+                    w_target[0] = w;
+                    w_target[2] = w;
                 }
             }
-            seg += 1;
         }
-        let a = &trail[seg];
-        let b = &trail[seg + 1];
-        for i in 0..3 {
-            goal[i] = a.pos[i].wrapping_add(mips_div(b.pos[i].wrapping_sub(a.pos[i]).wrapping_mul(sub), a.count));
+        10 => {
+            // Intro (0x80071C28..0x80071D30): behind the kart along its body
+            // axis, pulling in from 32768 to 16384 units as the countdown
+            // runs from 480 to 360, banked to the side rand_a picked.
+            if changed {
+                cam.rand_a = (div_pow2(env.rand(), 14)) as u8;
+            }
+            let s0 = (g.countdown - 60 - g.countdown_len as i32).max(0);
+            let s1 = (s0 << 9) / 120;
+            let back = rotate([0, 0, -(s1 + 512)]);
+            let r = if cam.rand_a != 0 { s1 } else { -s1 };
+            cam.roll_ref = r / 2;
+            w_target = [64, 64, 64];
+            pitch_div = 8;
+            yaw_div = 8;
+            goal = [0, 1, 2].map(|i| look[i].wrapping_add(back[i]));
         }
-        goal[1] = goal[1].wrapping_add((lift as i32) << 5);
-        w_target = [128, 96, 128];
-        pitch_div = 8;
-        yaw_div = 8;
-        if d < 1024 {
-            w_target[0] = 0;
-            w_target[2] = 0;
-        } else if d < 2048 {
-            let w = (((d - 1024) << 7) >> 10) as i16;
-            w_target[0] = w;
-            w_target[2] = w;
+        2 => {
+            // Trackside cameras (0x800710D4..0x80071570).
+            let (seg, pt) = env.walk(k.path_seg, k.path_pt, 1, k.path_backward != 0);
+            if cam.sub_state == -1 {
+                cam.sub_timer = 0;
+            }
+            let diff = |a: i32, b: i32, sh: u32| a.wrapping_sub(b) >> sh;
+            let sq = |v: [i32; 3]| v[0].wrapping_mul(v[0]).wrapping_add(v[1].wrapping_mul(v[1])).wrapping_add(v[2].wrapping_mul(v[2]));
+            let kd = [0, 1, 2].map(|i| diff(k.pos[i], cam.pos[i], 10));
+            let keep = seg == -1 || cam.sub_timer != 0 || (cam.sub_state != -1 && sq(kd) < 16384);
+            goal = cam.pos;
+            if !keep {
+                // About 4096 TER units ahead of the kart: 4096 / (point
+                // spacing) points, rounded (0x800711C4..0x800712E4).
+                let a = env.path_point(seg, pt);
+                let b = env.path_point(k.path_seg, k.path_pt);
+                let d = t.sqrt0(sq([0, 1, 2].map(|i| a[i].wrapping_sub(b[i]))));
+                let n = if d == 0 {
+                    1
+                } else {
+                    let (q, r) = (4096 / d, 4096 % d);
+                    if d / 2 < r {
+                        q + 1
+                    } else if q == 0 {
+                        1
+                    } else {
+                        q
+                    }
+                };
+                let (seg2, pt2) = env.walk(k.path_seg, k.path_pt, n as i16, k.path_backward != 0);
+                let cand = env.path_point(seg2, pt2).map(|v| v << 5);
+                let cd = [0, 1, 2].map(|i| diff(cand[i], cam.pos[i], 5));
+                if cam.sub_state == -1 || !(sq(cd) < 0x0100_0000) {
+                    // Cut to the new point, 8192 above the ground below it
+                    // (0x80071448..0x80071500).
+                    cam.mode_changed = 1;
+                    goal = cand;
+                    let gr = env.ground(goal[0], goal[1], goal[2]);
+                    if gr.below_found {
+                        let y = gr.below_y.wrapping_sub(8192);
+                        goal[1] = y;
+                        if gr.alt_found && gr.alt_y < gr.below_y {
+                            let a2 = gr.alt_y.wrapping_add(8192);
+                            if y < a2 {
+                                goal[1] = gr.below_y.wrapping_add(gr.alt_y) / 2;
+                            } else if env.rng_byte() < 128 {
+                                goal[1] = a2;
+                            }
+                        }
+                    }
+                    cam.sub_timer = 120;
+                }
+            }
+            if cam.sub_state == -1 {
+                cam.sub_timer = 120;
+                cam.sub_state = 0;
+            }
+            // A cut turns the camera at once; otherwise it pans by 1/8.
+            if goal != cam.pos {
+                pitch_div = 1;
+                yaw_div = 1;
+            } else {
+                pitch_div = 8;
+                yaw_div = 8;
+            }
         }
+        m => unreachable_in_scope!(format!("camera mode {m}")),
     }
 
-    // Common tail (0x80071D34). Mode 0: the look-at point is sp+0x70.
+    // Common tail (0x80071D34). Modes 0, 2, 10 look at sp+0x70.
     let old_y = cam.pos[1];
     if mode == 2 || changed {
         cam.pos = goal;
@@ -719,20 +882,21 @@ pub fn tick(
     }
     cam.pos_div32 = [cam.pos[0] >> 5, cam.pos[1] >> 5, cam.pos[2] >> 5];
 
-    // Height pass, mode 0 only (0x80071FFC..0x80072310).
-    let mut y = cam.pos[1];
-    let gr = ground(cam.pos[0], cam.pos[1], cam.pos[2]);
-    y = ground_clamp(y, follow, lift, &gr);
-    if changed {
-        cam.weight[1] = w_target[1];
-        cam.pos[1] = y;
-    } else {
-        let mut s = old_y;
-        for _ in 0..reps(dt) {
-            cam.weight[1] = approach32(cam.weight[1], w_target[1]);
-            s = s.wrapping_add(div_pow2(y.wrapping_sub(s).wrapping_mul(cam.weight[1] as i32), 10));
+    if mode == 0 {
+        // Height pass, mode 0 only (0x80071FFC..0x80072310).
+        let gr = env.ground(cam.pos[0], cam.pos[1], cam.pos[2]);
+        let y = ground_clamp(cam.pos[1], follow, lift, &gr);
+        if changed {
+            cam.weight[1] = w_target[1];
+            cam.pos[1] = y;
+        } else {
+            let mut s = old_y;
+            for _ in 0..reps(dt) {
+                cam.weight[1] = approach32(cam.weight[1], w_target[1]);
+                s = s.wrapping_add(div_pow2(y.wrapping_sub(s).wrapping_mul(cam.weight[1] as i32), 10));
+            }
+            cam.pos[1] = s;
         }
-        cam.pos[1] = s;
     }
 
     // Aim (0x80072314..0x80072394).
@@ -762,8 +926,11 @@ pub fn tick(
         }
     }
 
-    // Roll goal (0x80072604..0x80072708, mode 0).
-    let roll_t: i32 = if k.roll_mode != 0 {
+    // Roll goal (0x8007252C..0x80072708): modes 0 and 10 bank with the
+    // kart, mode 2 levels out.
+    let roll_t: i32 = if mode == 2 || k.watch_target != -1 {
+        0
+    } else if k.roll_mode != 0 {
         // Airborne/spinning: bank against the remaining yaw error.
         let e = yaw_t.wrapping_sub(cam.yaw as u16 as i32);
         let e16 = e as i16 as i32;
@@ -771,14 +938,18 @@ pub fn tick(
         (-(e as i16 as i32) * 3) & 0xFFF
     } else {
         let s = (k.lean as i32).wrapping_add(k.yaw_rate >> 3);
-        let half = s / 2; // (s + sign) >> 1
-        let h16 = half as i16 as i32;
-        if h16 > 512 {
-            512
-        } else if h16 < -512 {
-            (-512) & 0xFFF
+        if mode == 10 {
+            cam.roll_ref.wrapping_sub(s) & 0xFFF
         } else {
-            half & 0xFFF
+            let half = s / 2; // (s + sign) >> 1
+            let h16 = half as i16 as i32;
+            if h16 > 512 {
+                512
+            } else if h16 < -512 {
+                (-512) & 0xFFF
+            } else {
+                half & 0xFFF
+            }
         }
     };
     if changed {

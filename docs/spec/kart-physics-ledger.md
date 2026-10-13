@@ -41,14 +41,20 @@ places it is not one-for-one:
 Race flow (Session 3, mr-sim race.rs / session.rs):
 - After the finish the AI drives the player's kart (`ai_buttons`, items
   off: no R1 specials / weapons as the oracle's race3P had).
-- Camera during the intro fly-by (countdown >= 300, camera mode 10) and after
-  the finish (finished-kart / results cameras): not in camera.rs; the session
-  holds the camera. Consequence: during the intro the game's FUN_80041CC4
-  makes every kart look at the flying camera (aim +0x2C0, distance 0); in
-  the session the camera is inactive then (mode -1), so the aim and the
-  body sway that follows it differ (cosmetic) and the random pointer
-  0x800B0BCC drifts by a few draws per frame from the oracle's (the sway
-  draws), which reaches AI jumps / blink timing.
+- Camera (camera.rs, docs/spec/camera.md): modes 10 (intro, countdown
+  >= 300), 0 (chase) and 2 (trackside cameras after the finish, through the
+  results) are ported and run in the session; the intro now drives the
+  karts' look-at override (FUN_80041CC4) as in the game. Not ported, each
+  `unreachable_in_scope!`: mode 1 (pre-race orbit in game state 0/17 before
+  the race load, and the finish orbit when +0x440 >= 1000), 3/9 (cut-scene
+  sync), 11 (game state 18), 12 (0x800B0E38 > 6), events 0x1D/0x1E/30,
+  0x800B0BD2 != 0, split screen. Thin evidence: in race3P a trackside cut
+  drew its random byte (flag-0x40 surface below the point) once, exact; a
+  trackside path walk needed rand() at a branch once (the test fed 0 and the
+  result still matched); the backward path walk (+0x4DF) never ran. The record's 0x4C (pre-race orbit angle) starts at
+  0 in the session; the oracle carries the menu camera's value (untouched by
+  modes 10/0/2). The render's clearing of the cut flag +0x6E
+  (FUN_80078F38 @0x800790F4, followed by a redraw) is not modelled.
 - Water animation state (0x800AFEF0) at race load: it runs on between races
   in the game; the session starts it from the exe's initial values. With
   the oracle's state the load frame is exact (random pointer included).

@@ -26,18 +26,18 @@ read-only queries of the running recomp (`read_ram`, `gte_state`,
 | 0x28 | i32[3] | pos | eye position, world units (kart+0x00 space) | [CODE] [RAM] |
 | 0x34 | i32[3] | pos_div32 | pos >> 5 taken before the height pass (y = unclamped goal) | [CODE 0x80071FD0] |
 | 0x40 | 8 bytes | - | not touched in mode 0 | |
-| 0x48 | i32 | roll_ref | finish-orbit roll reference (mode 10) | [CODE 0x80071CEC] |
-| 0x4C | i32 | orbit_angle | orbit angle, & 0x7FFF (modes 1, 11) | [CODE] |
+| 0x48 | i32 | roll_ref | intro roll reference (mode 10): +-s1/2 | [CODE 0x80071CEC] |
+| 0x4C | i32 | orbit_angle | orbit angle, & 0x7FFF (modes 1, 11); the menu camera's value survives the race load | [CODE] [RAM] |
 | 0x50 | i16 | pitch | 12-bit, kept in 0..4095 | [CODE] |
 | 0x52 | i16 | yaw | 12-bit | [CODE] |
 | 0x54 | i16 | roll | 12-bit | [CODE] |
 | 0x5C | i16[3] | weight | per-axis follow weights, /1024 per VBlank | [CODE 0x80071E0C] |
-| 0x64 | i16 | mode | 0 = in-race chase (the only mode in a solo DOCK race) | [CODE] [RAM] |
-| 0x66 | i16 | sub_state | scripted state (4 -> 5 -> 6 -> -1, 600 VBlanks each) | [CODE 0x80070510] |
-| 0x68 | i16 | sub_timer | countdown for sub_state | [CODE] |
+| 0x64 | i16 | mode | 10 intro, 0 chase, 2 trackside after the finish; -1 set by the race load | [CODE] [RAM] |
+| 0x66 | i16 | sub_state | scripted state (4 -> 5 -> 6 -> -1, 600 VBlanks each); mode 2: -1 -> 0 on its first tick | [CODE 0x80070510] |
+| 0x68 | i16 | sub_timer | countdown for sub_state; mode 2: VBlanks to the next trackside re-check (120) | [CODE] |
 | 0x6B | u8 | rand_a | rand() >> 14 drawn on a mode change | [CODE] |
 | 0x6C | u8 | rand_b | (mode 1) | [CODE] |
-| 0x6E | u8 | mode_changed | 1 on the tick the mode changed | [CODE] |
+| 0x6E | u8 | mode_changed | 1 on the tick the mode changed or a trackside cut; the render clears it and redraws (FUN_80078F38 @0x800790F4) | [CODE] |
 
 ## Inputs
 Kart record (kart0 = 0x800C30A8):
@@ -55,14 +55,17 @@ Kart record (kart0 = 0x800C30A8):
 
 Position history ("trail"), 12 x {i32 x, y, z, count}: the kart update
 FUN_80064B5C @0x80065278..0x80065324 shifts the entries down by one and writes
-`{kart position, dt}` into entry 0 every tick while 0x800B0C70 == 0. The
+`{kart position, dt}` into entry 0 every tick while the countdown
+0x800B0C70 == 0 (the value the kart update sees is the previous frame's end
+value: no push in the GO frame itself). The
 position pushed is the kart's position at the **start** of the tick (before
 it moves) - verified: with that, every camera byte matches over the lap; with
 the end-of-tick position it does not [RAM]. Rust: `camera::push_trail`. The
 kart sim must own this ring (it is not inside the 0x504 record).
 
-Globals: dt 0x800B0AEC; finish timer 0x800B0C70; 0x800B07F8 (300); game state
-0x800B0D46 (1); event 0x800B0FAC (3 on DOCK); 0x800B0BD2; 0x800B0E38 (4);
+Globals: dt 0x800B0AEC; race-start countdown 0x800B0C70 (480 at race load, 0
+from GO); 0x800B07F8 (300); laps 0x800B0DA6; 0x800B07E6 / 0x800B0803 (finish
+rule gate, 0); game state 0x800B0D46 (1 racing, 10 results); event 0x800B0FAC (3 on DOCK); 0x800B0BD2; 0x800B0E38 (4);
 kart count 0x800B0DFE (6); cut-scene sync *0x800D1C84 == *0x800D1C88;
 fallback goal (0x800B0B6C+0x800B0B74)*16 etc. (`CameraGlobals`).
 
@@ -81,7 +84,7 @@ power of two (toward zero); `div` = MIPS div (toward zero); products wrap at
 
 ```
 mode_changed = 0; old = mode; mode = select()          // 0 in scope
-if finish_timer == 0: sub_timer -= dt; if < 0 { sub_timer = 0; 4->5/600, 5->6/600, 6->-1 }
+if countdown == 0: sub_timer -= dt; if < 0 { sub_timer = 0; 4->5/600, 5->6/600, 6->-1 }
 if mode != old: mode_changed = 1
 
 // look-at point (FUN_8007D58C)
@@ -93,7 +96,7 @@ look  = kart.pos + (M_kart * local) >> 7               // each row: sum of 3 pro
 if mode != old: rand_a = rand() / 2^14
 follow = 22400                                         // clearance above the ground
 d = SquareRoot0(((kart.x-eye.x)>>5)^2 + ((kart.z-eye.z)>>5)^2)   // old eye
-if d <= 1024 and finish_timer == 0: follow = (2048 - d) * follow / 2^10
+if d <= 1024 and countdown == 0: follow = (2048 - d) * follow / 2^10
 walk the trail from entry 0 adding each entry's count until 16 VBlanks:
     entry s, step j (1..count) at which the total reaches 16
 goal = trail[s].pos + div((trail[s+1].pos - trail[s].pos) * j, trail[s].count)
@@ -172,11 +175,68 @@ table is not exactly periodic past 4096, so use it as stored), ratan2 table
 0x800AD608 (1025 i16), SquareRoot0 table 0x800AD2E8 (192 i16). SquareRoot0 is
 a table approximation (sqrt0(123456789) = 11076, true 11111).
 
-Out of scope, panicking via `unreachable_in_scope!`: game state other than
-1/2, events 0x1D/0x1E/30, 0x800B0BD2 != 0, finished kart (0x4C7), cut-scene
-sync (modes 3/9), finish orbit (mode 10, finish_timer >= 300), overhead
-(0x800B0E38 > 6, mode 12), watching another object (0x4FE != -1), no karts,
-trail shorter than 16 VBlanks.
+## Mode selection (0x80070418..0x800707F4)
+```
+event 0x1D / 0x1E: special cameras (not ported)
+game state 0, 17 -> 1 (pre-race orbit, before the race load); 18 -> 11
+game state 1, 2: 0x800B0BD2 != 0 -> scripted rule (not ported)
+                 kart+0x4C7 (finished) != 0 -> finish rule
+game state 10 (results)                     -> finish rule
+other game states                           -> 0
+finish rule: if lap (+0x4BF) != laps (0x800B0DA6) and (0x800B07E6 == 0 or 0x800B0803 != 0):
+                 +0x38C < 181 -> 0; else +0x440 >= 1000 -> 1, else 2
+             else 2
+both 0x800D1C84 / 0x800D1C88 non-null and equal -> 3 (9 in game state 0)
+mode 0 and countdown >= 0x800B07F8 (300) -> 10
+0x800B0E38 > 6 and mode != 1 -> 12
+```
+A 1P DOCK race goes: race load (mode -1) -> 10 at the first race frame
+(countdown 480) -> 0 once the countdown is below 300 -> 2 when the player finishes, kept in
+the results (game state 10, lap == laps).
+
+## Mode 10: intro (0x80071C28..0x80071D30)
+```
+if changed: rand_a = rand() / 2^14
+s0 = max(countdown - 60 - 300, 0); s1 = (s0 << 9) / 120     // 512 .. 0
+goal = look + (M_kart * (0, 0, -(s1 + 512))) >> 7            // behind the kart, 32768 -> 16384 units
+roll_ref = (rand_a ? s1 : -s1) / 2
+w_target = (64, 64, 64); pitch_div = yaw_div = 8
+```
+Common tail as mode 0 except: y is eased like x/z (weight.y steps to 64), no
+height pass, and the roll goal is (roll_ref - (kart[0x470] + kart[0x394] >> 3))
+& 0xFFF with no clamp (airborne rule as mode 0). The first intro tick is a
+mode change from -1: eye, weights and angles are placed directly.
+
+## Mode 2: trackside cameras (0x800710D4..0x80071570)
+```
+(seg, pt) = walk(kart[0x498], kart[0x49A], 1)              // FUN_80090424, or FUN_80090670 if kart[0x4DF]
+if sub_state == -1: sub_timer = 0
+keep = seg == -1 or sub_timer != 0
+       or (sub_state != -1 and |(kart.pos - eye) >> 10|^2 < 16384)
+goal = eye
+if !keep:
+    d = SquareRoot0(|P(seg, pt) - P(kart seg, kart pt)|^2)   // P = TER path point, TER units
+    n = d == 0 ? 1 : round(4096 / d) (q + 1 if d/2 < remainder; at least 1)
+    cand = P(walk(kart seg, kart pt, n)) << 5                // about 4096 TER units ahead
+    if sub_state == -1 or |(cand - eye) >> 5|^2 >= 0x1000000:
+        cut: mode_changed = 1; goal = cand
+        g = FUN_8003DDB0(cand)
+        if g.below_found (0x800B0AE0):
+            goal.y = below - 8192
+            if alt_found and alt < below:
+                if goal.y < alt + 8192: goal.y = (below + alt) / 2
+                elif *(*0x800B0BCC)++ < 128: goal.y = alt + 8192
+        sub_timer = 120
+if sub_state == -1: sub_timer = 120; sub_state = 0
+pitch_div = yaw_div = (goal != eye) ? 1 : 8                 // a cut turns at once
+```
+The eye is placed at the goal every tick (no easing); the camera pans after
+the kart with /8 steps and levels its roll to 0 by /16 steps. Walks use
+rand() at a branch with several successors (0x800B0A20 is clear here).
+
+Out of scope, panicking via `unreachable_in_scope!`: modes 1, 3, 9, 11, 12,
+events 0x1D/0x1E/30, 0x800B0BD2 != 0, watching another object (0x4FE != -1)
+in mode 0, no karts, trail shorter than 16 VBlanks.
 
 ## Verification (teacher forcing)
 `cargo test -p mr-sim --test camera -- --nocapture`. For each tick: oracle
@@ -193,9 +253,22 @@ oracle drops frames (dt = 3 at lap1P VBlanks 1373 and 1393), after which
 | lap1P (full lap, physics regions) | 1515 | all fields exact; the whole 0x70-byte record is byte-identical on every tick (matrix, forward, pos, pos_div32, pitch, yaw, roll, weights, mode). Includes 440 VBlanks with a flag-0x40 surface (alt branch) and the two dt=3 ticks. |
 | lap1P, trail = end-of-tick positions | 1515 | wrong: pos.x up to 1778, yaw 2, pitch 2, matrix 13 (shows the push uses the start-of-tick position) |
 | c_steer (default regions, no ground globals) | 216 | x, z, pos_div32, weights, yaw, roll, mode exact (y, pitch, matrix not compared: the ground results were not captured) |
+| start_probe from the race load (6 karts, no input) | 835 | whole record exact: 90 intro ticks (mode 10), the 10 -> 0 switch, start game, GO, race |
+| start_game from the race load (solo, start game played) | 586 | whole record exact: 90 intro ticks, start game, GO |
+| race3P (3 laps, finish at VBlank 7043, results) | 4324 | whole record exact: 3510 chase ticks, 814 trackside ticks (mode 2, game states 1 and 10), including one random-byte draw and one path walk that needed rand() |
+| Session free run vs start_probe (oracle buttons and dt) | 372 frames | whole record exact (except 0x4C, the menu camera's leftover, and the cut flag 0x6E) through the intro, start game, GO and the race until an oracle AI item at frame 373 |
+
+Teacher-forcing details: rand() returns the value whose >> 14 is the
+oracle's rand_a; the random byte is read at the captured end-of-frame
+pointer - 1 (the camera is the frame's last reader); trackside ground and
+path from the disc's TER (World::dock); chase ground from the captured
+globals. The session test `session_trackside_camera_after_finish` drives a
+whole race on autopilot: > 80 intro ticks, then mode 2 for 600 ticks after
+the finish with several cuts.
 
 Not exercised by any capture: the airborne roll rule (kart+0x4D6 != 0),
-the roll clamp at +-512, the mode-change (snap) path, the no-trail fallback.
+the roll clamp at +-512, the no-trail fallback, the backward path walk in
+mode 2 (+0x4DF).
 
 ## Render view (FUN_8002CEBC, then the world draw)
 FUN_8002CEBC(cam) [CODE 0x8002CEBC..0x8002D1E0]:

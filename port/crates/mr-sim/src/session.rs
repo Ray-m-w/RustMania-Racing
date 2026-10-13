@@ -34,8 +34,8 @@
 //! 5. FUN_80086DF0, FUN_800837F8 (race progress, positions), FUN_80025D8C
 //!    (body, vehicle, driver matrices, look point, wheels, lights);
 //! 6. FUN_8007D304's random-pointer step (wraps in 0x8001F94C..0x8001FF28);
-//! 7. FUN_80070418 camera — camera.rs (held during the intro and after the
-//!    finish: those camera modes are not ported).
+//! 7. FUN_80070418 camera — camera.rs (intro mode 10, chase mode 0,
+//!    trackside mode 2 after the finish).
 //! Not produced (see the ledger): track tokens that fill the turbo meter
 //! (FUN_8007BBF0), items.
 
@@ -209,6 +209,58 @@ impl std::fmt::Display for SessionError {
 
 impl std::error::Error for SessionError {}
 
+/// What the camera needs from the session: the TER ground query and path,
+/// BIOS rand() and the random byte pointer 0x800B0BCC.
+struct SessionCameraEnv<'a> {
+    world: &'a World,
+    rand_state: &'a mut u32,
+    rng: &'a mut u32,
+}
+
+impl camera::CameraEnv for SessionCameraEnv<'_> {
+    fn ground(&mut self, x: i32, y: i32, z: i32) -> CameraGround {
+        let q = self.world.ter.ground(x, y, z);
+        CameraGround {
+            found: q.nearest.is_some(),
+            nearest_y: q.nearest_y,
+            below_y: q.below.map(|s| s.y).unwrap_or(q.nearest_y),
+            // 0x800B0AE0 falls back to the nearest surface (0x8003E34C).
+            below_found: q.below.is_some() || q.nearest.is_some(),
+            alt_found: q.alt.is_some(),
+            alt_y: q.alt.map(|s| s.y).unwrap_or(0),
+            type3_min_y: q.water_y,
+        }
+    }
+
+    fn rand(&mut self) -> i32 {
+        bios_rand(self.rand_state)
+    }
+
+    fn walk(&mut self, seg: i16, pt: i16, n: i16, backward: bool) -> (i16, i16) {
+        let seed = &mut *self.rand_state;
+        let mut rand = || bios_rand(seed);
+        let wk = if backward {
+            crate::ai::walk_backward(self.world, seg, pt, n, &mut rand)
+        } else {
+            crate::ai::walk_forward(self.world, seg, pt, n, false, &mut rand)
+        };
+        (wk.seg, wk.pt)
+    }
+
+    fn path_point(&mut self, seg: i16, pt: i16) -> [i32; 3] {
+        let ter = &self.world.ter;
+        let first = ter.path_segments[seg as u16 as usize].first;
+        let p = &ter.path_points[first.wrapping_add(pt) as u16 as usize];
+        [p.x, p.y, p.z]
+    }
+
+    fn rng_byte(&mut self) -> u8 {
+        let b = self.world.rng_byte(*self.rng);
+        *self.rng = self.rng.wrapping_add(1);
+        b
+    }
+}
+
 /// BIOS rand() (A0:2F, SCPH-1001 @0xBFC02200): seed = seed * 0x41C64E6D +
 /// 0x3039; result (seed >> 16) & 0x7FFF.
 pub fn bios_rand(seed: &mut u32) -> i32 {
@@ -341,8 +393,11 @@ impl Session {
         let camera = CameraState::from_bytes(&cam_bytes);
         let camera_globals = CameraGlobals {
             dt: 2,
-            finish_timer: 0,
-            finish_orbit_at: 300,
+            countdown: 0,
+            countdown_len: 300,
+            laps: cfg.laps,
+            finish_gate_a: 0,
+            finish_gate_b: 0,
             game_state: 1,
             event: cfg.event,
             alt_rule: 0,
@@ -564,42 +619,23 @@ impl Session {
         // 6. Random pointer step.
         let r = g.rng.wrapping_add(1);
         g.rng = if RNG_WRAP < r { g.rng.wrapping_sub(0x5DB) } else { r };
-        // 7. Camera. During the intro (countdown >= 300) the game flies the
-        //    camera round the course, and after the finish it switches to
-        //    the finished-kart / results cameras (camera.rs: not ported;
-        //    ledger): in both the camera is held where it is.
-        if g.countdown >= g.countdown_len as i32 || k.finished != 0 || g.mode != 1 {
-            return;
-        }
+        // 7. Camera: intro (countdown >= 300), chase, and the trackside
+        //    cameras once the player has finished (camera.rs).
         let ck = CameraKart::from_record(&self.record, Some(k.trail));
         let inp = CameraInput {
             kart: ck,
             globals: CameraGlobals {
                 dt: g.dt,
                 num_karts: n as i16,
-                // 0x800B0C70 / 0x800B07F8: the camera eases differently
-                // during the start game.
-                finish_timer: g.countdown,
-                finish_orbit_at: g.countdown_len as i16,
+                countdown: g.countdown,
+                countdown_len: g.countdown_len as i16,
+                laps: g.laps,
                 game_state: g.mode,
                 ..self.camera_globals.clone()
             },
         };
-        let ter = &w.ter;
-        let mut ground = |x: i32, y: i32, z: i32| -> CameraGround {
-            let q = ter.ground(x, y, z);
-            CameraGround {
-                found: q.nearest.is_some(),
-                nearest_y: q.nearest_y,
-                below_y: q.below.map(|s| s.y).unwrap_or(q.nearest_y),
-                alt_found: q.alt.is_some(),
-                alt_y: q.alt.map(|s| s.y).unwrap_or(0),
-                type3_min_y: q.water_y,
-            }
-        };
-        let seed = &mut self.rand_state;
-        let mut rand = || bios_rand(seed);
-        camera::tick(&mut self.camera, &inp, &self.camera_tables, &mut ground, &mut rand);
+        let mut env = SessionCameraEnv { world: w, rand_state: &mut self.rand_state, rng: &mut g.rng };
+        camera::tick(&mut self.camera, &inp, &self.camera_tables, &mut env);
     }
 
     /// Idle (no buttons) until the player's race time (+0x358) reaches

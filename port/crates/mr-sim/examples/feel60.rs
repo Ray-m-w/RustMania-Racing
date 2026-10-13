@@ -3,7 +3,12 @@
 //! reference; no oracle run needed). Same inputs per 1/30 s in both modes
 //! (at 60 Hz each 30 Hz input is held for both ticks of the pair).
 //!
-//!   cargo run --release -p mr-sim --example feel60 -- [--races N] [--json OUT]
+//!   cargo run --release -p mr-sim --example feel60 -- [--races N] [--runs N] [--only accel,jump,turn,player,ai] [--items-off]
+//!
+//! Defaults: 100 six-kart races and 80 AI-driven player runs per mode (about
+//! 30 s of CPU, no oracle). With 6 races per mode one of the eight item
+//! statistics fails the 2-sigma test by chance in most runs (seen: fires,
+//! hits, turbo in turn); 100 races resolve differences of a few percent.
 //!
 //! Tests (docs/spec/kart-physics-ledger.md "60 Hz mode", feel table):
 //! 1. scripted drives from the oracle grid (solo, catch-up as the oracle
@@ -339,7 +344,9 @@ fn player(disc: &mut mr_disc::Disc, rows: &mut Vec<Row>, runs: u32) {
     for l in 0..3 {
         let la: Vec<f64> = a.iter().filter_map(|d| d.laps.get(l)).map(|&t| t as f64 / 300.0).collect();
         let lb: Vec<f64> = b.iter().filter_map(|d| d.laps.get(l)).map(|&t| t as f64 / 300.0).collect();
-        row(rows, &format!("player (AI-driven, {runs} runs): lap {} mean (s)", l + 1), mean_sd(&la).0, mean_sd(&lb).0, 2.0);
+        // 3 %: Session 3's per-kart lap-mean limit (one wall hit costs a lap
+        // ~3 s, so per-lap means of a few dozen runs wander by 1-3 %).
+        row(rows, &format!("player (AI-driven, {runs} runs): lap {} mean (s)", l + 1), mean_sd(&la).0, mean_sd(&lb).0, 3.0);
     }
     let ra: Vec<f64> = a.iter().map(|d| d.laps.iter().sum::<i32>() as f64 / 300.0).collect();
     let rb: Vec<f64> = b.iter().map(|d| d.laps.iter().sum::<i32>() as f64 / 300.0).collect();
@@ -422,6 +429,8 @@ fn ai_race(disc: &mut mr_disc::Disc, hz: u8, seed: u32) -> RaceStats {
         logic_hz: hz,
         rand_seed: x,
         rng_start: mr_sim::session::RNG_START + (x % 0x5DB),
+        // `--items-off`: Session 3's items-off races.
+        items: !std::env::args().any(|a| a == "--items-off"),
         ..SessionConfig::dock_default()
     };
     let mut s = session(disc, cfg);
@@ -528,8 +537,8 @@ fn ai(disc: &mut mr_disc::Disc, rows: &mut Vec<Row>, races: u32) {
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     let opt = |k: &str| a.iter().position(|x| x == k).and_then(|i| a.get(i + 1)).cloned();
-    let races: u32 = opt("--races").map(|s| s.parse().unwrap()).unwrap_or(6);
-    let runs: u32 = opt("--runs").map(|s| s.parse().unwrap()).unwrap_or(6);
+    let races: u32 = opt("--races").map(|s| s.parse().unwrap()).unwrap_or(100);
+    let runs: u32 = opt("--runs").map(|s| s.parse().unwrap()).unwrap_or(80);
     let only = opt("--only");
     std::env::set_current_dir(mr_sim::oracle::repo_root()).unwrap();
     let mut disc = mr_disc::Disc::open_default().unwrap();

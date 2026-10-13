@@ -713,8 +713,13 @@ impl Session {
         if self.load_frame {
             // The load frame: FUN_8005C2EC's rand() is drawn (oracle: six
             // rand() calls in that frame), the countdown is not stepped.
-            self.load_frame = false;
-            bios_rand(&mut self.rand_state);
+            // 60 Hz mode: the load frame is the first pair (one draw).
+            if g.hz60.pair_end() {
+                self.load_frame = false;
+            }
+            if g.hz60.beat() {
+                bios_rand(&mut self.rand_state);
+            }
         } else {
             let mut karts: Vec<&mut KartState> = ks.iter_mut().collect();
             let seed = &mut self.rand_state;

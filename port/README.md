@@ -21,6 +21,22 @@ session aligned to the oracle's grid savestate; `--leader` there = no catch-up),
 `--ghost TRACE` (oracle kart as a ghost, drift in the title bar),
 `--shot F --shot-at TICK` (screenshot and exit).
 
+View options (Session 5; `settings.txt` beside the exe, one `key = value`
+per line, or `--set key=value`, or `--key-with-dashes [value]`; the command
+line wins; every key with its help: `settings::KNOWN`):
+| key | default | values | what |
+|---|---|---|---|
+| `faithful_draw_distance` | false | true/false | true = the game's per-frame selection (visibility stream, cull radius, layer-1 far stand-ins); false = the whole course every frame (layer-1 stand-ins of layer-0 scenery dropped, the one real backdrop kept) |
+| `aspect` | native | native / 4:3 | native = the window's aspect, vertical FOV kept (73.7 deg), wider windows see more to the sides, HUD elements pinned to their left / centre / right; 4:3 = the game's view, pillarboxed |
+| `msaa` | 4 | off / 2 / 4 / 8 | multisample anti-aliasing on every camera |
+| `texture_filter` | smooth | nearest / smooth | nearest = PS1 point sampling; smooth = bilinear + mipmaps + anisotropic, cut-out edges without fringes (alpha to coverage with MSAA) |
+| `lighting` | faithful | faithful / enhanced | enhanced = prototype haze toward the sky's horizon colour over distance (vertex colours unchanged); not default until the owner decides |
+| `resolution` | 1600x900 | WxH | window size |
+| `fullscreen` | false | true/false | borderless fullscreen |
+| `faithful_view` | false | true/false | preset: all of the above at the game's look + a 1280x960 window (oracle side-by-sides) |
+
+`--layer-report F` writes the draw-distance classification of every DAT object.
+
 Sound (bevy_audio; the race music streams from TUNES/*.XA on the disc, the
 game's XA queue picks the track): `--no-audio`, `--no-music`,
 `--volume V` / `--music-volume V` / `--sfx-volume V` (linear, 1.0 = the

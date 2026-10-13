@@ -137,23 +137,35 @@ impl VramTextures {
                 continue;
             }
             let handle = self.cache[&(tp, cl, smooth)].clone();
-            if smooth {
-                let base = self.base_level(tp, cl);
-                if self.smooth_base.get(&(tp, cl)) == Some(&base) {
-                    continue;
-                }
-                let chain = smooth_chain(&base);
-                self.smooth_base.insert((tp, cl), base);
-                if let Some(mut img) = images.get_mut(&handle) {
-                    img.data = Some(chain);
-                }
-                continue;
-            }
             let (cx, cy) = vram::clut(cl);
             let u0 = (x.max(px) - px) * per;
             let u1 = ((x + w).min(px + pw) - px) * per;
             let v0 = y.max(py) - py;
             let v1 = (y + h).min(py + 256) - py;
+            if smooth {
+                // Only the written rectangle's texels can change; rebuild the
+                // 64-aligned tiles around it (bleed + mips) when they did.
+                let Some(base) = self.smooth_base.get_mut(&(tp, cl)) else { continue };
+                let mut changed = false;
+                for v in v0..v1 {
+                    for u in u0..u1 {
+                        let px4 = vram::rgba(self.vram.texel(depth, px, py, cx, cy, u as u8, v as u8));
+                        let o = (v * 256 + u) * 4;
+                        if base[o..o + 4] != px4 {
+                            base[o..o + 4].copy_from_slice(&px4);
+                            changed = true;
+                        }
+                    }
+                }
+                if changed {
+                    if let Some(mut img) = images.get_mut(&handle) {
+                        if let Some(d) = img.data.as_mut() {
+                            smooth_region(d, base, u0, v0, u1, v1);
+                        }
+                    }
+                }
+                continue;
+            }
             let Some(mut img) = images.get_mut(&handle) else { continue };
             let Some(d) = img.data.as_mut() else { continue };
             for v in v0..v1 {
@@ -236,6 +248,78 @@ fn lin_to_srgb(c: f32) -> u8 {
     lut[(c.clamp(0.0, 1.0) * 4096.0 + 0.5) as usize]
 }
 
+/// One 2x2 box level down of a w x h RGBA image (colours in linear light,
+/// weighted by alpha; a fully transparent block keeps its bled colours).
+fn down2(lvl: &[u8], w: usize, h: usize) -> Vec<u8> {
+    let (nw, nh) = (w / 2, h / 2);
+    let mut next = vec![0u8; nw * nh * 4];
+    for y in 0..nh {
+        for x in 0..nw {
+            let mut acc = [0f32; 3];
+            let mut wsum = 0f32;
+            let mut a = 0u32;
+            let mut plain = [0f32; 3];
+            for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                let o = ((2 * y + dy) * w + 2 * x + dx) * 4;
+                let wgt = lvl[o + 3] as f32 / 255.0;
+                for c in 0..3 {
+                    let l = srgb_to_lin(lvl[o + c]);
+                    acc[c] += l * wgt;
+                    plain[c] += l * 0.25;
+                }
+                wsum += wgt;
+                a += lvl[o + 3] as u32;
+            }
+            let o = (y * nw + x) * 4;
+            for c in 0..3 {
+                next[o + c] = lin_to_srgb(if wsum > 0.0 { acc[c] / wsum } else { plain[c] });
+            }
+            next[o + 3] = ((a + 2) / 4) as u8;
+        }
+    }
+    next
+}
+
+/// Rebuild the smoothed chain `chain` (as `smooth_chain` lays it out) where
+/// level-0 texels in [u0, u1) x [v0, v1) of `base` changed: the 64-aligned
+/// tiles around them are bled (with a margin wide enough for every bleed
+/// pass) and their mips recomputed; the result equals a full rebuild.
+pub fn smooth_region(chain: &mut [u8], base: &[u8], u0: usize, v0: usize, u1: usize, v1: usize) {
+    let (ax0, ay0) = (u0 / 64 * 64, v0 / 64 * 64);
+    let (ax1, ay1) = (u1.div_ceil(64) * 64, v1.div_ceil(64) * 64);
+    let (ax1, ay1) = (ax1.min(256), ay1.min(256));
+    let m = BLEED_PASSES + 1;
+    let (bx0, by0, bx1, by1) = (ax0.saturating_sub(m), ay0.saturating_sub(m), (ax1 + m).min(256), (ay1 + m).min(256));
+    let (bw, bh) = (bx1 - bx0, by1 - by0);
+    let mut sub = Vec::with_capacity(bw * bh * 4);
+    for y in by0..by1 {
+        sub.extend_from_slice(&base[(y * 256 + bx0) * 4..(y * 256 + bx1) * 4]);
+    }
+    bleed(&mut sub, bw, bh);
+    let (aw, ah) = (ax1 - ax0, ay1 - ay0);
+    let mut lvl = Vec::with_capacity(aw * ah * 4);
+    for y in ay0..ay1 {
+        let o = ((y - by0) * bw + (ax0 - bx0)) * 4;
+        lvl.extend_from_slice(&sub[o..o + aw * 4]);
+    }
+    let mut off = 0usize;
+    let (mut w, mut h, mut size) = (aw, ah, 256usize);
+    for k in 0..SMOOTH_MIPS as usize {
+        if k > 0 {
+            lvl = down2(&lvl, w, h);
+            w /= 2;
+            h /= 2;
+        }
+        let (x0, y0) = (ax0 >> k, ay0 >> k);
+        for y in 0..h {
+            let d = off + ((y0 + y) * size + x0) * 4;
+            chain[d..d + w * 4].copy_from_slice(&lvl[y * w * 4..(y + 1) * w * 4]);
+        }
+        off += size * size * 4;
+        size /= 2;
+    }
+}
+
 /// Level 0 (bled) followed by `SMOOTH_MIPS - 1` box-filtered levels, colours
 /// averaged in linear light weighted by alpha (transparent texels only count
 /// when the whole 2x2 block is transparent: then their bled colours).
@@ -245,35 +329,9 @@ pub fn smooth_chain(base: &[u8]) -> Vec<u8> {
     let mut out = lvl.clone();
     let mut size = 256usize;
     for _ in 1..SMOOTH_MIPS {
-        let n = size / 2;
-        let mut next = vec![0u8; n * n * 4];
-        for y in 0..n {
-            for x in 0..n {
-                let mut acc = [0f32; 3];
-                let mut wsum = 0f32;
-                let mut a = 0u32;
-                let mut plain = [0f32; 3];
-                for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-                    let o = ((2 * y + dy) * size + 2 * x + dx) * 4;
-                    let wgt = lvl[o + 3] as f32 / 255.0;
-                    for c in 0..3 {
-                        let l = srgb_to_lin(lvl[o + c]);
-                        acc[c] += l * wgt;
-                        plain[c] += l * 0.25;
-                    }
-                    wsum += wgt;
-                    a += lvl[o + 3] as u32;
-                }
-                let o = (y * n + x) * 4;
-                for c in 0..3 {
-                    next[o + c] = lin_to_srgb(if wsum > 0.0 { acc[c] / wsum } else { plain[c] });
-                }
-                next[o + 3] = ((a + 2) / 4) as u8;
-            }
-        }
-        out.extend_from_slice(&next);
-        lvl = next;
-        size = n;
+        lvl = down2(&lvl, size, size);
+        size /= 2;
+        out.extend_from_slice(&lvl);
     }
     out
 }
@@ -289,6 +347,23 @@ mod tests {
         bleed(&mut d, 4, 1);
         assert_eq!(&d[4..8], &[200, 10, 10, 0]);
         assert_eq!(&d[12..16], &[200, 10, 10, 0]);
+    }
+
+    #[test]
+    fn region_rebuild_equals_full_rebuild() {
+        let mut base: Vec<u8> = (0..256 * 256 * 4).map(|i| ((i * 7919) % 251) as u8).collect();
+        for (i, px) in base.chunks_exact_mut(4).enumerate() {
+            px[3] = if (i / 3) % 5 == 0 { 0 } else { 255 };
+        }
+        let mut chain = smooth_chain(&base);
+        for y in 70..90 {
+            for x in 130..140 {
+                let o = (y * 256 + x) * 4;
+                base[o..o + 4].copy_from_slice(&[1, 2, 3, if x % 2 == 0 { 0 } else { 255 }]);
+            }
+        }
+        smooth_region(&mut chain, &base, 130, 70, 140, 90);
+        assert!(chain == smooth_chain(&base));
     }
 
     #[test]

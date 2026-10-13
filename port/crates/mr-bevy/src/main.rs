@@ -411,6 +411,7 @@ fn main() {
                 } else {
                     bevy::window::WindowMode::Windowed
                 },
+                present_mode: if st.bool("vsync", true) { bevy::window::PresentMode::AutoVsync } else { bevy::window::PresentMode::AutoNoVsync },
                 ..default()
             }),
             ..default()

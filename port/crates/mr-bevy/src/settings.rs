@@ -40,6 +40,7 @@ pub const KNOWN: &[Opt] = &[
     Opt { key: "lighting", default: "faithful", allowed: "faithful|enhanced", help: "faithful = the game's baked vertex colours only; enhanced = prototype atmospheric depth over them (owner decides)" },
     Opt { key: "resolution", default: "1600x900", allowed: "", help: "window size WxH in logical pixels" },
     Opt { key: "fullscreen", default: "false", allowed: "true|false", help: "borderless fullscreen on the current monitor" },
+    Opt { key: "vsync", default: "true", allowed: "true|false", help: "wait for the display's refresh (false = uncapped, for measuring)" },
     // --- F effects --- (append below)
     // --- G 60 Hz --- (append below)
 ];

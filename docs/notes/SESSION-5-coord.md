@@ -76,6 +76,15 @@ let s = Settings::global();   // same values outside systems (before the App exi
 - Anyone can draw PS1-blended primitives: push `psxfx::FxPrim` (4 verts,
   page (tpage, clut), `Blend::Abr(n)` / `Opaque`, centre, ground_eps,
   depth_pull) into `ResMut<psxfx::FxPrims>` during Update.
+(2026-10-13, F, closing) Done; commits through fa6aee5. New: kartfx.rs
+(status shapes, far-kart impostor with `faithful_draw_distance`: karts.rs
+hides the model via `effects::KartLodHidden`), pickupshadow.rs, mr-sim
+`particles::Flats` + `Session::flats()` (splash rings / skid quads, spawned
+in session.rs step 8 with the existing random byte; G: the 60 Hz path gates
+splashes on `hz60.beat()`, skids and the update run every tick with dt).
+E: scene semi-transparent polygons could be drawn exactly by pushing
+`psxfx::FxPrim`s instead of psxmesh's 50% alpha (the oracle's water is
+brighter); not done (your files).
 ### G 60 Hz
 (2026-10-13, G) Options in settings.rs `KNOWN` (G rows): `logic_hz` (30|60,
 default 30: 60 = the 60 Hz mode, not default until the owner drives it),

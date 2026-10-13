@@ -1,6 +1,6 @@
 # Effects: particles, sparks, pickups, projectiles, animated textures
 
-Session 4, track B. Rust: `port/crates/mr-sim/src/particles.rs` (the
+Session 4, track B; Session 5, track F. Rust: `port/crates/mr-sim/src/particles.rs` (the
 simulation), `port/crates/mr-bevy/src/effects.rs` (drawing),
 `port/crates/mr-bevy/src/animtex.rs` (animated textures). Checks:
 `mr-particles CAPDIR` (sim vs oracle), `tools/oracle/fx_capture.py` (RAM +
@@ -136,22 +136,145 @@ particles"); effects.rs draws them with the rest.
   0x10, 0x13, 0x14, 0x17: billboards above the kart from the effect's
   record fields +0x300..+0x340, wobbling with the kart's phase +0x4D7).
   [CODE 8007e21c, 80037b80]
-- Not drawn yet: FUN_80037B80's function cases (0 FUN_80036A34, 0xB
-  FUN_800365C0, 0xC FUN_800376A4, 0xE FUN_80037018, 0x15 FUN_80037364),
-  the exhaust flames FUN_8007D660 (+0x4B4 > 0xF; vehicle exhaust points,
-  colour table 0x800AC5E4, frame bytes DAT_800B07B4..07B7), the 3D
-  explosion shapes of FUN_800342B8 (list 0x800C84B8; the white core of an
-  explosion), the pickup shadows, the course ambient list 0x800D75D0
-  (DAT_800B0ACA, off on DOCK).
+- **Status shapes** (Session 5, mr-bevy kartfx.rs): FUN_80037B80's
+  function cases build quads in FUN_800313BC's list (0x800C2668, 0x4C
+  bytes each: corners v0 +0, v1 +0xC, v2 +0x18, v3 +0x24 in view units,
+  uv / colour per corner at +0x30 + 5k, slot +0x44, CLUT add +0x46, tpage
+  add +0x48 (0x60 opaque), +0x4A nclip, +0x4B quad (else a triangle);
+  the GPU gets v0, v1, v3, v2; FUN_800313BC culls the list at 0x2000 view
+  units from the eye and sorts at (OTZ + bias) * 4). FUN_8007D58C(x, y, z,
+  M) = M * (-x, y, -z) >> 7. [CODE 800313bc, 8007d58c]
+  - 0 FUN_80036A34: a 3 x 3 grid in the kart's plane (matrix +0x18C),
+    x in {(+0x164 - 0x80) t / 16, 0, (+0x166 + 0x80) t / 16}, z in
+    {(+0x168 + 0x80) t / 16, 0, (+0x16A - 0x80) t / 16}, t = +0x468 (from
+    0x10 on: min(300 - t, 0x10)); four quads (index table 0x80020F54) with
+    the uv corners (0x40..0x7F, 0xC0..0xFF) rotated one step per quad, slot
+    0x14 CLUT 0xD, opaque, drawn front (bias +0x20) and back (the same
+    quad reversed, bias -0x20, second list 0x800C2798).
+  - 0xB FUN_800365C0: an additive box at the driver point +0x330 (matrix
+    +0x1CC): half width (+0x188 + +0x18A) / 2 * t / 32, height
+    (+0x188 + +0x18A + 0x40) * t / 32, t = min(+0x468, 0x20); six quads
+    (index table 0x80020F3C), uv (0, 0xC0)..(0x1F, 0xDF) slot 0x15 CLUT
+    0xC, grey min(0x2C - +0x468, 0x20) * 4, nclip, bias -0x30.
+  - 0xC FUN_800376A4: two additive triangles from the kart (matrix +0x1AC,
+    along its length and its width at height -+0x16E) to the point +0x300,
+    uv (0x6F, 0xAF) (0x79, 0xAF) (0x74, 0xB9) slot 0x14 CLUT 9, grey
+    +0x310 / 4 at the kart and +0x310 at the point.
+  - 0xE FUN_80037018 / 0x15 FUN_80037364: one opaque quad at the look
+    point +0x324 (matrix +0x1EC), 0xC0 in front, width 4t / 6.25t, uv
+    (0, 0x80)..(0x1F, 0xAF) slot 0x14 CLUT 8 / (0x40, 0xAD)..(0x71, 0xBF)
+    slot 0x15 CLUT 9 (t: +0x468, from 0x20 on min(300 - t, 0x20)).
+  The inline billboard cases sort with OT bias -0x20 (0x10: -0x60) in
+  FUN_80011E3C (index = OTZ * 4 + bias * 4); the port keeps that as a depth
+  pull of the occlusion test. [CODE 80036a34, 800365c0, 800376a4,
+  80037018, 80037364, 80011e3c] Not seen in any oracle capture (the
+  recorded races have no character specials); [CODE] only.
+- **Far-kart impostor** FUN_8007D660 (Session 5): not an exhaust flame. The
+  kart LOD byte +0x4B4 is (|kart - eye| >> 10)^2 / 0x1200 capped at 0x20
+  (FUN_8002976C, recomputed each frame; the port's formula matches the
+  oracle's byte for all six karts at VB 3650 / 4420); at 0x10 and above the
+  game draws no model (FUN_80026F3C / FUN_800276E8 only below 0x10) but,
+  from FUN_8007E21C (within 640000 of the eye on x and z), seven ball
+  sprites (u 0xE2 v 0x40, 0x10 x 0x10, slot 0x15 CLUT 7; constants
+  DAT_800B07B4..07B7): one per wheel (+0x171 of them: black, red 0xC6 0x20
+  0x18 for vehicle 4), the body (vehicle colour table 0x800AC5E4 by +0x4B1
+  times the depth-cue factors +0x414 / +0x418 / +0x41C, sized from the
+  body rectangle and the view angle to the camera yaw), and the driver's
+  two colours (table 0x800AC224, stride 0x14, by +0x4B2; at +0x330 and
+  +0x324). The oracle's GP0 at VB 3650 draws exactly those seven sprites
+  for karts 2 and 4 (colours (89, 49, 40) / (32, 32, 40) / (255, 150, 0)
+  and (239, 247, 247) / (255, 178, 121) / (215, 215, 215) = the tables).
+  mr-bevy draws it only with `faithful_draw_distance` (and hides the model);
+  otherwise full models at every distance. [CODE 8007d660, 8002976c,
+  8007e21c] [GP0]
+- **Pickup shadows** (Session 5, mr-bevy pickupshadow.rs): the shadow list
+  0x800C8B38 has 230 entries: karts 0..5 (FUN_8003E3A0 by +0x4D7) and the
+  pickups at 6 + pickup slot, built once by FUN_8007B800 at race load: for
+  item boxes (size 8), challenge objects (7, when shown) and tokens (4) at
+  the pickup's x, z: the ground under it (FUN_8003DDB0, skipped when none),
+  the ground matrix FUN_800252A4(FUN_8003CCBC(face normal)), corners table
+  0x800AC168 (+-384) * size / 16 rotated (view units), tile slot 0x14 (0xA0,
+  0) 32 x 32, intensity 0x80, tpage add 0x40 (B - F); the scale byte +0x29
+  is the pickup's draw scale (FUN_8007BBF0). FUN_8002ADA8 draws every entry
+  with count and scale non-zero, within 0x30000 of the eye, faded from view
+  z 0x1000 to 0x1800, back faces culled (RotAverageNclip4). [CODE 8007b800,
+  8002ada8, 8007bbf0] [RAM: 76 / 76 records exact vs the capture's list
+  (44 boxes, 32 tokens), test `pickup_shadow_records_match_the_oracle`]
+- **Flat quads 0x800C84B8** (FUN_800342B8; Session 5, mr-sim particles.rs
+  `Flats`, mr-bevy `flat_prims`). Not an explosion core: 32 entries of 0x34
+  bytes (position, four corners in view units +0xC.., uv +0x24.., tpage
+  add +0x28, life +0x2A, slot +0x2C, CLUT +0x2D, scale +0x2E, flags +0x2F,
+  growth +0x30, colour +0x31..), ring DAT_800B07EC, moved by FUN_80033B98
+  (life -= dt, a quad whose life runs out is drawn once more with life
+  0x8000; scale += growth * dt up to 0xFF). Two spawners, both in the race
+  frame FUN_8007916C for each human kart:
+  - FUN_800330D4: a splash ring on the water (x, +0x398, z), size
+    +0x176 * +0x442 >> 12, when +0x4DB, or afloat (+0x4C8, or under the
+    ground in a special move) and the random byte is < 0x20; flat (the
+    default matrix 0x800A87B0 is the identity), slot 0x15 CLUT 0xD
+    (0x60, 0xE0) 32 x 32, additive, scale 0x40 growing 2 per VBlank,
+    life 0x20 with the last 16 VBlanks faded, split 2 x 2 with the quarter
+    ring mirrored into each quarter. FUN_8008650C (the ambient list) is the
+    other caller, off on DOCK.
+  - FUN_80033440: per wheel a skid intensity (+0x3F + 0x2C * wheel, +5 per
+    VBlank to 0x55 while sliding on the ground, -4 otherwise) and, when it
+    is non-zero and the wheel moved at least +0x38 per VBlank, a one-frame
+    B - F quad (slot 0x14 CLUT 0, 2 x 2 texels at (0xF, 0xF), colour
+    intensity * 3 fading to black at its far edge) from the wheel's last
+    position to its new one, as wide as +0x38: tyre streaks under a
+    sliding kart, not persistent marks.
+  [CODE 800342b8, 80033c44, 800330d4, 80033440, 80033b98, 8007916c] [RAM:
+  `mr-particles analysis/s5/fx/race3d` teacher-forced per race frame
+  (skids from the frame's record and last frame's intensities; splashes
+  where the game spawned one, its random decision not replayed): 126,272 /
+  126,272 slot-frames exact over 3,946 frames, 1,801 skid quads and 10
+  splashes]
+- Not drawn: the course ambient list 0x800D75D0 (DAT_800B0ACA, off on
+  DOCK). The three 256 x 5 "sprites" at (256, 193) are not visible: each is
+  drawn through a DrawEnv switch (drawing area 512..1023, offset 512) and
+  copies a 15-bit band of VRAM rows 211 / 205 / 199 (x 768..1023) to rows
+  193..197, at three places in the ordering table (a mid-frame texture
+  swap); the code that queues them was not found. [GP0]
 
 Sources in mr-bevy: `--replay-capture DIR` of an fx capture (everything
 read from the captured RAM at the replayed VBlank, the HUD too), or the live
-session: `Session::particles()` / `sparks()` (track A owns them in the race
-state and spawns them from the item code) and `Session::items()` written
-into a scratch game-layout memory with the kart records, so both sources
-share one conversion. Screenshots against the oracle:
-`analysis/fx/shots/sbs_fx.png` (VB 2350, 2510, 2760, 3010, 3650, 4420;
-oracle left, Bevy right, `tools/oracle/fx_shots.py` + `fx_sbs.py`).
+session: `Session::particles()` / `sparks()` / `flats()` (in the race
+state; the item code spawns into them) and `Session::items()` written into
+a scratch game-layout memory with the kart records, so both sources share
+one conversion. Screenshots against the oracle: `mr-bevy --replay-capture
+DIR --fx-shots OUT VB,VB,...` (window shots b_<VB>.png at the replayed
+VBlanks) next to `tools/oracle/fx_capture.py --shots` / `fx_shots.py`
+(o_<VB>.png), combined by `fx_sbs.py`; Session 5 images in analysis/s5/fx.
+
+## Drawing: the PS1 effects pass (Session 5, mr-bevy psxfx.rs)
+
+Everything above (particles, sparks, pickups, projectiles, status
+billboards and shapes, impostors, flat quads, kart and pickup shadows) is
+drawn by one pass after Bevy's main transparent pass, for the chase camera:
+
+- **Blending in the game's colour space.** The PS1 blends the 15-bit
+  framebuffer values themselves (gamma-encoded); Bevy blends linear light
+  on an sRGB target. The pass copies the resolved frame to a non-sRGB
+  texture of the same bytes, draws the primitives back to front by view
+  depth (the ordering table's order) with fixed-function blend states that
+  act on those bytes (ABR 0 = src alpha 0.5, ABR 1 = one + one, ABR 2 =
+  reverse subtract, ABR 3 = one + one with F / 4), and writes the result
+  back into every MSAA sample. Texels: modulation texel * rgb / 128
+  clamped; 0x0000 transparent; on a semi-transparent primitive a texel with
+  STP clear is drawn opaque. Remaining error: 8-bit channels instead of
+  5-bit (no 15-bit quantisation, no dithering).
+- **Occlusion.** Each fragment is tested against the scene depth (the
+  sprite's own depth; camera-facing quads are flat in view space). The
+  game has no depth buffer: its ordering table draws the "ground" list
+  first, so a sprite sitting in or on the ground is never cut by it, while
+  near-list geometry (walls, docks, karts) in front of it covers it. The
+  pass exempts an occluder that is an upward-facing surface below the
+  sprite's centre (ground-flat sprites and shadows: + half their size) and
+  within twice the sprite's size of its centre; any other nearer surface
+  hides it. Status billboards keep their OT bias as a pull toward the eye
+  (OTZ = view z / 4 assumed: the PSYQ default ZSF4 [INFER]).
+- Options: `fx_blend = psx | linear` (linear: the same equations in
+  linear light), `fx_depth_test = true | false`.
 
 ## Animated textures (RAW type 0x22): FUN_8007A9DC -> FUN_800311AC
 
@@ -168,4 +291,13 @@ DAT_800B07D4 (FUN_8005C2EC). DOCK has strips 0xA, 0xC (water), 0x19,
 
 mr-bevy animtex.rs does the same from the session's frame counter and
 rewrites the affected texels of every cached page image
-(`VramTextures::write_rect`).
+(`VramTextures::write_rect`, and the effects pass's own raw-colour pages,
+`FxPages::refresh`). Timing (Session 5): the counter steps after the
+frame's draw, so the strips are shown for the counter one race frame (dt)
+earlier. Evidence (analysis/s5/fx/race3e, 26 `vram_peek` reads of strip
+0x19's rectangle at the moment of each oracle screenshot): the uploaded
+frame is the one of the RAM row's counter 16 times, one strip frame
+earlier 9 times, two earlier once; the item-box stars in the side-by-sides
+(VB 2431, 2510, 3010) match within one frame. Open: no read matches a
+decoded frame exactly (best 112 of 896 halfwords differ), so the RAW strip
+decode is slightly off (alignment) though the pictures match.

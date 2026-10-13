@@ -317,7 +317,7 @@ impl SimRun {
         let mut disc = mr_disc::Disc::open_default().expect("open the disc (MRM_DISC or game.toml)");
         // Session::new starts at race load: intro, the "Copy the buttons"
         // start game, then GO (docs/spec/kart-physics.md, race flow).
-        let mut session = if oracle_grid {
+        let session = if oracle_grid {
             // Comparisons with the oracle's lap routes: the solo session, with
             // the catch-up the oracle race had (player 6th, leader far ahead).
             // Overrides before the countdown, the ramped value after

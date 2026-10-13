@@ -4,6 +4,8 @@
 
 use bevy::prelude::*;
 
+/// Bit 0 (unused by the race: kept for the complete pad map).
+#[allow(dead_code)]
 pub const SELECT: u16 = 1 << 0;
 pub const START: u16 = 1 << 3;
 pub const UP: u16 = 1 << 4;

@@ -134,7 +134,7 @@ fn teacher(run: &Run, cap: &Capture, base: &[u8], s: &mut Session, from: usize, 
         for d in 0..=skip_max {
             match forced(s, &ma, &mb, d) {
                 Ok(()) => {
-                    let ok = s.items().pickups == want.pickups && s.items().projectiles == want.projectiles;
+                    let ok = s.items().pickups == want.pickups && s.items().projectiles == want.projectiles && s.items().blink == want.blink;
                     let karts_ok = ok && karts_match(s, &mb, nk);
                     let better = match chosen {
                         None => true,
@@ -220,20 +220,29 @@ fn teacher(run: &Run, cap: &Capture, base: &[u8], s: &mut Session, from: usize, 
 
 #[allow(clippy::too_many_arguments)]
 fn free(run: &Run, cap: &Capture, base: &[u8], s: &mut Session, from: usize, n: usize, skip_max: u32, verbose: bool) {
-    // Pass 1: the FUN_8007F03C skips (teacher forced).
+    // Pass 1: the FUN_8007F03C skips (teacher forced, as in `tf`).
+    let nk = 1 + s.others.len();
     let mut skip_at: BTreeMap<usize, u32> = BTreeMap::new();
     for i in from..n {
         let ma = cap.mem_at(run.ticks[i], Some(base));
         let mb = cap.mem_at(run.ticks[i + 1], Some(base));
         let want = ItemState::read(&mb);
+        let mut best: Option<(u32, bool)> = None;
         for d in 0..=skip_max {
             if forced(s, &ma, &mb, d).is_err() {
                 break;
             }
-            if s.items().pickups == want.pickups && s.items().projectiles == want.projectiles {
-                skip_at.insert(i, d);
+            let ok = s.items().pickups == want.pickups && s.items().projectiles == want.projectiles && s.items().blink == want.blink;
+            if ok && karts_match(s, &mb, nk) {
+                best = Some((d, true));
                 break;
             }
+            if ok && best.is_none() {
+                best = Some((d, false));
+            }
+        }
+        if let Some((d, _)) = best {
+            skip_at.insert(i, d);
         }
     }
     // Pass 2: free run of the player kart and the item state.
@@ -244,6 +253,7 @@ fn free(run: &Run, cap: &Capture, base: &[u8], s: &mut Session, from: usize, n: 
     let mut items = s.globals.items.clone();
     let mut first_diff = None;
     let mut first_item_diff = None;
+    let mut first_any: Option<usize> = None;
     let mut hits = 0;
     for i in from..n {
         let ma = cap.mem_at(run.ticks[i], Some(base));
@@ -275,11 +285,21 @@ fn free(run: &Run, cap: &Capture, base: &[u8], s: &mut Session, from: usize, n: 
         let refr = mb.slice(KART_ARRAY, RECORD_SIZE);
         let mut mine = refr.to_vec();
         player.to_record(&mut mine);
+        if first_any.is_none() {
+            let d = mr_sim::kart::diff_records(&mine, refr);
+            if !d.is_empty() {
+                first_any = Some(i + 1);
+                println!("first player field difference at tick {}: {:?}", i + 1, d.iter().take(10).collect::<Vec<_>>());
+            }
+        }
         if first_diff.is_none() && (mine[..0x12] != refr[..0x12] || mine[0x2F4..0x300] != refr[0x2F4..0x300]) {
             first_diff = Some(i + 1);
             println!("first motion difference at tick {}: {:?}", i + 1, mr_sim::kart::diff_records(&mine, refr).iter().take(12).collect::<Vec<_>>());
         }
         let want = ItemState::read(&mb);
+        if first_item_diff.is_none() && (items.next_projectile, items.special, items.special_clock, items.blink, &items.hit_bits) != (want.next_projectile, want.special, want.special_clock, want.blink, &want.hit_bits) {
+            println!("tick {}: item globals differ: port {:?} game {:?}", i + 1, (items.next_projectile, items.special, items.special_clock, items.blink), (want.next_projectile, want.special, want.special_clock, want.blink));
+        }
         if first_item_diff.is_none() && (items.pickups != want.pickups || items.projectiles != want.projectiles) {
             first_item_diff = Some(i + 1);
             println!("first item-state difference at tick {}:", i + 1);

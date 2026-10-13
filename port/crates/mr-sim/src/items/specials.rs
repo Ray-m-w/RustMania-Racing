@@ -424,6 +424,16 @@ fn rng_skip(g: &mut RaceGlobals, n: u32) {
     g.rng = g.rng.wrapping_add(n);
 }
 
+/// `n` bytes of the random stream (unsigned).
+fn rbytes(g: &mut RaceGlobals, w: &World, n: usize) -> Vec<i32> {
+    (0..n).map(|_| crate::update::rng_next(g, w) as i32).collect()
+}
+
+/// A random byte read as a signed char.
+fn sb(v: i32) -> i32 {
+    v as u8 as i8 as i32
+}
+
 /// FUN_8006C388: the effects of the character special in progress
 /// (0x800B07F4 != -1): the special's clock 0x800B07F6 and each victim's
 /// effect clock +0x468 run to 300 VBlanks (twice as fast while a human
@@ -557,9 +567,24 @@ fn effect_step(k: &mut KartState, j: usize, old_t: i32, near: bool, g: &mut Race
             }
             if near {
                 // Smoke puff: a size byte, rand() for its height, 8 bytes.
-                rng_skip(g, 1);
-                let _ = rand();
-                rng_skip(g, 8);
+                let b0 = crate::update::rng_next(g, w) as i8 as i32;
+                let sz = ((((if b0 < 0 { b0 + 7 } else { b0 }) as u32) >> 3).wrapping_add(0x20) as i32) << 16 >> 16;
+                let h = rand();
+                let r = rbytes(g, w, 8);
+                let c = |v: i32| (div_pow2(sb(v), 1) + 0x60) & 0xFF;
+                super::particle(
+                    g,
+                    [k.drv_x + sb(r[0]) * 0x20, k.ref_y - h / 2, k.drv_z + sb(r[1]) * 0x20],
+                    [0, -r[2], 0],
+                    -0x20,
+                    r[3] << 4,
+                    div_pow2(sb(r[4]), 1),
+                    0x17,
+                    [c(r[5]), c(r[6]), c(r[7])],
+                    sz,
+                    sz,
+                    0x10,
+                );
             }
             for _ in 0..substeps(dt) {
                 let d = div_pow2(k.eff_30c.wrapping_sub(k.engine as i32), 6);
@@ -605,7 +630,21 @@ fn effect_step(k: &mut KartState, j: usize, old_t: i32, near: bool, g: &mut Race
             k.target_x = tt;
             // FUN_800861F0 glow (render).
             if k.effect == 4 && near && crate::update::rng_next(g, w) < 0x20 {
-                rng_skip(g, 10);
+                let r = rbytes(g, w, 10);
+                let c = (r[0] >> 2) + 0x20;
+                super::particle(
+                    g,
+                    [k.look_x + sb(r[1]) * 4, k.look_y - r[2] * 4 - r[3] * 4, k.look_z + sb(r[4]) * 4],
+                    [sb(r[5]), -r[6], sb(r[7])],
+                    -0x10,
+                    r[8] << 4,
+                    div_pow2(sb(r[9]), 1),
+                    0x14,
+                    [0, 0x60, 0],
+                    c,
+                    c,
+                    0x20,
+                );
             }
         }
         5 => {
@@ -615,9 +654,20 @@ fn effect_step(k: &mut KartState, j: usize, old_t: i32, near: bool, g: &mut Race
                     k.spin_rate = b;
                     k.spin_timer = ((crate::update::rng_next(g, w) >> 3) as i16) + 0x10;
                     if near {
-                        // Seven particles (3 bytes, then 2 more for the
-                        // first two and 3 each).
-                        rng_skip(g, 3 + 2 * 2 + 7 * 3);
+                        let o = rbytes(g, w, 3);
+                        let base = [k.look_x + sb(o[0]) * 0x20, k.look_y + sb(o[1]) * 0x20, k.look_z + sb(o[2]) * 0x20];
+                        for i in 0..7 {
+                            let (kind, rgb, a, s) = if i < 2 {
+                                let a = crate::update::rng_next(g, w) as i32;
+                                let s = crate::update::rng_next(g, w) as i32;
+                                (0xD, [0x80; 3], a << 4, div_pow2(sb(s), 1))
+                            } else {
+                                (0xC, [0xC0, 0, 0], 0, 0)
+                            };
+                            let v = rbytes(g, w, 3);
+                            super::particle(g, base, [sb(v[0]), sb(v[1]), sb(v[2])], 8, a, s, kind, rgb, 0x30, 0x30, 0x18);
+                        }
+                        // The particle loop reuses the kart loop counter.
                         *stop = true;
                     }
                     crate::sound::at(g, w, 0x18, 0x1538, 0x70, [k.x, k.y, k.z], -1);
@@ -654,9 +704,25 @@ fn effect_step(k: &mut KartState, j: usize, old_t: i32, near: bool, g: &mut Race
             if near && crate::update::rng_next(g, w) < 0x40 {
                 let r1 = crate::update::rng_next(g, w) as i8;
                 if r1 < 0 {
-                    rng_skip(g, 8);
+                    let r = rbytes(g, w, 8);
+                    let c = (r[0] >> 2) + 0x20;
+                    super::particle(g, [k.x + sb(r[1]) * 8, k.y, k.z + sb(r[2]) * 8], [sb(r[3]), -r[4], sb(r[5])], 8, r[6] << 4, div_pow2(sb(r[7]), 1), 2, [0x80, 0x60, 0x40], c, c, 0x18);
                 } else {
-                    rng_skip(g, 2 + 7);
+                    let r = rbytes(g, w, 9);
+                    let (ww, hh, kind) = if r[1] < 0x80 { (0x17, 0x2F, 0x1C) } else { (0x20, 0x10, 0x1B) };
+                    super::particle(
+                        g,
+                        [k.x + sb(r[2]) * 2, k.y, k.z + sb(r[3]) * 2],
+                        [sb(r[4]) << 1, -0x200 - r[5], sb(r[6]) << 1],
+                        0x20,
+                        r[7] << 4,
+                        div_pow2(sb(r[8]), 1),
+                        kind,
+                        [0x80; 3],
+                        (ww << 17) >> 16,
+                        (hh << 17) >> 16,
+                        0x20,
+                    );
                 }
             }
         }
@@ -679,7 +745,23 @@ fn effect_step(k: &mut KartState, j: usize, old_t: i32, near: bool, g: &mut Race
                 k.target_x = if pa < d { pa } else { d };
                 k.target_yaw = if pa < d { d - pa } else { 0 };
                 if (d << 16) != 0 && near {
-                    rng_skip(g, 9);
+                    let r = rbytes(g, w, 9);
+                    let b0 = sb(r[0]);
+                    let sz = ((((if b0 < 0 { b0 + 3 } else { b0 }) as u32) >> 2).wrapping_add(0x40) as i32) << 16 >> 16;
+                    let c = |v: i32| (div_pow2(sb(v), 1) + 0x60) & 0xFF;
+                    super::particle(
+                        g,
+                        [k.drv_x + sb(r[1]) * 0x40, k.ref_y + sb(r[2]) * 0x40, k.drv_z + sb(r[3]) * 0x40],
+                        [0; 3],
+                        0,
+                        r[4] << 4,
+                        div_pow2(sb(r[5]), 1),
+                        0x17,
+                        [c(r[6]), c(r[7]), c(r[8])],
+                        sz,
+                        sz,
+                        0x10,
+                    );
                 }
             } else {
                 k.target_x = -1;
@@ -695,10 +777,26 @@ fn effect_step(k: &mut KartState, j: usize, old_t: i32, near: bool, g: &mut Race
         10 => {
             if near {
                 if crate::update::rng_next(g, w) < 0x40 {
-                    rng_skip(g, 6);
+                    let r = rbytes(g, w, 6);
+                    let c = (r[0] >> 1) | 0x80;
+                    super::particle(g, [k.look_x + sb(r[1]) * 0x20, k.look_y + sb(r[2]) * 0x20, k.look_z + sb(r[3]) * 0x20], [0; 3], 0, r[4] << 4, div_pow2(sb(r[5]), 1), 0x14, [0x80; 3], c, c, 0x30);
                 }
                 if crate::update::rng_next(g, w) < 0x10 {
-                    rng_skip(g, 9);
+                    let r = rbytes(g, w, 9);
+                    let c = (r[0] >> 2) | 0x40;
+                    super::particle(
+                        g,
+                        [k.look_x + sb(r[1]) * 0x20, k.look_y + sb(r[2]) * 0x20, k.look_z + sb(r[3]) * 0x20],
+                        [sb(r[4]) << 2, r[5] * -2 - 0x100, sb(r[6]) << 2],
+                        0x20,
+                        r[7] << 4,
+                        div_pow2(sb(r[8]), 1),
+                        9,
+                        [0x80; 3],
+                        c,
+                        c,
+                        0x18,
+                    );
                 }
             }
         }

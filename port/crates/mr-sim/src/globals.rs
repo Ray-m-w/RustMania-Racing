@@ -71,6 +71,9 @@ pub struct RaceGlobals {
     /// FUN_80064B5C's stack slots a special move reads without writing
     /// (see `StackSlots`): what the previous kart update left there.
     pub stack: StackSlots,
+    /// Particles and sparks (crate::particles); None in analysis runs that
+    /// do not track them.
+    pub fx: Option<Box<crate::items::Fx>>,
 }
 
 /// Two locals of FUN_80064B5C that its special-move path (+0x4D6) reads
@@ -141,6 +144,7 @@ impl RaceGlobals {
             sound: Default::default(),
             items: crate::items::ItemState::read(m),
             stack: StackSlots::default(),
+            fx: None,
             lap_record: m.i32(0x800E_0190u32.wrapping_add((8 * m.i8(0x800B_0E32) as i32 + 0x20 * m.i8(0x800B_0E38) as i32) as u32)),
         }
     }

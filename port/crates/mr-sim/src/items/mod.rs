@@ -270,6 +270,9 @@ pub struct ItemState {
     pub special_clock: i16,
     /// 0x800B0E95: slot of the kart that started it.
     pub special_owner: u8,
+    /// 0x800B0B90: four token spin angles FUN_8003C5FC sets each frame
+    /// (camera roll + a wobble; the tokens' draw angles).
+    pub token_spin: [i16; 4],
     /// 0x800B07B0 / 0x800B07B1: two blink toggles and their timers stepped
     /// by FUN_8007A9DC (random byte draws).
     pub blink: [u8; 4],
@@ -296,6 +299,7 @@ impl Default for ItemState {
             special_clock: 0,
             special_owner: 0,
             blink: [0; 4],
+            token_spin: [0; 4],
             hit_bits: vec![0; 2 * HIT_CHARACTERS],
             kart_parts: [(0, 0); 8],
             events: Vec::new(),
@@ -318,6 +322,7 @@ pub mod addr {
     pub const SPECIAL_CLOCK: u32 = 0x800B_07F6;
     pub const SPECIAL_OWNER: u32 = 0x800B_0E95;
     pub const BLINK: u32 = 0x800B_07B0;
+    pub const TOKEN_SPIN: u32 = 0x800B_0B90;
 }
 
 impl ItemState {
@@ -336,6 +341,7 @@ impl ItemState {
             special_clock: m.i16(addr::SPECIAL_CLOCK),
             special_owner: m.u8(addr::SPECIAL_OWNER),
             blink: [m.u8(addr::BLINK), m.u8(addr::BLINK + 1), m.u8(addr::BLINK + 2), m.u8(addr::BLINK + 3)],
+            token_spin: std::array::from_fn(|k| m.i16(addr::TOKEN_SPIN + 2 * k as u32)),
             hit_bits: (0..2 * HIT_CHARACTERS as u32).map(|i| m.u32(HIT_BITS + 4 * i)).collect(),
             kart_parts: std::array::from_fn(|j| {
                 let b = crate::kart::KART_ARRAY + 0x504 * j as u32;
@@ -374,9 +380,47 @@ impl ItemState {
         for k in 0..4 {
             m.put_u8(addr::BLINK + k as u32, self.blink[k]);
         }
+        for k in 0..4 {
+            m.put_u16(addr::TOKEN_SPIN + 2 * k as u32, self.token_spin[k] as u16);
+        }
         for (i, w) in self.hit_bits.iter().enumerate() {
             m.put_u32(HIT_BITS + 4 * i as u32, *w);
         }
+    }
+}
+
+/// Particles and spark streaks (track B's `mr_sim::particles`): the game's
+/// lists 0x800E0C20 / 0x800B4540, filled by the item code's spawns.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Fx {
+    pub particles: crate::particles::Particles,
+    pub sparks: crate::particles::Sparks,
+}
+
+/// FUN_800870E8(x, y, z, vx, vy, vz, gravity, angle, spin, kind, r, g, b,
+/// w, h, life) into the race's particle list (none in analysis runs).
+#[allow(clippy::too_many_arguments)]
+pub fn particle(g: &mut crate::globals::RaceGlobals, pos: [i32; 3], vel: [i32; 3], gravity: i32, angle: i32, spin: i32, kind: i32, rgb: [i32; 3], w: i32, h: i32, life: i32) {
+    if let Some(fx) = g.fx.as_mut() {
+        fx.particles.spawn(&crate::particles::Spawn {
+            pos,
+            vel,
+            gravity,
+            angle: angle as u16,
+            spin: spin as i16,
+            kind: kind as u8,
+            rgb: [rgb[0] as u8, rgb[1] as u8, rgb[2] as u8],
+            w: w as i16,
+            h: h as i16,
+            life: life as i16,
+        });
+    }
+}
+
+/// FUN_800326B4(x, y, z, vx, vy, vz, life, len, r, g, b): a spark streak.
+pub fn spark(g: &mut crate::globals::RaceGlobals, pos: [i32; 3], vel: [i32; 3], life: i32, len: i32, rgb: [i32; 3]) {
+    if let Some(fx) = g.fx.as_mut() {
+        fx.sparks.spawn(pos, vel, life as u8, len as u8, [rgb[0] as u8, rgb[1] as u8, rgb[2] as u8]);
     }
 }
 
@@ -443,5 +487,20 @@ pub fn blink_timers(g: &mut crate::globals::RaceGlobals, w: &crate::world::World
             g.items.blink[2 * i + 1] = (b >> 4) + 7;
             g.items.blink[2 * i] = (g.items.blink[2 * i] + 1) & 1;
         }
+    }
+}
+
+/// The end of FUN_8003C5FC (0x8003C9xx): four token spin angles, the
+/// active camera's roll plus a sine wobble on the frame counter
+/// 0x800B0D90.
+pub fn token_spins(g: &mut crate::globals::RaceGlobals, w: &crate::world::World, camera_roll: i16) {
+    let t = &w.tables;
+    let f = (g.frame & 0x3F) * 0x40;
+    let i1 = (f + 0x400) & 0xFFF;
+    let i2 = (i1 + 0x400) & 0xFFF;
+    let i3 = (i2 + 0x400) & 0xFC0;
+    for (k, idx) in [f, i1, i2, i3].into_iter().enumerate() {
+        let v = (camera_roll as i32).wrapping_add(crate::fixed::div_pow2(t.sin_raw(idx), 6) as i16 as i32) & 0xFFF;
+        g.items.token_spin[k] = v as i16;
     }
 }

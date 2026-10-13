@@ -159,8 +159,15 @@ pub fn kart_ground(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
         rumble(k, g, strength);
         crate::sound::wall_hit(k, g, w, strength);
         if (k.player_index as i32) < g.humans as i32 {
-            // Wall sparks: three particles, three random bytes each.
-            g.rng = g.rng.wrapping_add(9);
+            // Wall sparks (FUN_800326B4 x3) at the kart's side facing the
+            // wall.
+            let u = ((k.heading as i32).wrapping_sub(h.rel_angle).wrapping_add(0x400)) & 0xFFF;
+            let r = k.spark_offset as i32;
+            let pos = [k.x.wrapping_add(r.wrapping_mul(t.sin_raw(u)) >> 9), k.ref_y, k.z.wrapping_add(r.wrapping_mul(t.cos_raw(u)) >> 9)];
+            for _ in 0..3 {
+                let v = [0, 1, 2].map(|_| (rng_next(g, w) as i8 as i32) << 1);
+                crate::items::spark(g, pos, v, 0x18, 0x10, [0xFF, 0x7F, 0]);
+            }
         }
         if k.carried != -1 {
             unreachable_in_scope!("wall hit while carrying");

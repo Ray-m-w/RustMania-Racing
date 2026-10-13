@@ -88,8 +88,10 @@ fn explode(i: usize, k_owner: Option<&mut KartState>, g: &mut RaceGlobals, w: &W
         rumble(o, g, 0x4B);
     }
     // FUN_800870E8 explosion particle: angle = *rng++ << 4.
-    let _ = rng_next(g, w);
+    let b = rng_next(g, w) as i32;
     let pos = g.items.projectiles[i].pos;
+    let spin = g.items.projectiles[i].spin_rate as i32;
+    super::particle(g, pos, [0; 3], 0, b << 4, spin, 0x11, [0x80; 3], 0x180, 0x180, 0x20);
     crate::sound::at(g, w, 0x14, 0x1600, 0x80, pos, -1);
     g.items.events.push(ItemEvent::Explode { projectile: i as u8, pos });
 }
@@ -201,11 +203,30 @@ pub fn reflect(t: &crate::tables::Tables, v: [i32; 3], n: [i16; 3]) -> [i32; 3] 
 
 /// Three wall / floor sparks (FUN_800326B4) and, for flag 1, a new spin
 /// rate: their random draws.
-fn sparks(p: &mut Projectile, g: &mut RaceGlobals, w: &World, respin: bool) {
-    g.rng = g.rng.wrapping_add(9);
+fn sparks(p: &mut Projectile, g: &mut RaceGlobals, w: &World, respin: bool, dir: Spray) {
+    for _ in 0..3 {
+        let r0 = rng_next(g, w) as i8 as i32;
+        let r1 = rng_next(g, w) as i8 as i32;
+        let r2 = rng_next(g, w) as i8 as i32;
+        let vel = match dir {
+            Spray::Wall(ax, az) => [ax + r0 * 2, r1 << 1, az + r2 * 2],
+            Spray::Floor => [r0 << 1, r1 * 2 - 0x100, r2 << 1],
+            Spray::Ceiling => [r0 << 1, r1 * 2 + 0x100, r2 << 1],
+        };
+        super::spark(g, p.pos, vel, 0x18, 0x10, [0xFF, 0x7F, 0]);
+    }
     if respin {
         p.spin_rate = rng_next(g, w) as i8 as i16;
     }
+}
+
+/// Which way a bounce's sparks fly: off a wall (its normal * 0x100), up
+/// from a floor, down from a ceiling.
+#[derive(Clone, Copy)]
+enum Spray {
+    Wall(i32, i32),
+    Floor,
+    Ceiling,
 }
 
 /// FUN_80069648: every live projectile, after the kart loop.
@@ -344,7 +365,12 @@ fn step(i: usize, karts: &mut [KartState], g: &mut RaceGlobals, w: &World, rand:
             p.vel[0] = h.vx;
             p.pos[2] = h.z;
             let respin = p.flags & 1 != 0;
-            sparks(&mut p, g, w, respin);
+            // The wall's direction (0x800B0ED0 / 0x800B0ED8: its points).
+            let wl = w.ter.walls[h.wall];
+            let (a, b) = (w.ter.wall_points[wl.p1 as usize], w.ter.wall_points[wl.p0 as usize]);
+            let (nz, nx) = (a.z.wrapping_sub(b.z), b.x.wrapping_sub(a.x));
+            let len = square_root0(t, mul(nz, nz).wrapping_add(mul(nx, nx))) + 1;
+            sparks(&mut p, g, w, respin, Spray::Wall(div(nz << 8, len), div(nx << 8, len)));
             if p.flags & 0x40 == 0 {
                 crate::sound::at(g, w, 0x21, 0x1600, 0x80, p.pos, -1);
             }
@@ -371,7 +397,7 @@ fn step(i: usize, karts: &mut [KartState], g: &mut RaceGlobals, w: &World, rand:
                         } else {
                             p.on_alt = 1;
                             p.vel = reflect(t, p.vel, n);
-                            sparks(&mut p, g, w, true);
+                            sparks(&mut p, g, w, true, Spray::Ceiling);
                         }
                         if p.flags & 0x40 == 0 {
                             crate::sound::at(g, w, 0x21, 0x1600, 0x80, p.pos, -1);
@@ -397,7 +423,7 @@ fn step(i: usize, karts: &mut [KartState], g: &mut RaceGlobals, w: &World, rand:
                         let n = w.ter.faces[near.face].normal;
                         p.vel = reflect(t, p.vel, n);
                         p.on_floor = 1;
-                        sparks(&mut p, g, w, true);
+                        sparks(&mut p, g, w, true, Spray::Floor);
                     }
                     if p.flags & 0x40 == 0 {
                         crate::sound::at(g, w, 0x21, 0x1600, 0x80, p.pos, -1);
@@ -436,15 +462,23 @@ fn step(i: usize, karts: &mut [KartState], g: &mut RaceGlobals, w: &World, rand:
     }
     let p = g.items.projectiles[i];
     if p.active {
-        // FUN_800861F0 shadow; trail particles: their random draws.
+        // FUN_800861F0 shadow (render); trail particles.
         if rng_next(g, w) < 0x80 {
-            g.rng = g.rng.wrapping_add(if p.flags & 0x200 != 0 {
-                4
-            } else if p.flags & 0x400 != 0 {
-                6
-            } else {
-                1
-            });
+            let c = ((rng_next(g, w) >> 2) + 0x40) as i32;
+            let v = [div_pow2(p.vel[0], 3), div_pow2(p.vel[1], 3), div_pow2(p.vel[2], 3)];
+            if p.flags & 0x600 != 0 {
+                let r0 = rng_next(g, w) as i8 as i32;
+                let r1 = rng_next(g, w) as i8 as i32;
+                let r2 = rng_next(g, w) as i8 as i32;
+                let pos = [p.pos[0] + r0 * 0x20, p.pos[1] + r1 * 0x20, p.pos[2] + r2 * 0x20];
+                if p.flags & 0x200 != 0 {
+                    super::particle(g, pos, v, 8, 0, 0, 0xF, [0, 0x80, 0x80], c, c, 0x20);
+                } else {
+                    let a = (rng_next(g, w) as i32) << 4;
+                    let s = div_pow2(rng_next(g, w) as i8 as i32, 1);
+                    super::particle(g, pos, v, 8, a, s, 9, [0x80, 0x80, 0x80], c, c, 0x20);
+                }
+            }
         }
     }
 }
@@ -503,8 +537,9 @@ fn hit(i: usize, j: usize, karts: &mut [KartState], g: &mut RaceGlobals, w: &Wor
     let v = &mut karts[j];
     v.event_bits |= if r < 0 { 0x20 } else { 0x10 };
     rumble(v, g, 200);
-    // FUN_800870E8 explosion particle.
-    let _ = rng_next(g, w);
+    let b = rng_next(g, w) as i32;
+    let vv = [karts[j].vx, karts[j].vy, karts[j].vz];
+    super::particle(g, p.pos, vv, 0, b << 4, p.spin_rate as i32, 0x11, [0x80; 3], 0x180, 0x180, 0x20);
     crate::sound::at(g, w, 0x14, 0x1600, 0x80, p.pos, -1);
     crate::sound::at(g, w, 10, 0x1600, 0x80, p.pos, -1);
     g.items.events.push(ItemEvent::Hit { victim: j as u8, shooter: o as u8, projectile: i as u8 });

@@ -362,6 +362,7 @@ impl Session {
             sound: Default::default(),
             items: Default::default(),
             stack: Default::default(),
+            fx: Some(Box::new(crate::items::Fx { particles: crate::particles::Particles::from_exe(&exe), sparks: Default::default() })),
         };
         // FUN_8008C4AC: the first human's grid slot (*rng++ % karts), the
         // other karts on the following slots; with no opponents the
@@ -586,6 +587,7 @@ impl Session {
         // 1. Water animation.
         let rng_world = |a: u32| w.rng_byte(a);
         let (wn, an) = self.water.step(&w.tables, g.dt, &mut g.rng, &rng_world);
+        crate::items::token_spins(g, w, self.camera.roll);
         if let Some(r) = self.rng_override.take() {
             g.rng = r;
         }
@@ -707,6 +709,19 @@ impl Session {
         };
         let mut env = SessionCameraEnv { peek_rand: std::mem::take(&mut self.camera_peek), world: w, rand_state: &mut self.rand_state, rng: &mut g.rng };
         camera::tick(&mut self.camera, &inp, &self.camera_tables, &mut env);
+        // 8. After the camera (FUN_8007916C @0x80079B30..): each human's
+        //    splash (FUN_800330D4 when +0x4DB, or in water / a special move
+        //    under the ground at random: one random byte), the particle and
+        //    spark lists (FUN_8008727C, FUN_800327D0).
+        for k in ks.iter().take(g.humans.max(0) as usize) {
+            if k.splash == 0 && (k.float_state != 0 || (k.below_ground != 0 && k.special != 0)) {
+                g.rng = g.rng.wrapping_add(1);
+            }
+        }
+        if let Some(fx) = g.fx.as_mut() {
+            fx.particles.update(g.dt, &w.tables.sin[..4096]);
+            fx.sparks.update(g.dt);
+        }
     }
 
     /// Idle (no buttons) until the player's race time (+0x358) reaches
@@ -806,6 +821,16 @@ impl Session {
         &self.globals.items
     }
 
+    /// The particle list (0x800E0C20; track B's `mr_sim::particles`).
+    pub fn particles(&self) -> Option<&crate::particles::Particles> {
+        self.globals.fx.as_ref().map(|f| &f.particles)
+    }
+
+    /// The spark streaks (0x800B4540).
+    pub fn sparks(&self) -> Option<&crate::particles::Sparks> {
+        self.globals.fx.as_ref().map(|f| &f.sparks)
+    }
+
     /// Analysis: a session holding the race the game has in memory `m`
     /// (an oracle capture's frame): every kart, its AI fields, the race
     /// globals and item state, the camera, the water animation, the BIOS
@@ -861,6 +886,7 @@ impl Session {
             rand_state: m.u32(0x8000_9010),
             cfg,
         };
+        s.globals.fx = Some(Box::new(crate::items::Fx { particles: crate::particles::Particles::from_exe(&exe), sparks: Default::default() }));
         s.load_mem(m);
         Ok(s)
     }
@@ -879,8 +905,10 @@ impl Session {
             o.ai = crate::ai::AiState::from_record(&o.record);
         }
         let stack = self.globals.stack;
+        let types = self.globals.fx.as_ref().map(|f| f.particles.types.clone()).unwrap_or_default();
         self.globals = RaceGlobals::read(m);
         self.globals.stack = stack;
+        self.globals.fx = Some(Box::new(crate::items::Fx { particles: crate::particles::Particles::read(m, types), sparks: crate::particles::Sparks::read(m) }));
         self.water = WaterAnim::from_bytes(m.slice(crate::water::STATE_ADDR, 0x1C));
         self.camera = CameraState::from_bytes(m.slice(0x800C_4F40, camera::CAMERA_SIZE));
         self.camera_globals = CameraGlobals::from_reader(&|a, l| m.slice(a, l).to_vec());

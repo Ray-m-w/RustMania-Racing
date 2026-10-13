@@ -4,7 +4,7 @@
 //! object's bounce, shrink / respawn / grow state machine and particle burst.
 
 use super::{Cameras, ItemEvent, Pickup, PickupKind, FIRST_CHALLENGE, FIRST_TOKEN, PICKUP_SLOTS};
-use crate::fixed::s16;
+use crate::fixed::{div_pow2, s16};
 use crate::globals::RaceGlobals;
 use crate::kart::KartState;
 use crate::update::{rng_next, rumble};
@@ -330,20 +330,69 @@ fn step(i: usize, g: &mut RaceGlobals, w: &World) {
 
 /// The particle burst a collected object asked for (+0x1E): FUN_800870E8
 /// particles (track B draws them); here only their random-byte draws.
-fn burst(i: usize, g: &mut RaceGlobals, _w: &World) {
+fn burst(i: usize, g: &mut RaceGlobals, w: &World) {
     let n = g.items.pickups[i].burst as usize;
     if n == 0 {
         return;
     }
+    let p = g.items.pickups[i];
+    let b = |g: &mut RaceGlobals| rng_next(g, w) as i32;
+    let sb = |v: i32| v as u8 as i8 as i32;
     if i < FIRST_TOKEN {
-        // Boxes and challenge objects: 8 random bytes per particle.
-        g.rng = g.rng.wrapping_add(8 * n as u32);
+        // Boxes (and challenge objects): a fountain of 8-byte particles.
+        let box_ = i < FIRST_CHALLENGE;
+        for _ in 0..n {
+            let r: Vec<i32> = (0..8).map(|_| b(g)).collect();
+            let col = |v: i32| if box_ { (sb(v) >> 1).wrapping_sub(0x80) & 0xFF } else { ((sb(v) >> 2) + 0x60) & 0xFF };
+            let sz = if box_ { 0x60 } else { 0x30 };
+            super::particle(
+                g,
+                [p.x << 5, p.y, p.z << 5],
+                [sb(r[0]) << 1, p.vy + r[1] * -2 - 0x80, sb(r[2]) << 1],
+                0x20,
+                r[3] << 4,
+                div_pow2(sb(r[4]), 2),
+                1,
+                [col(r[5]), col(r[6]), col(r[7])],
+                sz,
+                sz,
+                0x20,
+            );
+        }
     } else {
-        // Tokens: colour 1 and 2 draw the full 8 bytes for every particle,
-        // the others only for the first two (6 bytes after).
-        let full = matches!(g.items.pickups[i].colour, 1 | 2);
+        // Tokens: sparkles in the token's colour (colours 1 and 2 also spin
+        // every particle, the others only the first two).
+        let (kind, rgb, full) = match p.colour {
+            0 => (0xC, [0xA0, 0, 0xA0], false),
+            1 => (0x18, [0x80; 3], true),
+            2 => (0x1A, [0x80; 3], true),
+            3 => (0xC, [0xC0, 0, 0], false),
+            _ => (0, [0x80; 3], false),
+        };
         for j in 0..n {
-            g.rng = g.rng.wrapping_add(if j < 2 || full { 8 } else { 6 });
+            let r: Vec<i32> = (0..6).map(|_| b(g)).collect();
+            let (a, s) = if j < 2 || full { let a = b(g) << 4; (a, div_pow2(sb(b(g)), 1)) } else { (0, 0) };
+            let mut k = 0xD;
+            if j > 1 {
+                k = kind;
+                if j == n - 1 && p.colour == 1 {
+                    k = 0x19;
+                }
+            }
+            let c = if k == 0xD || k == 0x19 { [0x80; 3] } else { rgb };
+            super::particle(
+                g,
+                [(p.x << 5) + div_pow2(sb(r[0]), 4) * 4, p.y + div_pow2(sb(r[1]), 4) * 4, (p.z << 5) + div_pow2(sb(r[2]), 4) * 4],
+                [sb(r[3]), p.vy + sb(r[4]), sb(r[5])],
+                8,
+                a,
+                s,
+                k,
+                c,
+                0x30,
+                0x30,
+                0x18,
+            );
         }
     }
     g.items.pickups[i].burst = 0;

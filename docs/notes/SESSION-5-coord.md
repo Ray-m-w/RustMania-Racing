@@ -59,4 +59,21 @@ let s = Settings::global();   // same values outside systems (before the App exi
 - Full draw distance draws every layer-0 object always: pickups / particles
   are no longer seen through missing scenery, but sprite depth is F's.
 ### F effects
+(2026-10-13, F) Effects pass in (commit 1fd9596): `mr-bevy/src/psxfx.rs`.
+- Options (rows in `settings::KNOWN`): `fx_blend` (psx|linear, default psx:
+  PS1 semi-transparency on the gamma-encoded frame; linear = same equations
+  in linear light), `fx_depth_test` (true|false, default true: sprites,
+  particles, projectiles, shadows hidden by walls; ground under a sprite
+  never hides it).
+- E: the pass needs the chase camera's depth texture readable; psxfx adds
+  TEXTURE_BINDING to `Camera3d::depth_texture_usages` and a `PsxFxView`
+  marker on the `ChaseCamera` itself (no change in main.rs). It runs after
+  the main transparent pass, copies the (sRGB, resolved) main texture,
+  draws, and writes back through `ViewTarget::get_color_attachment()` (all
+  MSAA samples). It requires an LDR sRGB target (skips itself on HDR).
+  Kart shadows now go through it (kartshadow.rs: no entity/material any
+  more; `update_shadows` pushes `psxfx::FxPrim`s).
+- Anyone can draw PS1-blended primitives: push `psxfx::FxPrim` (4 verts,
+  page (tpage, clut), `Blend::Abr(n)` / `Opaque`, centre, ground_eps,
+  depth_pull) into `ResMut<psxfx::FxPrims>` during Update.
 ### G 60 Hz

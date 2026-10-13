@@ -8,3 +8,7 @@ publish.workspace = true
 # device lives in mr-bevy (bevy_audio).
 [dependencies]
 mr-disc = { path = "../mr-disc" }
+
+# Verification / listening-test examples only (workspace crate, std only).
+[dev-dependencies]
+mr-sim = { path = "../mr-sim" }

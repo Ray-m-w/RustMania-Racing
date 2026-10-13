@@ -73,6 +73,9 @@ pub struct Spu {
     /// Main volume (fixed mode), both sides.
     pub main_l: u16,
     pub main_r: u16,
+    /// Apply the main volume in `render` (false: the voice sum only, for a
+    /// mixer that applies the main volume to voices + CD audio itself).
+    pub apply_main: bool,
     gauss: Vec<[i32; 4]>,
 }
 
@@ -105,7 +108,7 @@ pub fn gauss() -> Vec<[i32; 4]> {
 
 impl Spu {
     pub fn new() -> Spu {
-        Spu { ram: vec![0; RAM_SIZE], voices: vec![Voice::default(); VOICES], main_l: 0x3FFF, main_r: 0x3FFF, gauss: gauss() }
+        Spu { ram: vec![0; RAM_SIZE], voices: vec![Voice::default(); VOICES], main_l: 0x3FFF, main_r: 0x3FFF, apply_main: true, gauss: gauss() }
     }
 
     /// DMA write into sound RAM (`addr` in bytes).
@@ -254,8 +257,12 @@ impl Spu {
                     r += s * Self::vol(vo.vol_r) >> 15;
                 }
             }
-            l = (l.clamp(-0x8000, 0x7FFF) * ml) >> 15;
-            r = (r.clamp(-0x8000, 0x7FFF) * mr) >> 15;
+            l = l.clamp(-0x8000, 0x7FFF);
+            r = r.clamp(-0x8000, 0x7FFF);
+            if self.apply_main {
+                l = (l * ml) >> 15;
+                r = (r * mr) >> 15;
+            }
             out.push(l as i16);
             out.push(r as i16);
         }

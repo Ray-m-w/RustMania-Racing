@@ -435,7 +435,7 @@ fn start_stream(mut c: Commands, bus: Res<AudioBus>, mut assets: ResMut<Assets<M
     c.spawn((AudioPlayer::<MixerSource>(h), PlaybackSettings::ONCE));
 }
 
-fn audio_stats(bus: Res<AudioBus>, dir: Res<MusicDirector>, time: Res<Time<Real>>, mut next: Local<f64>) {
+fn audio_stats(bus: Res<AudioBus>, dir: Res<MusicDirector>, p: Res<crate::Player>, time: Res<Time<Real>>, mut next: Local<f64>) {
     let t = time.elapsed_secs_f64();
     if t < *next {
         return;
@@ -443,6 +443,9 @@ fn audio_stats(bus: Res<AudioBus>, dir: Res<MusicDirector>, time: Res<Time<Real>
     *next = t + 5.0;
     let (su, mu) = bus.underruns();
     let mq = bus.sh.music.lock().unwrap().len();
+    if let crate::Driver::Sim(run) = &p.driver {
+        eprintln!("audio: sim tick {} phase {:?}", run.session.ticks, run.session.phase());
+    }
     eprintln!(
         "audio: t {:.1} s played {:.2} s | xa cur {:?} queue {:?} | music queued {} underrun {} | sfx queued {} underrun {}",
         t,

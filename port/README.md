@@ -41,6 +41,7 @@ Logic rate and input latency (Session 5, track G; same settings mechanism):
 | key | default | values | what |
 |---|---|---|---|
 | `logic_hz` | 30 | 30 / 60 | 30 = the game's logic (2 VBlanks per tick, exact against the original); 60 = the 60 Hz mode (1 VBlank per tick, the game's per-tick terms kept at their per-second rates; within the feel tolerance of 30: ../docs/spec/kart-physics-ledger.md section 12). Not the default until the owner has driven it |
+| `render_latency` | low | low / normal | low = Bevy's pipelined rendering off (each frame rendered right after its update) and at most 1 queued swapchain frame; normal = Bevy's defaults (render thread one frame behind, 2 queued frames) |
 | `low_latency` | true | true/false | the pad is sampled every display frame (a tap between two ticks still counts) and the display shows the coming tick as soon as its buttons are known (it runs that tick on a throw-away copy of the session and interpolates toward it; the simulation is untouched). false = the Session 4 display (interpolated one tick behind) |
 
 `--latency-log SECONDS` measures input-to-display latency (synthetic LEFT
@@ -53,6 +54,23 @@ and present chain after the frame is the same in every mode):
 | 30 Hz | true | 1.5 / 1.9 | 11.2 / 26.2 |
 | 60 Hz | false | 5.5 / 9.7 | 22.6 / 26.7 |
 | 60 Hz | true | 1.0 / 1.6 | 3.9 / 9.2 |
+
+`render_latency` (Session 5 finishing; 1920x1080, MSAA 4x, full draw distance,
+30 Hz logic, low_latency on, 30 s each; the log also times the render world's
+present call of the first frame showing the press; the swapchain queue after
+it, 1 frame with `low` and 2 with `normal`, is not visible to the app):
+| vsync | render_latency | sample -> present call, first frame (mean / p95 ms) | fps | frame p99 ms |
+|---|---|---|---|---|
+| on (120 Hz) | normal | 15.9 / 16.5 | 120.0 | 14.05 |
+| on (120 Hz) | low | 8.2 / 8.4 | 120.0 | 9.96 |
+| off | normal | 5.9 / 6.6 (6.2 / 7.2) | 331 (306) | 4.36 (4.87) |
+| off | low | 3.6 / 4.7 (3.1 / 4.2) | 264 (300) | 5.79 (5.69) |
+
+With vsync (the default) `low` presents one display frame earlier and drops
+one queued frame, at no frame-rate cost; uncapped it trades ~10-20 % of the
+throughput (no render thread) for ~2.5 ms. Default: low. `--latency-log` and
+`--fps-log` keep the app at full rate without focus (Bevy's game default
+updates an unfocused window at 60 Hz, which caps tool-launched runs).
 
 Sound (bevy_audio; the race music streams from TUNES/*.XA on the disc, the
 game's XA queue picks the track): `--no-audio`, `--no-music`,

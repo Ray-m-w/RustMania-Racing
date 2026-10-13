@@ -12,6 +12,8 @@
 //! a rotation (two axes flipped), so handedness and winding are preserved.
 
 mod ghost;
+mod hud;
+mod fps;
 mod input;
 pub mod kartmodel;
 mod psxmesh;
@@ -383,6 +385,8 @@ fn main() {
         .add_systems(Startup, (scene::setup, setup_camera))
         .add_systems(FixedUpdate, (sim_tick, ghost::tick.after(sim_tick)))
         .insert_resource(shot_plan())
+        .add_plugins(fps::plugin)
+        .add_plugins(hud::HudPlugin)
         .add_systems(Last, write_outputs)
         .add_systems(Update, (place_player, place_parts, ghost::place, follow_camera, title, follow_sky.after(follow_camera), select_objects, shot.after(follow_sky).after(select_objects)))
         .run();

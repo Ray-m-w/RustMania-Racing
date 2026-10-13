@@ -12,6 +12,7 @@ pub mod axe;
 pub mod mdl;
 pub mod anm;
 pub mod vram;
+pub mod hud;
 
 /// Little-endian readers shared by the decoders.
 pub mod le {

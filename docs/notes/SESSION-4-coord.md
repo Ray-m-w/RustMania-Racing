@@ -46,4 +46,32 @@ system registration line; keep your logic in your own file.
 ### A items sim
 ### B item HUD + effects
 ### C music + audio output
+(2026-10-12, C) The output bus, in mr-bevy/src/audio.rs (`AudioOutPlugin`,
+registered in main.rs by C). One rodio stream at 44,100 Hz stereo; rodio/cpal
+convert to the device rate. Track D feeds the SPU voice mix into it:
+
+```rust
+use crate::audio::{AudioBus, Bus};
+// Resource, inserted by AudioOutPlugin (also with --no-audio: then pushes are
+// dropped and sfx_wanted() returns 0). Clone is a cheap Arc handle.
+fn feed(bus: Res<AudioBus>, ...) {
+    let n = bus.sfx_wanted();          // frames to render now (keeps ~50 ms queued)
+    let frames: Vec<[i16; 2]> = spu.render(n); // 44.1 kHz [L, R]
+    bus.push_sfx(&frames);             // non-blocking (short mutex), never stalls the device
+}
+bus.sfx_queued();                      // frames buffered, not yet played
+bus.played_frames();                   // device clock (frames consumed), u64
+bus.set_volume(Bus::Sfx, 1.0);         // Bus::{Master, Music, Sfx}, linear gain
+```
+- Push the SPU **voice sum before the SPU main volume** (voices x their own
+  volumes, x the SsSetVoice/master-of-voice levels the game sets, clamped
+  to i16). The bus applies the SPU main volume the game programs
+  (0x3FFF/0x8000 L/R, read from the oracle's spu_status in a race) to the sum
+  of voices + CD (music) like the SPU does, then the user volumes.
+- Pacing: render `sfx_wanted()` frames per Update (target latency 2,048
+  frames, 46 ms; the queue caps at 0.5 s and drops the oldest beyond it). An
+  underrun plays silence for the missing frames; it never blocks.
+- Music is C's (XA from TUNES/*.XA, streamed on its own thread) and enters
+  the same mix as the SPU's CD input: XA decode -> CdMix (game 0x800B0A50)
+  -> SPU CD volume (0x7FFE) -> + voices -> main volume.
 ### D SFX + engine

@@ -106,8 +106,9 @@ fn ram_trail(ram: &[u8]) -> [TrailEntry; TRAIL_LEN] {
     // kart0+0x2DC -> 0x800D4098 on DOCK.
     let p = u32::from_le_bytes(ram[(KART0 as usize + 0x2DC) & 0x1F_FFFF..][..4].try_into().unwrap());
     let mut t = [TrailEntry::default(); TRAIL_LEN];
+    // The game's 12 entries; the sim's longer ring repeats the oldest.
     for (i, e) in t.iter_mut().enumerate() {
-        let o = (p as usize & 0x1F_FFFF) + 16 * i;
+        let o = (p as usize & 0x1F_FFFF) + 16 * i.min(mr_sim::camera::GAME_TRAIL_LEN - 1);
         let w = |j: usize| i32::from_le_bytes(ram[o + 4 * j..o + 4 * j + 4].try_into().unwrap());
         *e = TrailEntry { pos: [w(0), w(1), w(2)], count: w(3) };
     }

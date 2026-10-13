@@ -187,15 +187,16 @@ pub fn init_kart(p: &KartInit, rng: &mut u32, rand: &mut dyn FnMut() -> i32) -> 
     r[0x4FC] = 0xFF;
     r[0x4F8] = 0xFF;
     put16(&mut r, 0x412, 1 << (p.slot & 31));
-    if p.vehicle != 0 {
-        crate::unreachable_in_scope!("vehicle other than the RACER");
-    }
+    // Any vehicle: `p.template` is its row of the template table (vehicle.rs
+    // for the RACER, ai::vehicle_templates + ai::place_wheels for all).
     r[0x4B1] = p.vehicle;
     r[0x4B2] = p.character;
     // (0x4A4 / 0x4A5: model and character slot numbers, loader state.)
     r[KART_OFFSET..KART_OFFSET + TEMPLATE_SIZE].copy_from_slice(p.template);
-    // Camera mount pair from the character table.
-    let mut cm = w.exe.bytes(addr::CHARACTER_MOUNT + 2 * p.character as u32, 4);
+    // Camera mount pair from the character table: 4 bytes per character
+    // (0x80061314 `sll v0, v0, 2`; Ghidra shows `* 2` on a halfword
+    // pointer). Was `2 * character`, which only Kermit (0) survived.
+    let mut cm = w.exe.bytes(addr::CHARACTER_MOUNT + 4 * p.character as u32, 4);
     cm[0..2].copy_from_slice(&(p.character_pivot_y.unsigned_abs() as u16).to_le_bytes());
     r[0x188..0x18C].copy_from_slice(&cm);
     put16(&mut r, 0x178, 0x40);

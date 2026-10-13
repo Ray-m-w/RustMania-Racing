@@ -7,6 +7,9 @@ ROUTE.json: {"name": "...", "slot": 2, "end_vb": 1200,
 Writes OUT/frames.bin (raw per-VBlank region bytes), OUT/meta.json and
 OUT/ram0.bin (main RAM + scratchpad copied inside the restore callback).
 --physics captures PHYSICS_REGIONS instead of the default kart set.
+--no-items holds every kart's weapon slots empty and turbo meter at 0 (bridge
+v4 pokes, NO_ITEMS_POKES); a route may also list its own "pokes":
+[[addr, value, size, when], ...] (when: 1 = at restore, 2 = every VBlank).
 Anchor: VBlank 0 = the savestate restore (oracle bridge plugin).
 """
 import json
@@ -47,7 +50,19 @@ PHYSICS_REGIONS = [
     (0x800DFD88, 0xC), (0x800E02BC, 0x4), (0x800E0398, 0x4), (0x800E21A4, 0x4),
     (0x800E0C20, 0x40), (0x800E3D78, 0x60),
     (0x1F800000, 0x400),           # scratchpad
+    (0x80009010, 0x4),             # BIOS rand() seed (A0:2F; AI path picks, jumps)
 ]
+
+
+# Items off (Session 3 AI tolerance runs): every VBlank, each kart's weapon
+# slots (+0x4D0..+0x4D3 types, +0x4D4/+0x4D5 charge timers; -1 = empty, so
+# L1/L2 never fire) and turbo meter (+0x48A = 0: R1 turbo and the full-meter
+# specials never trigger; FUN_8007BBF0's tokens are not ported either).
+NO_ITEMS_POKES = [p for s in range(6) for p in (
+    (KART0 + s * KART_SIZE + 0x4D0, 0xFFFFFFFF, 4, 3),
+    (KART0 + s * KART_SIZE + 0x4D4, 0xFFFF, 2, 3),
+    (KART0 + s * KART_SIZE + 0x48A, 0, 2, 3),
+)]
 
 
 def active_high(spec):
@@ -141,6 +156,9 @@ def _run(route, outdir, slot=None, regions=REGIONS, settle=0.3):
         steps.append((vb, active_high(spec), lx, ly, 0x80, 0x80))
     end_vb = int(route.get("end_vb", 1200))
     b.arm_route(steps, end_vb=end_vb)
+    pokes = [tuple(p) for p in route.get("pokes", [])]
+    if pokes:
+        b.arm_pokes(pokes)
     gen0 = b.restore_gen
     seq0 = b.seq
     o.load_state(slot if slot is not None else route.get("slot", 2))
@@ -196,5 +214,7 @@ def load(outdir):
 if __name__ == "__main__":
     route = json.load(open(sys.argv[1]))
     regs = PHYSICS_REGIONS if "--physics" in sys.argv else REGIONS
+    if "--no-items" in sys.argv:
+        route = dict(route, pokes=[list(p) for p in NO_ITEMS_POKES] + route.get("pokes", []))
     m = run(route, sys.argv[2], regions=regs)
     print("captured vb", m["first_vb"], "..", m["last_vb"], "missing", len(m["missing"]))

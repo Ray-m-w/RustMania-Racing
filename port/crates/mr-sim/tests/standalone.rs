@@ -131,6 +131,8 @@ fn session_grid_state_matches_oracle() {
         ("copy_hold", "start-light minigame (countdown) not run"),
         ("catchup", "player leads (no AI): catch-up 0 instead of 180"),
         ("nearest_kart", "no other karts"),
+        ("race_pos", "no AI karts: the player ranks 1st of 1 (oracle: 6th of 6)"),
+        ("shown_pos", "no AI karts: the player ranks 1st of 1 (oracle: 6th of 6)"),
     ];
     let mut bad = Vec::new();
     for &(name, off, sz) in FIELD_OFFSETS {
@@ -164,11 +166,13 @@ fn standalone_render_fields_match_oracle() {
     let mut disc = mr_disc::Disc::open_default().unwrap();
     let mut s = Session::new(&mut disc).unwrap();
     s.leader_progress_override = Some(1000);
-    s.kart.catchup = 180;
     let r0 = cap.read(run.ticks[0], KART_ARRAY, RECORD_SIZE).unwrap();
     while s.kart.race_time < cap.i32(run.ticks[0], KART_ARRAY + 0x358).unwrap() {
         s.tick(0).unwrap();
     }
+    // The oracle's player runs 6th of 6 (catch-up 180 by now).
+    s.kart.catchup = 180;
+    s.inject(r0, &[(0x388, 4), (0x488, 2), (0x4BE, 1), (0x4CA, 1), (0x4FF, 1)]);
     s.inject(r0, &[(0x14, 0x2C * 4), (0x11C, 0x30), (0x2C0, 0x10), (0x324, 0x24), (0x3A0, 0x48), (0x44C, 2), (0x450, 0xE), (0x4B0, 1), (0x4D0, 6), (0x4DD, 1), (0x4F0, 1)]);
     let mut first = None;
     for i in 0..n {
@@ -177,12 +181,25 @@ fn standalone_render_fields_match_oracle() {
         s.rng_override = rep.rng_at_frame.get(&i).copied();
         s.tick_dt(m.u16(0x800B_0CE8), m.i32(0x800B_0AEC)).unwrap();
         let refr = cap.read(vb, KART_ARRAY, RECORD_SIZE).unwrap();
+        // Race progress and positions: in the oracle's six-kart race
+        // FUN_800837F8 serves the player every sixth frame only.
+        s.inject(refr, &[(0x388, 4), (0x488, 2), (0x4BE, 1), (0x4CA, 1), (0x4FF, 1)]);
         if let Some(f) = rep.render_events.get(&i) {
             s.inject(refr, f);
+        }
+        if std::env::var("MR_DIFF").is_ok() {
+            let d: Vec<String> = (0..RECORD_SIZE).filter(|&o| s.record()[o] != refr[o]).map(|o| format!("{o:03X}:{}/{}", s.record()[o], refr[o])).collect();
+            eprintln!("tick {}: {}", i + 1, d.join(" "));
         }
         let motion = s.record()[..0x12] == refr[..0x12] && s.record()[0x2F4..0x300] == refr[0x2F4..0x300];
         let render = mr_sim::harness::RENDER_RANGES.iter().all(|&(_, o, k)| s.record()[o..o + k] == refr[o..o + k]);
         if !(motion && render) {
+            for &(name, o, k) in mr_sim::harness::RENDER_RANGES {
+                if s.record()[o..o + k] != refr[o..o + k] {
+                    eprintln!("  {name}: {:?} vs {:?}", &s.record()[o..o + k], &refr[o..o + k]);
+                }
+            }
+            eprintln!("  motion {:?} vs {:?}", (&s.record()[..0x12], &s.record()[0x2F4..0x300]), (&refr[..0x12], &refr[0x2F4..0x300]));
             first = Some(i + 1);
             break;
         }

@@ -197,7 +197,8 @@ Verification: water.rs = the game's FUN_8003C5FC on 400 random states (angles,
 targets, random pointer, dt 2/3) bit-exact (tools/oracle/fx_water.py,
 tests/standalone.rs); path_position = the oracle on all 256 lap frames where
 the game updated kart 0's path; body matrix = the oracle on every lap tick;
-Session::new after 143 idle ticks (the oracle savestate's race clock 1430)
+Session::new idled to race time 1430 (the oracle savestate: the load
+frame, 240 countdown ticks, 142 race ticks; `idle_until_race_time(1430)`)
 equals the oracle's grid record in every motion field and the body matrix
 (differences listed and explained in tests/standalone.rs and the ledger).
 
@@ -222,3 +223,31 @@ Per frame, around the kart loop (FUN_8007916C):
   positions +0x14 + 0x2C i = pos + M0 * (wheel x, 0, wheel z); light points
   +0x11C + 0x18 j = pos + offset + M1 * point.
 GTE: MulMatrix0 = three MVMVA (sf 1, lm 0): sat16((sum) >> 12).
+
+## Race flow and the HUD API (race.rs, session.rs)
+The session starts at race load and runs countdown -> start game -> GO ->
+3 laps -> finish (game order and addresses: ledger section 9). Units: the
+countdown counts VBlanks (dt per tick); the race clock, race time and lap
+times count 5 per VBlank (300 = one second).
+
+`Session::phase() -> race::RacePhase`:
+- `Intro { countdown }`: countdown >= 300 (480 at load): the course fly-by.
+- `StartGame { countdown, button, boost }`: 0 < countdown < 300, the "Copy
+  the buttons" minigame. `button` = the pad bit to press (0x8000 SQUARE,
+  0x1000 TRIANGLE, 0x2000 CIRCLE, 0x4000 CROSS); `boost` = start boost so far
+  (+0x446; x 8 becomes boost ticks at GO). Beeps at 90 / 60 / 30, GO at 0.
+- `Racing { lap, laps }`: lap = the lap being driven, 1-based.
+- `Finished { place }`: the player crossed the line for the last time.
+
+Accessors: `countdown()` (0x800B0C70), `race_clock()` (0x800B0A94, 0 until GO),
+`position()` (+0x4BE, 1 = leading; the HUD shows `kart().shown_pos` +0x4CA,
+which follows a change with a 0x1E-VBlank flash `kart().pos_flash`),
+`laps_done()` (+0x4BF), `results()` (one `race::KartResult` per kart sorted by
+place: slot (0 = player), place, finished, race_time (+0x358, stops at the
+finish), lap_times (+0x35C.., rounded to multiples of 3 at each lap end),
+best_lap (+0x384), character, vehicle), `best_start` (0x800E02BA).
+Karts: `Session::kart` is the player (slot 0); `Session::others` holds karts
+1.. (`OtherKart { kart }`), empty until the AI port fills it; the contact
+pass, the round-robin path / progress pick, positions, GO and results already
+run over all of them. `race_pos_override` / `leader_progress_override` are
+analysis knobs (the oracle race's 6th place and catch-up).

@@ -32,6 +32,7 @@ pub mod kart;
 pub mod mem;
 pub mod oracle;
 pub mod progress;
+pub mod race;
 pub mod render;
 pub mod session;
 pub mod tables;

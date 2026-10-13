@@ -11,6 +11,9 @@ use crate::tables::{ratan2, square_root0};
 use crate::world::{TickInputs, World};
 use crate::progress;
 
+/// The "Copy the buttons" target buttons, halfwords [exe 0x800B077C].
+pub const COPY_BUTTONS: u32 = 0x800B_077C;
+
 /// Read the next pseudo-random byte (`*rng++`).
 pub fn rng_next(g: &mut RaceGlobals, w: &World) -> u8 {
     let b = w.rng_byte(g.rng);
@@ -74,9 +77,47 @@ pub fn kart_update(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
     k.buttons = buttons as u16;
     g.sound_event = 0;
 
-    // 0x80064BA8: "copy the buttons" start game before the lights.
+    // 0x80064BA8: "Copy the buttons" start game, the last 300 VBlanks of
+    // the countdown: press the face button the HUD shows (+0x4DA indexes the
+    // exe table 0x800B077C: SQUARE, TRIANGLE, CIRCLE, CROSS) to add to the
+    // start boost +0x446 (2 if quick, 1 after 0x1D VBlanks of hold time);
+    // a wrong button takes one away. +0x4D8 = button held (one press counts
+    // once).
     if k.flags & 1 == 0 && 0 < g.countdown && g.countdown < g.countdown_len && g.mode == 1 {
-        unreachable_in_scope!("boost-start / copy-the-buttons minigame (countdown running)");
+        let n = k.start_hold as i32 + dt;
+        k.start_hold = n as u8;
+        if (n & 0xFF) > 0x3C {
+            k.start_hold = 0x3C;
+        }
+        if buttons & 0xF000 == 0 {
+            k.copy_hold = 0;
+        } else {
+            let want = w.exe.i16(COPY_BUTTONS + 2 * k.copy_button as u32) as u16 as u32;
+            if buttons & 0xF000 == want {
+                if k.copy_hold == 0 {
+                    rumble(k, g, 200);
+                    let inc = if k.start_hold > 0x1D { 1 } else { 2 };
+                    k.boost_count = k.boost_count.wrapping_add(inc);
+                    k.engine_rev = 0x3C;
+                    let mut b;
+                    loop {
+                        b = rng_next(g, w);
+                        if (b >> 6) as i32 != k.copy_button as i32 {
+                            break;
+                        }
+                    }
+                    k.copy_button = (b >> 6) as i8;
+                    k.start_hold = 0;
+                }
+            } else if k.copy_hold == 0 {
+                let n = k.boost_count as i32 - 1;
+                k.boost_count = n as i16;
+                if s16(n) < 0 {
+                    k.boost_count = 0;
+                }
+            }
+            k.copy_hold = 1;
+        }
     }
 
     // 0x80064D18: engine rev timer.
@@ -485,7 +526,13 @@ pub fn kart_update(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
         }
     }
     if k.status & 0x40 != 0 {
-        unreachable_in_scope!("status 0x40 yaw drive");
+        // 0x800668A8: spun by a hit (status 0x40, +0x468 counting up to
+        // 300): the heading turns by +0x300 scaled by a ramp that rises over
+        // the first 32 VBlanks and falls over the last 32.
+        let t = k.homing_timer as i32;
+        let ramp = if t < 32 { t } else { s16(300 - t).min(32) };
+        k.target_yaw = div_pow2(s16(ramp).wrapping_mul(k.target_x), 5);
+        k.heading = k.heading.wrapping_add(k.target_yaw.wrapping_mul(dt) as i16);
     }
     k.heading = ((k.heading as u16) & 0xFFF) as i16;
     let yaw16 = s16(yaw);

@@ -50,6 +50,12 @@ pub struct RaceGlobals {
     /// The course lap record compared at each lap end:
     /// 0x800E0190 + 8 * (s8)0x800B0E32 + 0x20 * (s8)0x800B0E38.
     pub lap_record: i32,
+    /// 0x800B0DFE: karts in the race (humans + AI).
+    pub karts: i16,
+    /// Every kart's (finished +0x4C7, lap +0x4BF), slot order, as the kart
+    /// loop sees them (an early finish counts the karts still racing on a
+    /// later lap). The race driver refreshes it before each kart update.
+    pub field: [(u8, u8); 8],
 }
 
 pub mod addr {
@@ -97,6 +103,11 @@ impl RaceGlobals {
             sound_event: m.u8(SOUND_EVENT),
             end_mode: m.u8(0x800B_0CD8),
             lap_threshold: m.i32(0x800B_0DD0),
+            karts: m.i16(0x800B_0DFE),
+            field: std::array::from_fn(|j| {
+                let b = crate::kart::KART_ARRAY + j as u32 * crate::kart::RECORD_SIZE as u32;
+                (m.u8(b + 0x4C7), m.u8(b + 0x4BF))
+            }),
             lap_record: m.i32(0x800E_0190u32.wrapping_add((8 * m.i8(0x800B_0E32) as i32 + 0x20 * m.i8(0x800B_0E38) as i32) as u32)),
         }
     }

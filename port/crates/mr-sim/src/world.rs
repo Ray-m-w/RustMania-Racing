@@ -38,6 +38,9 @@ pub struct Course {
     pub grid: Vec<GridSlot>,
     /// Look-at points (DAT chunk id 7, 0x800D1C64), world units.
     pub look_points: Vec<[i32; 3]>,
+    /// Course points (DAT chunk id 5, 0x800D1C5C), world units: the race
+    /// progress follows the nearest one (FUN_800837F8).
+    pub course_points: Vec<[i32; 3]>,
     pub finish: Option<FinishLine>,
     /// First halfword of the record at 0x800D1C5C (course length in progress
     /// units << 4), used by the catch-up (rubber band) speed.
@@ -163,6 +166,12 @@ impl Course {
                 [le32(o), le32(o + 4), le32(o + 8)]
             }).collect())
             .unwrap_or_default();
+        let course_points = find(chunk::COURSE)
+            .map(|c| (0..c.count as usize).map(|i| {
+                let o = c.offset + 4 + 12 * i;
+                [le32(o), le32(o + 4), le32(o + 8)]
+            }).collect())
+            .unwrap_or_default();
         let finish = find(chunk::FINISH).map(|c| {
             let mut words = [0i32; 13];
             for (i, w) in words.iter_mut().enumerate() {
@@ -183,7 +192,7 @@ impl Course {
             })
             .unwrap_or_default();
         let has_other_objects = chunk::OTHER.iter().any(|&id| find(id).is_some());
-        Course { grid, look_points, finish, length, triggers, has_other_objects }
+        Course { grid, look_points, course_points, finish, length, triggers, has_other_objects }
     }
 }
 

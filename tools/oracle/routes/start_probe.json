@@ -1,0 +1,3 @@
+{"name": "start_probe", "slot": 1, "end_vb": 1800,
+ "note": "from the DOCK course menu (slot 1): CROSS on DOCK - RACE A, 1 PLAYER RACE, KERMIT / RACER; then no input through the race load and the countdown",
+ "steps": [[0, ""], [30, "cross"], [36, ""], [120, "cross"], [126, ""], [210, "cross"], [216, ""]]}

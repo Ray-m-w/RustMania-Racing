@@ -251,8 +251,9 @@ pub fn load_kart(m: &Mem, slot: u32) -> KartState {
     let a = crate::kart::KART_ARRAY + 0x504 * slot;
     let mut k = KartState::from_record(m.slice(a, 0x504));
     if k.history_ptr != 0 {
+        // The game's 12 entries; the sim's longer ring repeats the oldest.
         for i in 0..crate::camera::TRAIL_LEN {
-            let e = k.history_ptr + 16 * i as u32;
+            let e = k.history_ptr + 16 * i.min(crate::camera::GAME_TRAIL_LEN - 1) as u32;
             k.trail[i] = TrailEntry { pos: [m.i32(e), m.i32(e + 4), m.i32(e + 8)], count: m.i32(e + 12) };
         }
     }
@@ -266,7 +267,7 @@ pub fn store_kart(m: &mut Mem, slot: u32, k: &KartState) {
     k.to_record(&mut rec);
     m.write(a, &rec);
     if k.history_ptr != 0 {
-        for i in 0..crate::camera::TRAIL_LEN {
+        for i in 0..crate::camera::GAME_TRAIL_LEN {
             let e = k.history_ptr + 16 * i as u32;
             let t = k.trail[i];
             m.put_u32(e, t.pos[0] as u32);

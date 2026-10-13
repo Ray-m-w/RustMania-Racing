@@ -12,8 +12,10 @@ macro_rules! kart_fields {
         #[derive(Clone, Debug, Default, PartialEq, Eq)]
         pub struct KartState {
             $( $(#[$m])* pub $name: $ty, )*
-            /// 4 wheel blocks of 0x2C bytes at +0x14.
-            pub wheels: [Wheel; 4],
+            /// Wheel blocks of 0x2C bytes at +0x14 (+0x170 says how many are
+            /// used: 4 on the RACER; 3 to 6 on other vehicles, e.g. the
+            /// TRIKE 3, the M_BUGGY 5, the W_BUGGY 6; AI karts on DOCK).
+            pub wheels: [Wheel; MAX_WHEELS],
             /// +0x35C: lap times, 4 bytes each, indexed by lap (+0x4BF).
             pub lap_time: [i32; 8],
             /// +0x3A0..+0x3E8: 18 words, the body-sway spring state stepped
@@ -89,6 +91,8 @@ macro_rules! kart_fields {
 }
 
 pub const RECORD_SIZE: usize = 0x504;
+/// Wheel blocks a record can hold (+0x14 .. +0x11C).
+pub const MAX_WHEELS: usize = 6;
 /// Kart array in RAM [CODE 0x8007916C].
 pub const KART_ARRAY: u32 = 0x800C_30A8;
 
@@ -169,6 +173,8 @@ kart_fields! {
     /// First lap time (+0x384), set at the first lap end.
     best_lap: i32 @ 0x384,
     progress: i32 @ 0x388,
+    /// Nearest course point (DAT chunk 5) for the race progress (FUN_800837F8).
+    course_point: i16 @ 0x488,
     finished_time: i32 @ 0x38C,
     /// Velocity in the kart frame: forward and sideways.
     fwd_speed: i32 @ 0x390, side_speed: i32 @ 0x394,
@@ -247,7 +253,8 @@ kart_fields! {
     /// 0 on the ground, 1 just above water / ground, 2 in the water.
     float_state: u8 @ 0x4C8,
     reversing: u8 @ 0x4C9,
-    start_pos: u8 @ 0x4CA,
+    /// Race position the HUD shows (follows +0x4BE when a change flashes).
+    shown_pos: u8 @ 0x4CA,
     path_flag_4cb: u8 @ 0x4CB,
     /// Shoulder-button latches: L1, L2, R1, R2.
     latch_l1: u8 @ 0x4CC, latch_l2: u8 @ 0x4CD, latch_r1: u8 @ 0x4CE, latch_r2: u8 @ 0x4CF,
@@ -283,6 +290,8 @@ kart_fields! {
     path_side: u8 @ 0x500,
     close_kart: u8 @ 0x501,
     on_ground: u8 @ 0x502,
+    /// Position-change flash, VBlanks (+0x4FF).
+    pos_flash: u8 @ 0x4FF,
     warn_timer: i8 @ 0x503,
 }
 

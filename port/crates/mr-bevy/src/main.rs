@@ -307,16 +307,27 @@ fn sim_row(s: &mr_sim::session::Session) -> Vec<i64> {
 impl SimRun {
     fn new(oracle_grid: bool, leader: bool) -> SimRun {
         let mut disc = mr_disc::Disc::open_default().expect("open the disc (MRM_DISC or game.toml)");
+        // Session::new starts at race load: intro, the "Copy the buttons"
+        // start game, then GO (docs/spec/kart-physics.md, race flow).
         let mut session = mr_sim::session::Session::new(&mut disc).expect("start the mr-sim session");
+        // Until AI karts run: catch-up as in the oracle race (player 6th,
+        // leader far ahead) -> speed cap 0xA00. Overrides go in before the
+        // countdown, the ramped catch-up value after (as mr-standalone
+        // --catchup-as-6th). Ledger: revisit list.
         if !leader {
-            // Catch-up as in the oracle runs (player 6th, leader far ahead):
-            // speed cap 0xA00 instead of 0x800. docs/spec/kart-physics-ledger.md.
             session.leader_progress_override = Some(1000);
+            session.race_pos_override = Some(6);
+        }
+        if oracle_grid {
+            // The oracle's grid savestate is at race clock 1430 (383 ticks in).
+            session.idle_until_race_time(1430).expect("idle to the oracle grid");
+        }
+        if !leader {
             session.kart.catchup = 180;
         }
         let a: Vec<String> = std::env::args().collect();
         let route = a.iter().position(|x| x == "--route").and_then(|i| a.get(i + 1)).map(|p| parse_route(&std::fs::read_to_string(p).expect("read --route")));
-        SimRun { session, align: if oracle_grid { 143 } else { 0 }, buttons: vec![], rows: vec![], stopped: None, route }
+        SimRun { session, align: 0, buttons: vec![], rows: vec![], stopped: None, route }
     }
 
     /// Write the driven inputs as an oracle route (tools/oracle/routes format):
@@ -413,7 +424,7 @@ fn setup_camera(mut c: Commands) {
     c.insert_resource(GlobalAmbientLight { brightness: 1500.0, ..default() });
 }
 
-fn sim_tick(mut p: ResMut<Player>, keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>) {
+fn sim_tick(mut p: ResMut<Player>, keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, mut hud_g: ResMut<hud::HudGlobals>) {
     let buttons = input::sample(&keys, &pads);
     p.prev = p.pose;
     let tick = p.tick;
@@ -450,6 +461,12 @@ fn sim_tick(mut p: ResMut<Player>, keys: Res<ButtonInput<KeyCode>>, pads: Query<
                 }
             }
             let s = &run.session;
+            // HUD globals from the session (countdown 0x800B0C70, start value
+            // 0x800B07F8 = 300, race clock 0x800B0A94).
+            hud_g.countdown = s.countdown();
+            hud_g.countdown_start = 300;
+            hud_g.race_time = Some(s.race_clock());
+            hud_g.laps = 3;
             let r = s.record();
             let i32at = |o: usize| i32::from_le_bytes([r[o], r[o + 1], r[o + 2], r[o + 3]]);
             let mut m = [0i32; 9];

@@ -30,9 +30,14 @@ use crate::world::{TickInputs, World};
 pub const EXTERNAL: &[(&str, usize, usize)] = &[
     ("progress", 0x388, 4),
     ("race_pos", 0x4BE, 1),
-    ("start_pos", 0x4CA, 1),
+    ("shown_pos", 0x4CA, 1),
+    ("course_point", 0x488, 2),
+    ("pos_flash", 0x4FF, 1),
     ("start_timer", 0x48A, 2),
     ("wobble", 0x48C, 2),
+    // FUN_8006C388 (after the kart loop, while an item effect is live):
+    // effect timers, e.g. the spin after a hit (status 0x40).
+    ("homing_timer", 0x468, 2),
 ];
 
 /// Kart fields written before the kart loop of the same frame.
@@ -150,11 +155,15 @@ impl<'a> Run<'a> {
     pub fn new(cap: &'a Capture, base: &'a [u8], world: &'a World) -> Self {
         let mut ticks = Vec::new();
         let mut prev = None;
+        // A tick is a VBlank where the race time +0x358 changed; once the
+        // kart has finished (+0x4C7) its race time stops, and a change of
+        // position marks the tick instead.
         for &vb in &cap.vbs {
-            let c = cap.i32(vb, KART_ARRAY + 0x358).unwrap();
-            if prev != Some(c) {
+            let finished = cap.read(vb, KART_ARRAY + 0x4C7, 1).unwrap()[0] != 0;
+            let c = if finished { cap.read(vb, KART_ARRAY, 12).unwrap().to_vec() } else { cap.read(vb, KART_ARRAY + 0x358, 4).unwrap().to_vec() };
+            if prev.as_ref() != Some(&(finished, c.clone())) {
                 ticks.push(vb);
-                prev = Some(c);
+                prev = Some((finished, c));
             }
         }
         Run { cap, base, world, ticks }
@@ -180,7 +189,10 @@ impl<'a> Run<'a> {
         inp.water_normal = ib.water_normal;
         inp.alt_normal = ib.alt_normal;
         inp.aim = None;
-        (g, inp, mb.u16(0x800B_0CE8), ma)
+        // After the finish the AI drives kart 0 (flags bit 0): its buttons
+        // are the AI's, which the update stores at +0x44E.
+        let buttons = if ma.u16(KART_ARRAY + 0x496) & 1 != 0 { mb.u16(KART_ARRAY + 0x44E) } else { mb.u16(0x800B_0CE8) };
+        (g, inp, buttons, ma)
     }
 
     fn others(m: &Mem) -> (Vec<KartState>, ContactRules) {
@@ -317,7 +329,9 @@ impl<'a> Run<'a> {
                     st.bad += 1;
                     st.first.get_or_insert(i);
                     st.max = st.max.max(d);
-                    if ["x", "y", "z", "pitch", "heading", "roll", "vx", "vy", "vz", "fwd_speed", "side_speed"].contains(&name) {
+                    // Motion, or an item effect landing on the kart (status /
+                    // effect set by another kart's weapon).
+                    if ["x", "y", "z", "pitch", "heading", "roll", "vx", "vy", "vz", "fwd_speed", "side_speed", "status", "effect", "target_x"].contains(&name) {
                         motion = true;
                     }
                 }

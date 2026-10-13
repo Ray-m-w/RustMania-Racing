@@ -63,11 +63,15 @@ fn main() {
     let mut idle = 0;
     if catchup6 {
         s.leader_progress_override = Some(1000);
-        s.kart.catchup = 180;
+        s.race_pos_override = Some(6);
     }
     while s.kart.race_time < target {
         s.tick(0).expect("idle tick");
         idle += 1;
+    }
+    if catchup6 {
+        // The oracle's catch-up had ramped to 180 by the savestate.
+        s.kart.catchup = 180;
     }
     println!("\n(idled {idle} ticks with no buttons: race clock {} = oracle {target})", s.kart.race_time);
     report("after idling", &s.record);

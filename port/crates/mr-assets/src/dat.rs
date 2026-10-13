@@ -1349,6 +1349,196 @@ pub struct Drawn {
     pub list: DrawList,
 }
 
+// ---------------------------------------------------------------------------
+// Start/finish banner (point chunk id 9)
+// ---------------------------------------------------------------------------
+
+/// Chunk id 9: banner end points, two per banner (DOCK: one banner across
+/// the start/finish line). [CODE 80034ce0]
+pub const CHUNK_BANNER: i16 = 9;
+/// Banner texture: slot 0x15, CLUT + 8, tpage + 0x60 (opaque); 4-bit page.
+/// [CODE 800351e8] [GPU]
+pub const BANNER_TEX_SLOT: u8 = 0x15;
+pub const BANNER_CLUT_ADD: u16 = 8;
+pub const BANNER_TPAGE_ADD: u16 = 0x60;
+/// Phase increments per race frame (FUN_80035004, banner type 1).
+pub const BANNER_PHASE_STEP: (u16, u16) = (0x37, 0x3E);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Banner {
+    /// The two chunk points (DAT layer-0 units).
+    pub ends: [[i32; 3]; 2],
+    /// (p0 + p1) / 2 per axis, C division (the draw origin).
+    pub mid: [i32; 3],
+    /// ratan2(dx, dz) + 0x400, 12-bit (rotation about y of the cloth grid).
+    pub angle: u16,
+    /// sqrt(dx^2 + dz^2) / (cols - 1): this banner's grid spacing.
+    pub spacing: i16,
+}
+
+/// The waving cloth banners of a track (FUN_80034ce0 at track start; drawn
+/// by FUN_800351e8 -> FUN_800313bc each frame, animated by FUN_80035004).
+#[derive(Debug, Clone)]
+pub struct Banners {
+    pub banners: Vec<Banner>,
+    /// Grid size: 11 x 3 vertices (10 x 2 quads).
+    pub cols: usize,
+    pub rows: usize,
+}
+
+/// One cloth vertex after FUN_80035004: local x, y, z (z = wave) and the
+/// grey shade (0x80..0xA0) used as its colour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClothVertex {
+    pub pos: [i16; 3],
+    pub shade: u8,
+}
+
+/// One banner quad in polygon order (corners (c,r), (c+1,r), (c+1,r+1),
+/// (c,r+1)); GPU order 0, 1, 3, 2. World DAT layer-0 units.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BannerQuad {
+    pub pos: [[i32; 3]; 4],
+    pub uv: [[u8; 2]; 4],
+    pub shade: [u8; 4],
+}
+
+fn isqrt(v: i64) -> i64 {
+    if v <= 0 {
+        return 0;
+    }
+    let mut x = (v as f64).sqrt() as i64;
+    while x * x > v {
+        x -= 1;
+    }
+    while (x + 1) * (x + 1) <= v {
+        x += 1;
+    }
+    x
+}
+
+/// atan2 as a 12-bit angle (PSY-Q ratan2(y, x)) [INFER: the library is
+/// table based; this matches DOCK's banner exactly, checked via the GTE].
+pub fn ratan2(y: i32, x: i32) -> i32 {
+    let a = (y as f64).atan2(x as f64) * 2048.0 / std::f64::consts::PI;
+    a.round() as i32
+}
+
+impl Dat {
+    /// FUN_80034ce0 (all courses but 0x1E): banners from chunk id 9 when its
+    /// point count is even and the pair count < 3.
+    pub fn banners(&self) -> Option<Banners> {
+        let c = self.chunks.iter().find(|c| c.id == CHUNK_BANNER)?;
+        let pts = match &c.body {
+            ChunkBody::Points(p) => p,
+            _ => return None,
+        };
+        let n = c.count as usize;
+        if n == 0 || n & 1 != 0 || n / 2 >= 3 {
+            return None;
+        }
+        let (cols, rows) = (11usize, 3usize);
+        let mut banners = Vec::new();
+        for i in 0..n / 2 {
+            let (p0, p1) = (pts[2 * i], pts[2 * i + 1]);
+            let dx = (p1[0] - p0[0]) as i16 as i32;
+            let dz = (p1[2] - p0[2]) as i16 as i32;
+            let angle = ((ratan2(dx, dz) + 0x400) & 0xFFF) as u16;
+            let len = isqrt((dx as i64) * (dx as i64) + (dz as i64) * (dz as i64)) as i32;
+            let spacing = (len / (cols as i32 - 1)) as i16;
+            let mid = [(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2, (p0[2] + p1[2]) / 2];
+            banners.push(Banner { ends: [p0, p1], mid, angle, spacing });
+        }
+        Some(Banners { banners, cols, rows })
+    }
+}
+
+impl Banners {
+    /// The cloth phase (a, b) after `ticks` race frames from `start`.
+    pub fn phase_after(start: (u16, u16), ticks: u32) -> (u16, u16) {
+        (
+            ((start.0 as u32 + BANNER_PHASE_STEP.0 as u32 * ticks) & 0xFFF) as u16,
+            ((start.1 as u32 + BANNER_PHASE_STEP.1 as u32 * ticks) & 0xFFF) as u16,
+        )
+    }
+
+    /// FUN_80035004 (type 1) on the rest grid built from banner 0's spacing
+    /// s: x = (s - cols*s)/2 + c*s, y = (s - rows*s)/2 + r*s, z = wave:
+    /// v = (sin(a + 0x179 r) * sin(b + 500 c)) >> 14 (table units, 1.0 =
+    /// 16384), z = v >> 6, shade = 0xA0 - |v >> 7|. `phase` = (DAT_800afee4,
+    /// DAT_800afee6) after this frame's step. Row-major, cols x rows.
+    pub fn cloth(&self, sin: &SinTable, phase: (u16, u16)) -> Vec<ClothVertex> {
+        let s = self.banners.first().map_or(0, |b| b.spacing) as i32;
+        let x0 = (s - self.cols as i32 * s) / 2;
+        let y0 = (s - self.rows as i32 * s) / 2;
+        let mut out = Vec::with_capacity(self.cols * self.rows);
+        for r in 0..self.rows {
+            let u = (phase.0 as u32 + 0x179 * r as u32) & 0xFFF;
+            for c in 0..self.cols {
+                let w = (phase.1 as u32 + 500 * c as u32) & 0xFFF;
+                let p = sin.0[u as usize] as i32 * sin.0[w as usize] as i32;
+                let v = ((if p < 0 { p + 0x3FFF } else { p }) >> 14) as i16 as i32;
+                let dz = (if v < 0 { v + 0x3F } else { v }) >> 6;
+                let sh = ((if v < 0 { v + 0x7F } else { v }) >> 7).abs();
+                out.push(ClothVertex {
+                    pos: [(x0 + c as i32 * s) as i16, (y0 + r as i32 * s) as i16, dz as i16],
+                    shade: (0xA0 - sh) as u8,
+                });
+            }
+        }
+        out
+    }
+
+    /// FUN_800351e8 (type 1): banner `i`'s quads in world DAT units. Banners
+    /// after the first scale the cloth by spacing_i / spacing_0 (C division).
+    /// Columns 1, 2, cols-4, cols-3 show the face tile (u 0 on columns 1 and
+    /// cols-4, else 0x20; v 0x80 on row 0, else 0xA0); the rest the checker
+    /// tile (u 0x40, v 0x10); each cell spans 31 texels.
+    pub fn quads(&self, i: usize, cloth: &[ClothVertex], sin: &SinTable) -> Vec<BannerQuad> {
+        let b = self.banners[i];
+        let s0 = self.banners[0].spacing as i32;
+        let (sn, cs) = (sin.sin12(b.angle), sin.cos12(b.angle));
+        let tz = |a: i32| if a < 0 { (a + 0xFFF) >> 12 } else { a >> 12 };
+        let world = |v: &ClothVertex| -> [i32; 3] {
+            let mut p = [v.pos[0] as i32, v.pos[1] as i32, v.pos[2] as i32];
+            if i > 0 && s0 != 0 {
+                for k in 0..3 {
+                    p[k] = p[k] * b.spacing as i32 / s0;
+                }
+            }
+            let x = tz(p[0] * cs + p[2] * sn);
+            let z = tz(-p[0] * sn + p[2] * cs);
+            [b.mid[0] + x, b.mid[1] + p[1], b.mid[2] + z]
+        };
+        let mut out = Vec::new();
+        let cols = self.cols;
+        for r in 0..self.rows - 1 {
+            for c in 0..cols - 1 {
+                let face = (1..=2).contains(&c) || c == cols - 4 || c == cols - 3;
+                let (u0, v0) = if face {
+                    (if c == 1 || c == cols - 4 { 0u8 } else { 0x20 }, if r == 0 { 0x80u8 } else { 0xA0 })
+                } else {
+                    (0x40u8, 0x10u8)
+                };
+                let idx = [r * cols + c, r * cols + c + 1, (r + 1) * cols + c + 1, (r + 1) * cols + c];
+                out.push(BannerQuad {
+                    pos: idx.map(|k| world(&cloth[k])),
+                    uv: [[u0, v0], [u0 + 31, v0], [u0 + 31, v0 + 31], [u0, v0 + 31]],
+                    shade: idx.map(|k| cloth[k].shade),
+                });
+            }
+        }
+        out
+    }
+
+    /// Drawn this frame: the banner's midpoint within 0x2000 DAT units of the
+    /// eye on every axis (eye = camera eye >> 5). [CODE 800351e8, 800313bc]
+    pub fn visible(&self, i: usize, eye: [i32; 3]) -> bool {
+        let m = self.banners[i].mid;
+        (0..3).all(|k| (m[k] as i64 - eye[k] as i64 + 0x2000) as u64 <= 0x4000)
+    }
+}
+
 pub struct LoaderImage {
     pub file: Vec<u8>,
     pub out: Vec<u8>,

@@ -49,8 +49,15 @@ pub const SQRT_TABLE_LEN: usize = 192;
 /// Camera record base (player 0) and stride (player 1 at +0x70).
 pub const ADDR_CAMERA0: u32 = 0x800C_4F40;
 pub const CAMERA_SIZE: usize = 0x70;
-/// Entries in the kart's position history ring (kart+0x2DC points at it).
-pub const TRAIL_LEN: usize = 12;
+/// Entries in the game's kart position history ring (kart+0x2DC points at
+/// it): 12 x 16 bytes. The oracle's RAM and every comparison use these.
+pub const GAME_TRAIL_LEN: usize = 12;
+/// Entries in the sim's ring: longer than the game's so the chase camera's
+/// 16-VBlank walk back (mode 0) still finds its point at dt = 1 (60 Hz logic:
+/// 12 entries cover only 12 VBlanks there). At dt >= 2 the walk ends within
+/// the first 9 entries, so entries 12.. are never read and dt = 2 / 3 results
+/// are unchanged.
+pub const TRAIL_LEN: usize = 24;
 
 /// GTE projection plane distance H, set once by SetGeomScreen(160) in
 /// FUN_800430F8 @0x8004311C (InitGeom's default 1000 is overwritten there).

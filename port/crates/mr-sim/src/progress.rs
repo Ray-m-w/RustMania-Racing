@@ -104,7 +104,7 @@ pub fn lap_timing(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
     }
     if s == 7 && k.line_side == 6 {
         if k.line_flag == 0 {
-            lap_completed(k, g);
+            lap_completed(k, g, w);
         }
         k.line_flag = 0;
     } else if s == 6 && k.line_side == 7 {
@@ -122,7 +122,7 @@ pub fn lap_timing(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
 }
 
 /// 0x80082DA0: a lap was completed.
-fn lap_completed(k: &mut KartState, g: &mut RaceGlobals) {
+fn lap_completed(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
     let lap = k.lap as usize;
     let t = k.lap_time[lap];
     // Round the lap time to the nearest multiple of 3.
@@ -146,7 +146,9 @@ fn lap_completed(k: &mut KartState, g: &mut RaceGlobals) {
     let lap = k.lap as i32;
     let laps = g.laps as i32;
     if lap == laps || g.end_mode > 1 {
-        unreachable_in_scope!("race finished (0x80082E7C): the kart is handed to the AI");
+        race_finished(k, g, w);
+        k.line_flag = 0;
+        return;
     }
     if lap == laps - 1 {
         k.flash_timer = 8;
@@ -155,6 +157,49 @@ fn lap_completed(k: &mut KartState, g: &mut RaceGlobals) {
         k.flash_timer = (lap - 1) as i8;
         k.blink_count = 0;
     }
+}
+
+/// 0x80083004: the kart crossed the line for the last time (its last lap,
+/// or any lap once another kart has finished: 0x800B0CD8 > 1). It takes the
+/// next finishing place, the game hands it to the AI (flags bit 0) and its
+/// race progress is pinned so the finishing order stays sorted.
+fn race_finished(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
+    k.finished = 1;
+    k.pause_bits = 0x80;
+    k.race_pos = g.end_mode;
+    k.flags |= 1;
+    if (k.player_index as i32) < g.humans as i32 {
+        // FUN_80060580(character, 3 if won else 2): the finish voice (audio
+        // queue 0x800B0744, not modelled).
+    } else {
+        let b = crate::update::rng_next(g, w) as i8;
+        let bits = if g.end_mode == 1 { if b < 0 { 4 } else { 2 } } else if b < 0 { 0x20 } else { 0x10 };
+        k.event_bits |= bits;
+    }
+    if g.race_flags & 0x10 != 0 && k.race_pos == 1 && k.player_index == 0 {
+        unreachable_in_scope!("challenge win bits (race flag 0x10)");
+    }
+    if (k.lap as i32) < g.laps as i32 {
+        // Finished early (someone else already has): count the karts still
+        // racing that are on a later lap as ahead.
+        for (j, &(fin, lap)) in g.field.iter().enumerate().take(g.karts.max(0) as usize) {
+            if j as i32 != k.player_index as i32 && fin == 0 && (k.lap as i32 - 1) < lap as i32 {
+                k.race_pos = k.race_pos.wrapping_add(1);
+            }
+        }
+        k.race_time = 0;
+        for i in 0..k.lap as usize {
+            k.race_time = k.race_time.wrapping_add(k.lap_time[i]);
+        }
+    }
+    k.pos_flash = 0x10;
+    k.shown_pos = k.race_pos;
+    if let Some(len) = w.course.length {
+        k.progress = (len as i32).wrapping_mul(k.lap as i32).wrapping_add(1).wrapping_add(g.karts as i32).wrapping_sub(g.end_mode as i32);
+        // 0x800832EC..0x8008339C: the player winning a plain race sets the
+        // course's "won" bit in the save data 0x800E0196 (not modelled).
+    }
+    g.end_mode = g.end_mode.wrapping_add(1);
 }
 
 /// FUN_80090424 for the player (path flag 0x800B0A20 = 1, so a branch

@@ -275,6 +275,24 @@ impl HudTables {
         let abr_mode = (abr >> 5) & 3;
         let mut clut_off = self.colours[colour as usize & 15] as u16;
         let mut out = Vec::new();
+        // Clip windows (1 player: x 0..0x1FF = DAT_800B0E9E..DAT_800B0EA4,
+        // y 0..0xEF = DAT_800B0688..DAT_800B068A) [CODE 800474e8] [RAM]:
+        // the whole string is skipped when its row misses the y window or
+        // its x span misses the screen; glyphs wholly outside x are skipped,
+        // rows cut by the y window are trimmed (v and h adjusted).
+        let (cy0, cy1, cx0, cx1) = (0, 0xEF, 0, 0x1FF);
+        if y > cy1 || y + ch - 1 < cy0 || x >= 0x201 || x + width <= -1 {
+            return (out, width);
+        }
+        let (mut gy, mut gh, mut dv) = (y, ch, 0);
+        if gy < cy0 {
+            dv = cy0 - gy;
+            gh -= dv;
+            gy = cy0;
+        }
+        if gy + gh - 1 > cy1 {
+            gh -= gy + gh - 1 - cy1;
+        }
         let mut i = 0;
         while i < s.len() && s[i] != 0 {
             let c = s[i];
@@ -301,16 +319,16 @@ impl HudTables {
             if let Some((g, special)) = Self::map_char(c, size) {
                 let gl = self.glyphs[g as usize];
                 if gl.present {
-                    if c != b' ' {
+                    if c != b' ' && x <= cx1 && x + gl.w as i32 - 1 >= cx0 {
                         out.push(Sprite {
                             x,
-                            y,
+                            y: gy,
                             w: gl.w as i32,
-                            h: ch,
+                            h: gh,
                             u: gl.u,
-                            v: gl.v,
+                            v: gl.v.wrapping_add(dv as u8),
                             uw: gl.w as i32,
-                            vh: ch,
+                            vh: gh,
                             slot: FONT_SLOT,
                             clut_off: if special { 4 } else { clut_off },
                             rgb: [0x80; 3],

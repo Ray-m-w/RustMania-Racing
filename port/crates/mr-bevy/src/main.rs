@@ -12,6 +12,7 @@
 //! a rotation (two axes flipped), so handedness and winding are preserved.
 
 mod audio;
+mod sfx;
 mod animtex;
 mod ghost;
 mod hud;
@@ -403,6 +404,7 @@ fn main() {
         .add_plugins(animtex::AnimTexPlugin)
         .add_plugins(karts::KartsPlugin)
         .add_plugins(audio::AudioOutPlugin)
+        .add_plugins(sfx::SfxPlugin)
         .add_systems(FixedUpdate, capture::tick.after(sim_tick).before(karts::feed_player))
         .add_systems(Last, write_outputs)
         .add_systems(Update, (place_player, ghost::place, follow_camera, title, follow_sky.after(follow_camera), select_objects, shot.after(follow_sky).after(select_objects)))

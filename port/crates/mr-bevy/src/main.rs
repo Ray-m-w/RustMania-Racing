@@ -15,6 +15,7 @@ mod audio;
 mod sfx;
 mod animtex;
 mod effects;
+mod psxfx;
 mod ghost;
 mod hud;
 mod fps;

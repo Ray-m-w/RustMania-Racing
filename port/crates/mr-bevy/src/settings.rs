@@ -42,6 +42,8 @@ pub const KNOWN: &[Opt] = &[
     Opt { key: "fullscreen", default: "false", allowed: "true|false", help: "borderless fullscreen on the current monitor" },
     Opt { key: "vsync", default: "true", allowed: "true|false", help: "wait for the display's refresh (false = uncapped, for measuring)" },
     // --- F effects --- (append below)
+    Opt { key: "fx_blend", default: "psx", allowed: "psx|linear", help: "psx = effects and kart shadows blended as the PS1 GPU does (B/2+F/2, B+F, B-F, B+F/4 on the gamma-encoded frame); linear = the same equations in linear light (softer additive glow, dimmer dim sparks)" },
+    Opt { key: "fx_depth_test", default: "true", allowed: "true|false", help: "true = sprites, particles, projectiles and shadows are hidden by walls (the ground under a sprite never hides it, as the game's ordering table draws the ground first); false = always drawn over the scene (debug)" },
     // --- G 60 Hz --- (append below)
 ];
 

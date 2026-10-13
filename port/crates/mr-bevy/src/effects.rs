@@ -22,7 +22,6 @@
 //! Drawing: one dynamic mesh per material, rebuilt every frame, facing the
 //! ChaseCamera.
 
-use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 
 use bevy::prelude::*;
@@ -30,7 +29,7 @@ use mr_assets::raw::{self, TexSlot};
 use mr_sim::mem::Mem;
 use mr_sim::particles::{Particles, Sparks};
 
-use crate::vramtex::VramTextures;
+use crate::psxfx::{Blend, FxPrim, FxPrims, FxVert};
 
 /// One camera-facing (or ground-flat) textured quad.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,6 +53,9 @@ pub struct Billboard {
     pub rgb: [u8; 3],
     pub semi: bool,
     pub abr: u8,
+    /// Ordering-table bias (FUN_80011E3C sorts at OTZ * 4 + bias * 4; the
+    /// status effects use -0x20 / -0x60 to sit in front of their kart).
+    pub bias: i16,
 }
 
 /// A 3D line, colour a at `a` to colour b at `b` (additive).
@@ -168,6 +170,7 @@ impl FxTables {
             rgb: p.rgb,
             semi: abr != 0x60,
             abr: (abr >> 5) as u8,
+            bias: 0,
         })
     }
 
@@ -221,6 +224,7 @@ pub fn items_from_mem(t: &FxTables, m: &Mem, cam: FxCamera, frame: i32, out: &mu
                 rgb: [0x80; 3],
                 semi: false,
                 abr: 3,
+                bias: 0,
             });
             i += 4;
         }
@@ -238,7 +242,7 @@ pub fn items_from_mem(t: &FxTables, m: &Mem, cam: FxCamera, frame: i32, out: &mu
             let a = 0x800E_1B70 + 0x20 * i as u32;
             let s = m.i16(a + 0x16) as i32 * 2;
             let (tp, cl) = t.slot_attr(0x15, 0xB, 0x60);
-            out.push(Billboard { pos: [m.i32(a) << 5, m.i32(a + 4), m.i32(a + 8) << 5], hw: s, hh: s, angle: cam.roll & 0xFFF, anchor: 0, flat: false, u: 0xC0, v: 0x80, uw: 0x37, vh: 0x37, tpage: tp, clut: cl, rgb: [0x80; 3], semi: false, abr: 3 });
+            out.push(Billboard { pos: [m.i32(a) << 5, m.i32(a + 4), m.i32(a + 8) << 5], hw: s, hh: s, angle: cam.roll & 0xFFF, anchor: 0, flat: false, u: 0xC0, v: 0x80, uw: 0x37, vh: 0x37, tpage: tp, clut: cl, rgb: [0x80; 3], semi: false, abr: 3, bias: 0 });
         }
     }
     // projectiles (FUN_80030D78)
@@ -252,7 +256,7 @@ pub fn items_from_mem(t: &FxTables, m: &Mem, cam: FxCamera, frame: i32, out: &mu
         let pos = [m.i32(a), m.i32(a + 4), m.i32(a + 8)];
         let b = |hw, hh, angle, anchor, u, v, uw, vh, slot: usize, clut| {
             let (tp, cl) = t.slot_attr(slot, clut, 0x60);
-            Billboard { pos, hw, hh, angle, anchor, flat: false, u, v, uw, vh, tpage: tp, clut: cl, rgb: [0x80; 3], semi: false, abr: 3 }
+            Billboard { pos, hw, hh, angle, anchor, flat: false, u, v, uw, vh, tpage: tp, clut: cl, rgb: [0x80; 3], semi: false, abr: 3, bias: 0 }
         };
         if flags & 0x40 != 0 {
             let w = t.sin[(((frame & 0xF) * 0x100 + ((i as i32) << 9)) & 0xFFF) as usize] as i32;
@@ -300,16 +304,17 @@ pub fn kart_effects(t: &FxTables, rec: &[u8], cam: FxCamera, frame: i32, out: &m
     let i16at = |o: usize| i16::from_le_bytes([rec[o], rec[o + 1]]) as i32;
     let pos = [i32at(0), i32at(4), i32at(8)];
     let sp = [0i32, 32, 255, 384, 0, 192, 255, 240]; // 0x800B07B8.. (exe constants)
+    // the inline status cases sort 0x20 in front of the kart (0x10: 0x60)
     let bb = |pos, hw, hh, angle, anchor, u, v, uw, vh, slot: usize, clut: u16, rgb: [u8; 3], abr: u16| {
         let (tp, cl) = t.slot_attr(slot, clut, abr);
-        Billboard { pos, hw, hh, angle, anchor, flat: false, u, v, uw, vh, tpage: tp, clut: cl, rgb, semi: abr != 0x60, abr: (abr >> 5) as u8 }
+        Billboard { pos, hw, hh, angle, anchor, flat: false, u, v, uw, vh, tpage: tp, clut: cl, rgb, semi: abr != 0x60, abr: (abr >> 5) as u8, bias: -0x20 }
     };
     if rec[0x4D6] != 0 {
         let f = 0x1000 - i16at(0x442);
         let s1 = { let v = f * sp[3]; (if v < 0 { v + 0xFFF } else { v }) >> 12 };
         let s2 = { let v = f * sp[7]; (if v < 0 { v + 0xFFF } else { v }) >> 12 };
-        out.push(bb(pos, s1, s1, (frame & 0x3F) << 6, 0, 0xA0, 0xC0, 0x1F, 0x1F, 0x15, 0xE, [sp[0] as u8, sp[1] as u8, sp[2] as u8], 0x20));
-        out.push(bb(pos, s2, s2, ((frame & 0x3F) * -0x40 + 0xFFF) & 0xFFF, 0, 0xA0, 0xC0, 0x1F, 0x1F, 0x15, 0xE, [sp[4] as u8, sp[5] as u8, sp[6] as u8], 0x20));
+        out.push(Billboard { bias: 0, ..bb(pos, s1, s1, (frame & 0x3F) << 6, 0, 0xA0, 0xC0, 0x1F, 0x1F, 0x15, 0xE, [sp[0] as u8, sp[1] as u8, sp[2] as u8], 0x20) });
+        out.push(Billboard { bias: -1, ..bb(pos, s2, s2, ((frame & 0x3F) * -0x40 + 0xFFF) & 0xFFF, 0, 0xA0, 0xC0, 0x1F, 0x1F, 0x15, 0xE, [sp[4] as u8, sp[5] as u8, sp[6] as u8], 0x20) });
     }
     let effect = rec[0x4F1];
     // phase per kart: +0x4D7 (the kart's index byte)
@@ -332,7 +337,7 @@ pub fn kart_effects(t: &FxTables, rec: &[u8], cam: FxCamera, frame: i32, out: &m
         }
         0x10 => {
             let s = i32at(0x304) as i16 as i32;
-            out.push(bb([i32at(0x330), i32at(0x338), i32at(0x340)], s, s, 0, 0, 0x00, 0x40, 0x1F, 0x1F, 0x15, 4, [0, 0x60, 0xC0], 0x20));
+            out.push(Billboard { bias: -0x60, ..bb([i32at(0x330), i32at(0x338), i32at(0x340)], s, s, 0, 0, 0x00, 0x40, 0x1F, 0x1F, 0x15, 4, [0, 0x60, 0xC0], 0x20) });
         }
         0x13 => {
             let s = ((k300 << 18) >> 16) as i16 as i32;
@@ -424,48 +429,15 @@ impl CapRows {
     }
 }
 
-type MatKey = (u16, u16, bool, u8, bool);
-
-#[derive(Resource, Default)]
-struct FxDraw {
-    mats: HashMap<MatKey, Handle<StandardMaterial>>,
-    batches: HashMap<MatKey, (Entity, Handle<Mesh>)>,
-    inverted: HashMap<(u16, u16), Handle<Image>>,
-}
-
-/// The page through the CLUT as a darkening mask: black, alpha = the
-/// texel's brightest channel (0 for transparent texels).
-fn inverted(cache: &mut HashMap<(u16, u16), Handle<Image>>, tex: &VramTextures, images: &mut Assets<Image>, tp: u16, cl: u16) -> Handle<Image> {
-    if let Some(h) = cache.get(&(tp, cl)) {
-        return h.clone();
-    }
-    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-    let (px, py, depth) = mr_assets::vram::tpage(tp);
-    let (cx, cy) = mr_assets::vram::clut(cl);
-    let mut data = Vec::with_capacity(256 * 256 * 4);
-    for v in 0..256u32 {
-        for u in 0..256u32 {
-            let t = tex.vram.texel(depth, px, py, cx, cy, u as u8, v as u8);
-            let c = mr_assets::vram::rgba(t);
-            let a = if c[3] == 0 { 0 } else { c[0].max(c[1]).max(c[2]) };
-            data.extend_from_slice(&[0, 0, 0, a]);
-        }
-    }
-    let mut img = Image::new(Extent3d { width: 256, height: 256, depth_or_array_layers: 1 }, TextureDimension::D2, data, TextureFormat::Rgba8UnormSrgb, bevy::asset::RenderAssetUsages::RENDER_WORLD);
-    img.sampler = bevy::image::ImageSampler::nearest();
-    let h = images.add(img);
-    cache.insert((tp, cl), h.clone());
-    h
-}
-
 pub struct EffectsPlugin;
 
 impl Plugin for EffectsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<FxFrame>()
-            .init_resource::<FxDraw>()
+        app.add_plugins(crate::psxfx::PsxFxPlugin)
+            .init_resource::<FxFrame>()
             .add_systems(Startup, setup.after(crate::scene::setup))
-            .add_systems(Update, (capture_source, session_source, draw.after(capture_source).after(session_source)));
+            .add_systems(Update, (capture_source, session_source, draw.after(capture_source).after(session_source)))
+            .add_systems(Update, fx_shots.after(capture_source));
     }
 }
 
@@ -501,6 +473,11 @@ fn capture_source(cap: Option<Res<crate::capture::CaptureReplay>>, rows: Option<
     items_from_mem(&t, &m, cam, m.i32(0x800B_0D90), &mut out.billboards);
     for k in 0..6u32 {
         kart_effects(&t, m.slice(0x800C_30A8 + 0x504 * k, 0x504), cam, m.i32(0x800B_0D90), &mut out.billboards);
+    }
+    if std::env::var("MRM_FX_DEBUG").is_ok() {
+        for b in &out.billboards {
+            eprintln!("fx vb {} {:?}", cap.vb, b);
+        }
     }
     *fx = out;
 }
@@ -544,172 +521,157 @@ fn session_source(p: Res<crate::Player>, cap: Option<Res<crate::capture::Capture
 }
 
 const S: f32 = 1.0 / crate::UNITS;
-/// Gain of additive sprites (gamma vs linear blending, render ledger).
-const ADD_GAIN: f32 = 2.2;
 
-#[allow(clippy::too_many_arguments)]
-fn draw(
-    mut commands: Commands,
-    fx: Res<FxFrame>,
-    mut st: ResMut<FxDraw>,
-    tex: Option<ResMut<VramTextures>>,
-    mut images: ResMut<Assets<Image>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut mats: ResMut<Assets<StandardMaterial>>,
-    cam: Query<&Transform, With<crate::ChaseCamera>>,
-    mut vis: Query<&mut Visibility>,
-) {
-    let (Some(mut tex), Ok(ct)) = (tex, cam.single()) else { return };
+/// Billboards and streaks -> PS1 primitives for the effects pass (psxfx.rs:
+/// blending in the game's colour space, depth-tested against the scene).
+fn draw(fx: Res<FxFrame>, mut prims: ResMut<FxPrims>, cam: Query<&Transform, With<crate::ChaseCamera>>) {
+    let Ok(ct) = cam.single() else { return };
     let right = ct.rotation * Vec3::X;
     let up = ct.rotation * Vec3::Y;
-    // geometry per material
-    let mut groups: HashMap<MatKey, (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<[f32; 4]>)> = HashMap::new();
-    let k = |c: u8, q: f32| (c as f32 / 128.0).powf(2.2) * q;
     for b in &fx.billboards {
-        let key: MatKey = (b.tpage & !0x60, b.clut, b.semi, b.abr, true);
-        let g = groups.entry(key).or_default();
-        let (hw, hh) = (b.hw as f32 * 32.0 * S, b.hh as f32 * 32.0 * S);
-        // The game sorts each sprite by its centre's depth in the ordering
-        // table, so the ground and walls around it rarely cut it; with a
-        // depth buffer, pull camera-facing sprites toward the eye by their
-        // radius (at most half the distance) instead (render ledger).
-        let mut c = crate::to_bevy(b.pos[0], b.pos[1], b.pos[2]);
-        // (moving along the eye ray keeps the projected centre; the size is
-        // scaled by the same ratio so the sprite keeps its on-screen size)
-        let (mut hw, mut hh) = (hw, hh);
-        if !b.flat {
-            let to_eye = ct.translation - c;
-            let d = to_eye.length();
-            if d > 1e-3 {
-                let pull = hw.abs().max(hh.abs()).min(d * 0.5);
-                c += to_eye / d * pull;
-                let k = (d - pull) / d;
-                hw *= k;
-                hh *= k;
-            }
-        }
-        let (s, co) = ((b.angle as f32) * std::f32::consts::TAU / 4096.0).sin_cos();
-        // GTE offsets (x right, y down), anchor 4 = standing on the point
-        let oy = if b.anchor & 4 != 0 { -hh } else { 0.0 };
-        let corner = |dx: f32, dy: f32| {
-            let (dx, dy) = (dx, dy + oy);
-            let rx = dx * co - dy * s;
-            let ry = dx * s + dy * co;
-            if b.flat {
-                c + Vec3::new(rx, 0.0, ry)
-            } else {
-                c + right * rx - up * ry
-            }
-        };
-        let p = [corner(-hw, -hh), corner(hw, -hh), corner(-hw, hh), corner(hw, hh)];
-        let (u0, v0) = (b.u as f32 / 256.0, b.v as f32 / 256.0);
-        let (u1, v1) = ((b.u as i32 + b.uw) as f32 / 256.0, (b.v as i32 + b.vh) as f32 / 256.0);
-        let uv = [[u0, v0], [u1, v0], [u0, v1], [u1, v1]];
-        // Additive blending happens in linear space here and in the GPU's
-        // gamma space in the game: a mid-grey texel adds ~2.4x less light
-        // here. Additive sprites are boosted x2.2 to keep explosions and
-        // sparkles as bright as the game's (render ledger).
-        let q = match (b.semi, b.abr) {
-            (true, 1) => ADD_GAIN,
-            (true, 3) => 0.25 * ADD_GAIN,
-            _ => 1.0,
-        };
-        let col = if b.semi && b.abr == 2 {
-            let m = b.rgb[0].max(b.rgb[1]).max(b.rgb[2]) as f32 / 128.0;
-            [1.0, 1.0, 1.0, m.min(1.0)]
-        } else {
-            [k(b.rgb[0], q), k(b.rgb[1], q), k(b.rgb[2], q), if b.semi && b.abr == 0 { 0.5 } else { 1.0 }]
-        };
-        for i in [0usize, 1, 2, 1, 3, 2] {
-            g.0.push(p[i].to_array());
-            g.1.push(uv[i]);
-            g.2.push(col);
-        }
+        prims.list.push(billboard_prim(b, right, up));
     }
     for s in &fx.streaks {
-        let key: MatKey = (0, 0, true, 1, false);
-        let g = groups.entry(key).or_default();
-        let (a, b) = (crate::to_bevy(s.a[0], s.a[1], s.a[2]), crate::to_bevy(s.b[0], s.b[1], s.b[2]));
-        // a ribbon about one game pixel wide at its distance
-        let d = (a - ct.translation).length().max(0.1);
-        let w = d * (2.0 * (120.0f32 / 160.0)) / 240.0 * 0.5;
-        let n = (b - a).cross(ct.translation - a).normalize_or_zero() * w;
-        let lin = |c: [u8; 3]| {
-            let l = Color::srgb_u8(c[0], c[1], c[2]).to_linear();
-            [l.red, l.green, l.blue, 1.0]
-        };
-        let (ca, cb) = (lin(s.rgb_a), lin(s.rgb_b));
-        let p = [a + n, a - n, b + n, b - n];
-        let cs = [ca, ca, cb, cb];
-        for i in [0usize, 1, 2, 1, 3, 2] {
-            g.0.push(p[i].to_array());
-            g.1.push([0.0, 0.0]);
-            g.2.push(cs[i]);
-        }
+        prims.list.push(streak_prim(s, ct.translation));
     }
-    // hide batches with nothing this frame
-    for (key, (e, _)) in st.batches.iter() {
-        if !groups.contains_key(key) {
-            if let Ok(mut v) = vis.get_mut(*e) {
-                *v = Visibility::Hidden;
-            }
-        }
-    }
-    for (key, (pos, uv, col)) in groups {
-        let n = pos.len();
-        let normals = vec![[0.0, 1.0, 0.0]; n];
-        if let Some((e, h)) = st.batches.get(&key).cloned() {
-            if let Some(mut m) = meshes.get_mut(&h) {
-                m.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
-                m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-                m.insert_attribute(Mesh::ATTRIBUTE_UV_0, uv);
-                m.insert_attribute(Mesh::ATTRIBUTE_COLOR, col);
-            }
-            if let Ok(mut v) = vis.get_mut(e) {
-                *v = Visibility::Inherited;
-            }
-            continue;
-        }
-        let (tp, cl, semi, abr, textured) = key;
-        // B - F (abr 2): darken the background by the texel's brightness,
-        // dst * (1 - F * k), a black blend with alpha from the texel (as the
-        // kart shadows do; render ledger)
-        let subtract = semi && abr == 2 && textured;
-        let page = if !textured {
-            None
-        } else if subtract {
-            Some(inverted(&mut st.inverted, &tex, &mut images, tp, cl))
+}
+
+/// A billboard as FUN_80011E3C draws it: a quad of half size (w, h) view
+/// units around the point, in the screen plane (or flat on the ground),
+/// rotated by the angle; colour modulation texel * rgb / 128.
+pub fn billboard_prim(b: &Billboard, right: Vec3, up: Vec3) -> FxPrim {
+    let (hw, hh) = (b.hw as f32 * 32.0 * S, b.hh as f32 * 32.0 * S);
+    let c = crate::to_bevy(b.pos[0], b.pos[1], b.pos[2]);
+    let (s, co) = ((b.angle as f32) * std::f32::consts::TAU / 4096.0).sin_cos();
+    // GTE offsets (x right, y down), anchor 4 = standing on the point
+    let oy = if b.anchor & 4 != 0 { -hh } else { 0.0 };
+    let corner = |dx: f32, dy: f32| {
+        let (dx, dy) = (dx, dy + oy);
+        let rx = dx * co - dy * s;
+        let ry = dx * s + dy * co;
+        if b.flat {
+            c + Vec3::new(rx, 0.0, ry)
         } else {
-            Some(tex.get(&mut images, tp, cl))
-        };
-        let mat = st
-            .mats
-            .entry(key)
-            .or_insert_with(|| {
-                mats.add(StandardMaterial {
-                    base_color: Color::WHITE,
-                    base_color_texture: page,
-                    unlit: true,
-                    cull_mode: None,
-                    alpha_mode: match (semi, abr) {
-                        (true, 0) => AlphaMode::Blend,
-                        (true, 1) | (true, 3) => AlphaMode::Add,
-                        (true, 2) => AlphaMode::Blend,
-                        (true, _) => AlphaMode::Blend,
-                        _ => AlphaMode::Mask(0.5),
-                    },
-                    ..default()
-                })
-            })
-            .clone();
-        let mut m = Mesh::new(bevy::mesh::PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default());
-        m.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
-        m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-        m.insert_attribute(Mesh::ATTRIBUTE_UV_0, uv);
-        m.insert_attribute(Mesh::ATTRIBUTE_COLOR, col);
-        let h = meshes.add(m);
-        // big bounds: the mesh moves every frame
-        let e = commands.spawn((Mesh3d(h.clone()), MeshMaterial3d(mat), Transform::IDENTITY, Visibility::Inherited, bevy::camera::visibility::NoFrustumCulling)).id();
-        st.batches.insert(key, (e, h));
+            c + right * rx - up * ry
+        }
+    };
+    let p = [corner(-hw, -hh), corner(hw, -hh), corner(-hw, hh), corner(hw, hh)];
+    let (u0, v0) = (b.u as f32, b.v as f32);
+    let (u1, v1) = ((b.u as i32 + b.uw) as f32, (b.v as i32 + b.vh) as f32);
+    let uv = [[u0, v0], [u1, v0], [u0, v1], [u1, v1]];
+    let rgb = b.rgb.map(|x| x as f32 / 128.0);
+    let center = if b.flat { c } else { corner(0.0, 0.0) };
+    FxPrim {
+        v: std::array::from_fn(|i| FxVert { pos: p[i], uv: uv[i], rgb }),
+        page: Some((b.tpage & !0x60, b.clut)),
+        blend: if b.semi { Blend::Abr(b.abr & 3) } else { Blend::Opaque },
+        center,
+        // ground-flat sprites lie on the ground: let the ground under them
+        // (within half their size) not hide them
+        ground_eps: if b.flat { 0.5 * hw.abs().max(hh.abs()) } else { 0.0 },
+        // OT index = OTZ * 4 + bias * 4 with OTZ = view z / 4 (ZSF4 0x100,
+        // the PSYQ default [INFER]): bias b moves the sprite -4b view units
+        depth_pull: (-(b.bias as f32) * 4.0 * 32.0 * S).max(0.0),
     }
+}
+
+/// A spark streak: LineG2, additive, black at the spark to its colour, as a
+/// ribbon about one game pixel (of 240 lines) wide at its distance.
+pub fn streak_prim(s: &Streak, eye: Vec3) -> FxPrim {
+    let (a, b) = (crate::to_bevy(s.a[0], s.a[1], s.a[2]), crate::to_bevy(s.b[0], s.b[1], s.b[2]));
+    let d = ((a + b) * 0.5 - eye).length().max(0.1);
+    let w = d * (2.0 * (120.0f32 / 160.0)) / 240.0 * 0.5;
+    let n = (b - a).cross(eye - a).normalize_or_zero() * w;
+    let g = |c: [u8; 3]| c.map(|x| x as f32 / 255.0);
+    let (ca, cb) = (g(s.rgb_a), g(s.rgb_b));
+    let p = [a + n, a - n, b + n, b - n];
+    let cs = [ca, ca, cb, cb];
+    FxPrim {
+        v: std::array::from_fn(|i| FxVert { pos: p[i], uv: [0.0, 0.0], rgb: cs[i] }),
+        page: None,
+        blend: Blend::Abr(1),
+        center: (a + b) * 0.5,
+        ground_eps: 0.0,
+        depth_pull: 0.0,
+    }
+}
+
+/// Dev tool for the side-by-side checks (tools/oracle/fx_sbs.py):
+/// `--fx-shots DIR VB,VB,...` with `--replay-capture` takes a window shot
+/// DIR/b_<VB>.png at the first replayed tick whose VBlank is >= each VB
+/// (time paused while it lands), then exits; `--fx-speed N` replays N times
+/// faster in between. Prints the VBlank each shot landed on. Without a
+/// capture the numbers are logic ticks of the live session.
+#[derive(Default)]
+struct ShotRun {
+    dir: String,
+    vbs: Vec<i64>,
+    wait: u32,
+    init: bool,
+}
+
+fn fx_shots(
+    cap: Option<Res<crate::capture::CaptureReplay>>,
+    p: Res<crate::Player>,
+    mut run: Local<ShotRun>,
+    mut time: ResMut<Time<Virtual>>,
+    pages: Res<crate::psxfx::FxPages>,
+    images: Res<Assets<Image>>,
+    mut c: Commands,
+    mut exit: MessageWriter<AppExit>,
+) {
+    if !run.init {
+        run.init = true;
+        let a: Vec<String> = std::env::args().collect();
+        if let Some(i) = a.iter().position(|x| x == "--fx-shots") {
+            run.dir = a.get(i + 1).cloned().unwrap_or_default();
+            run.vbs = a.get(i + 2).map(|v| v.split(',').filter_map(|x| x.parse().ok()).collect()).unwrap_or_default();
+            run.vbs.sort();
+            run.vbs.reverse();
+            if let Some(k) = a.iter().position(|x| x == "--fx-speed").and_then(|k| a.get(k + 1)).and_then(|v| v.parse::<f32>().ok()) {
+                time.set_relative_speed(k);
+            }
+        }
+    }
+    let Some(&want) = run.vbs.last() else { return };
+    let now = cap.map(|c| c.vb).unwrap_or(p.tick as i64);
+    if run.wait > 0 {
+        run.wait -= 1;
+        if run.wait == 0 {
+            run.vbs.pop();
+            time.unpause();
+            if run.vbs.is_empty() {
+                exit.write(AppExit::Success);
+            }
+        }
+        return;
+    }
+    if now >= want {
+        time.pause();
+        let path = format!("{}/b_{}.png", run.dir, want);
+        eprintln!("fx-shot target {} vblank {}", want, now);
+        if std::env::var("MRM_FX_DUMP").is_ok() {
+            pages.dump(&images, &run.dir, &want.to_string());
+        }
+        c.spawn(bevy::render::view::screenshot::Screenshot::primary_window()).observe(move |ev: On<bevy::render::view::screenshot::ScreenshotCaptured>| {
+            write_png(&ev.image, &path);
+        });
+        run.wait = 20;
+    }
+}
+
+fn write_png(img: &Image, path: &str) {
+    use bevy::render::render_resource::TextureFormat;
+    let Some(data) = img.data.as_ref() else { return };
+    let (w, h) = (img.width(), img.height());
+    let mut rgba = data.clone();
+    if matches!(img.texture_descriptor.format, TextureFormat::Bgra8Unorm | TextureFormat::Bgra8UnormSrgb) {
+        for px in rgba.chunks_exact_mut(4) {
+            px.swap(0, 2);
+        }
+    }
+    for px in rgba.chunks_exact_mut(4) {
+        px[3] = 255;
+    }
+    let _ = std::fs::write(path, mr_assets::img::png_rgba(w, h, &rgba));
 }

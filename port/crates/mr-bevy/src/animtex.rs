@@ -56,6 +56,9 @@ fn setup(mut at: ResMut<AnimTex>) {
     let dec = raw::decode(&file, &env).expect("decode RAW");
     for a in &dec.anims {
         if let Some(s) = place(&exe, &dec.slots, a) {
+            if std::env::var("MRM_ANIM_DEBUG").is_ok() {
+                eprintln!("animtex strip 0x{:X}: vram ({}, {}) {}x{} halfwords, {} frames", s.slot, s.x, s.y, s.w, s.h, s.frames.len());
+            }
             at.strips.push(s);
         }
     }
@@ -96,6 +99,7 @@ fn step(
     rows: Option<ResMut<crate::effects::CapRows>>,
     mut at: ResMut<AnimTex>,
     tex: Option<ResMut<VramTextures>>,
+    mut pages: ResMut<crate::psxfx::FxPages>,
     mut images: ResMut<Assets<Image>>,
 ) {
     let Some(mut tex) = tex else { return };
@@ -121,6 +125,8 @@ fn step(
             continue;
         }
         tex.write_rect(&mut images, s.x, s.y, s.w, s.h, data);
+        // the effects pass keeps its own (raw colour, STP) page images
+        pages.refresh(&tex.vram, &mut images, s.x, s.y, s.w, s.h);
         s.shown = Some(k);
     }
 }

@@ -167,67 +167,25 @@ impl ShadowRec {
 // Bevy side: one quad entity per kart record, updated every frame.
 // ---------------------------------------------------------------------------
 
-use bevy::asset::RenderAssetUsages;
-use bevy::image::ImageSampler;
-use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
-use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use mr_assets::dat::TexSlot;
-use mr_assets::vram;
-use std::collections::HashMap;
 
-use crate::vramtex::VramTextures;
+use crate::psxfx::{Blend, FxPrim, FxPrims, FxVert};
 
 #[derive(Resource)]
 pub struct ShadowState {
     pub sin: SinTable,
     /// Texture slot 0x14 of the course (0x800DFF00 + 0x140).
     pub slot: TexSlot,
-    images: HashMap<u16, Handle<Image>>,
 }
 
 impl ShadowState {
     pub fn new(sin: SinTable, slot: TexSlot) -> Self {
-        ShadowState { sin, slot, images: HashMap::new() }
+        ShadowState { sin, slot }
     }
 }
 
-#[derive(Component)]
-pub struct KartShadow(pub usize);
-
-/// The subtractive blend B - F (F = texel * colour / 128) is drawn as a
-/// black alpha-blended quad (dst * (1 - alpha)), alpha from the texel's grey
-/// level matched at a mid-tone, times colour / 128 in the material
-/// (approximation, render-ledger.md).
-fn alpha_image(vt: &VramTextures, images: &mut Assets<Image>, tpage: u16, clut: u16) -> Handle<Image> {
-    let (px, py, depth) = vram::tpage(tpage);
-    let (cx, cy) = vram::clut(clut);
-    let mut data = Vec::with_capacity(256 * 256 * 4);
-    for v in 0..256u32 {
-        for u in 0..256u32 {
-            let t = vt.vram.texel(depth, px, py, cx, cy, u as u8, v as u8);
-            let c = vram::rgba(t);
-            // The PS1 subtracts F in its gamma space; Bevy blends in linear.
-            // Darken by the linear factor that subtracting F from a mid-tone
-            // (gamma 0.4) gives: alpha = 1 - ((0.4 - F) / 0.4)^2.2.
-            let f = (c[0] as f32 + c[1] as f32 + c[2] as f32) / (3.0 * 255.0);
-            let a = if t == 0 { 0 } else { ((1.0 - ((0.4 - f).max(0.0) / 0.4).powf(2.2)) * 255.0).round() as u8 };
-            data.extend_from_slice(&[0, 0, 0, a]);
-        }
-    }
-    let mut img = Image::new(
-        Extent3d { width: 256, height: 256, depth_or_array_layers: 1 },
-        TextureDimension::D2,
-        data,
-        TextureFormat::Rgba8Unorm,
-        RenderAssetUsages::RENDER_WORLD,
-    );
-    img.sampler = ImageSampler::nearest();
-    images.add(img)
-}
-
-/// Kart records to shadow, in list-slot order. Player only for now; other
-/// karts (Session::others) slot in here.
+/// Kart records to shadow, in list-slot order.
 /// Every fed kart (crate::karts::KartFeed: the session's six karts, a capture
 /// replay, or the player alone), with its previous tick for interpolation.
 fn kart_records(feed: &crate::karts::KartFeed) -> Vec<(&[u8], Option<&[u8]>)> {
@@ -237,81 +195,60 @@ fn kart_records(feed: &crate::karts::KartFeed) -> Vec<(&[u8], Option<&[u8]>)> {
         .collect()
 }
 
-#[allow(clippy::too_many_arguments)]
+/// One FT4 per kart, as FUN_8002ADA8 draws it: the slot 0x14 silhouette tile
+/// with colour = `ShadowRec::colour` (fade by view depth) and the tpage's
+/// ABR 2, B - F, drawn by the effects pass in the game's colour space
+/// (psxfx.rs: exact subtraction, depth-tested with the ground exempt).
 pub fn update_shadows(
     p: Res<crate::Player>,
     feed: Res<crate::karts::KartFeed>,
     time: Res<Time<Fixed>>,
-    mut st: ResMut<ShadowState>,
-    vt: Res<VramTextures>,
-    mut images: ResMut<Assets<Image>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut mats: ResMut<Assets<StandardMaterial>>,
-    mut commands: Commands,
-    mut q: Query<(&KartShadow, &Mesh3d, &MeshMaterial3d<StandardMaterial>, &mut Visibility)>,
+    st: Res<ShadowState>,
+    mut prims: ResMut<FxPrims>,
 ) {
     let Some((eye, cm)) = p.pose.cam else { return };
     let karts = kart_records(&feed);
-    let have: Vec<usize> = q.iter().map(|(k, ..)| k.0).collect();
-    for i in 0..karts.len() {
-        if !have.contains(&i) {
-            let mesh = meshes.add(Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default()));
-            let mat = mats.add(StandardMaterial {
-                base_color: Color::srgba(0.0, 0.0, 0.0, 1.0),
-                unlit: true,
-                cull_mode: None,
-                double_sided: true,
-                alpha_mode: AlphaMode::Blend,
-                depth_bias: 1000.0,
-                ..default()
-            });
-            commands.spawn((Mesh3d(mesh), MeshMaterial3d(mat), Transform::default(), Visibility::Hidden, KartShadow(i)));
-        }
-    }
     let a = time.overstep_fraction();
-    let st = &mut *st;
-    for (ks, mesh, mat, mut vis) in q.iter_mut() {
-        let rec = karts.get(ks.0).and_then(|(k, _)| shadow_record(k, &st.sin));
-        let Some(rec) = rec.filter(|r| r.visible(eye)) else {
-            *vis = Visibility::Hidden;
-            continue;
-        };
+    for (k, prev) in &karts {
+        let Some(rec) = shadow_record(k, &st.sin).filter(|r| r.visible(eye)) else { continue };
         // Display interpolation like the kart model: lerp the corners from
         // the previous tick's record.
-        let prev = karts[ks.0].1.and_then(|k| shadow_record(k, &st.sin)).unwrap_or(rec);
+        let prev = prev.and_then(|k| shadow_record(k, &st.sin)).unwrap_or(rec);
         let corners = |r: &ShadowRec| -> [Vec3; 4] {
             r.draw_offsets().map(|o| {
                 crate::to_bevy(r.origin[0] + o[0] * 32, r.origin[1] + o[1] * 32, r.origin[2] + o[2] * 32)
             })
         };
         let (c0, c1) = (corners(&prev), corners(&rec));
-        let pos: Vec<[f32; 3]> = (0..4).map(|i| c0[i].lerp(c1[i], a).to_array()).collect();
-        let uv: Vec<[f32; 2]> = rec
-            .uvs()
-            .iter()
-            .map(|t| [(t[0] as f32 + 0.5) / 256.0, (t[1] as f32 + 0.5) / 256.0])
-            .collect();
-        if let Some(mut m) = meshes.get_mut(&mesh.0) {
-            *m = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
-                .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
-                .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
-                .with_inserted_indices(Indices::U32(vec![0, 1, 2, 0, 2, 3]));
-        }
+        let pos: [Vec3; 4] = std::array::from_fn(|i| c0[i].lerp(c1[i], a));
         // View depth of the origin, world >> 5 (FUN_8002ADA8's local_70).
         let d = [rec.origin[0] - eye[0], rec.origin[1] - eye[1], rec.origin[2] - eye[2]];
         let z = ((cm[6] as i64 * d[0] as i64 + cm[7] as i64 * d[1] as i64 + cm[8] as i64 * d[2] as i64) >> 17) as i32;
         let colour = rec.colour(z);
-        let key = rec.clut_add();
-        let tp = st.slot.tpage.wrapping_add(rec.tpage_add);
-        let cl = st.slot.clut.wrapping_add(key);
-        let img = st.images.entry(key).or_insert_with(|| alpha_image(&vt, &mut images, tp, cl)).clone();
-        if let Some(mut m) = mats.get_mut(&mat.0) {
-            m.base_color = Color::srgba(0.0, 0.0, 0.0, colour as f32 / 128.0);
-            m.base_color_texture = Some(img);
+        if colour == 0 {
+            continue;
         }
-        *vis = Visibility::Inherited;
+        let tp = st.slot.tpage.wrapping_add(rec.tpage_add);
+        let cl = st.slot.clut.wrapping_add(rec.clut_add());
+        let uv = rec.uvs();
+        let rgb = [colour as f32 / 128.0; 3];
+        // corners A, B, C, D -> GPU order A, B, D, C
+        let ord = [0usize, 1, 3, 2];
+        // texel units (the interpolated coordinate is floored, so the
+        // GPU's u..u+31 covers texels u..u+30 as on the PS1)
+        let tuv = |i: usize| [uv[i][0] as f32, uv[i][1] as f32];
+        let center = (pos[0] + pos[1] + pos[2] + pos[3]) * 0.25;
+        let ext = pos.iter().map(|q| (*q - center).length()).fold(0.0f32, f32::max);
+        prims.list.push(FxPrim {
+            v: std::array::from_fn(|j| FxVert { pos: pos[ord[j]], uv: tuv(ord[j]), rgb }),
+            page: Some((tp & !0x60, cl)),
+            blend: Blend::Abr(((tp >> 5) & 3) as u8),
+            center,
+            ground_eps: 0.5 * ext,
+            depth_pull: 0.0,
+        });
         if std::env::var("MRM_SHADOW_DEBUG").is_ok() {
-            eprintln!("shadow {} tick {} rec {:?} z {} colour {}", ks.0, p.tick, rec, z, colour);
+            eprintln!("shadow tick {} rec {:?} z {} colour {}", p.tick, rec, z, colour);
         }
     }
 }

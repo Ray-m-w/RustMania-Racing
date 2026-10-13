@@ -118,7 +118,12 @@ All 32 music channels (mr-xa info): 58 s to 150 s each.
   the player's finish clip; `clip(character, n)` for other clip sites.
 - Options: --no-audio, --no-music, --volume / --music-volume /
   --sfx-volume V, --audio-stats, --audio-dump PATH.
-- Measured: 5 min autopilot race, 0 music underruns.
+- Measured (mr-bevy --autopilot --audio-stats --audio-dump, 160-250 s
+  runs): music underruns 64 frames total (the first chunk at the intro's
+  start), none after; the dumped mix correlates 1.0000 with the mr-xa decode
+  at gain 0.4999 (= main volume 0x3FFF): intro clip 0xB0, track 16 from
+  frame 0, the seamless loop at 120.05 s; a full race (tick 4358, 4th
+  place) queued the finish clip 0x8052, then track 16 again.
 
 ## SFX, sample banks and engine (track D)
 

@@ -58,7 +58,40 @@ def active_high(spec):
     return m
 
 
+class OracleLock:
+    """One savestate-driven run at a time on the shared oracle (several agents
+    capture in parallel). Exclusive lock file in the system temp dir; waits."""
+    PATH = os.path.join(os.environ.get("TEMP", "."), "mrm-oracle.lock")
+
+    def __enter__(self):
+        while True:
+            try:
+                self.fd = os.open(self.PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.write(self.fd, str(os.getpid()).encode())
+                return self
+            except FileExistsError:
+                try:
+                    pid = int(open(self.PATH).read() or 0)
+                    os.kill(pid, 0)  # raises if the holder is gone
+                except (ValueError, OSError):
+                    try:
+                        os.remove(self.PATH)
+                    except OSError:
+                        pass
+                    continue
+                time.sleep(0.5)
+
+    def __exit__(self, *a):
+        os.close(self.fd)
+        os.remove(self.PATH)
+
+
 def run(route, outdir, slot=None, regions=REGIONS, settle=0.3):
+    with OracleLock():
+        return _run(route, outdir, slot, regions, settle)
+
+
+def _run(route, outdir, slot=None, regions=REGIONS, settle=0.3):
     o = Oracle()
     b = Bridge()
     b.set_regions(regions)

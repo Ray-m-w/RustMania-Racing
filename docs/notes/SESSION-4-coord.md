@@ -88,7 +88,84 @@ FUN_800861F0 calls) keep their random-byte draws; post the spawner signature
 you want and I will place one-line calls. D: the item sound calls are
 FUN_8007A620 (3D: id, pitch, vol, x, y, z) and FUN_8005EECC (2D); post the
 `sound::` call you want and I place it, or I will emit `ItemEvent::Sound`.
+(2026-10-13, A) Committed (0a8e176): `mr_sim::items` + `Session::items()`.
+Names as posted, plus: `ItemState::special` (0x800B07F4, i8, -1 none),
+`special_clock` (0x800B07F6), `special_owner` (0x800B0E95), `blink` (0x800B07B0..B3),
+`hit_bits` (0x800E02C0), `ItemState::read(&Mem)` / `write(&mut Mem)` in game
+layout. `Pickup` fields are the raw slot (`x`, `z` TER units, `y` world,
+`state`, `scale`, `colour` = token colour, `pos()` world). `ItemEvent` as
+posted (`Hit` for projectile hits; specials do not emit `Hit`, their victims
+get +0x4FC = 0xF, +0x444 = -1 like a hit). Sound: D's item calls are placed
+(pickups, fire, projectiles, hits, specials, effects). B, coming next from A:
+(6) `ItemState::token_spin` (0x800B0B90, 4 x i16, from FUN_8003C5FC) and
+(1) `Particles` + `Sparks` in the race state with your `spawn` calls in the
+item code and the two updates in frame order, exposed as
+`session.particles()` / `session.sparks()`. FUN_8007F03C's kart particles are
+not ported (its random draws are only skipped in analysis), so its spawns
+will be missing until someone ports it.
+D: `sfx_verify` runs the player-only harness (kart 0's update), so item
+sounds (after the kart loop, all karts) never appear there; a full-frame run
+is `Session::from_mem(disc, world, &m)` then per tick `load_mem` + `tick_dt`
+(see src/bin/mr-items.rs `forced`), draining `globals.sound` (the capture
+needs the item regions of tools/oracle/capture_items.py for exact item state).
 ### B item HUD + effects
+(2026-10-13, B) Published and wanted.
+
+**Published: `mr_sim::particles`** (src/particles.rs; exact vs the oracle:
+4,323 race frames, 271,530 particle and 137,447 spark slot-frames, 0 diffs;
+`mr-particles analysis/fx/race3b`). No randomness inside; std only.
+```rust
+use mr_sim::particles::{Particles, Sparks, Spawn};
+let mut parts = Particles::from_exe(&exe);  // 64 slots 0x800E0C20 + side 0x800D73D0, type table 0x800ACFFC
+let mut sparks = Sparks::default();         // 32 streaks 0x800B4540
+// FUN_800870E8(x,y,z, vx,vy,vz, gravity, angle, spin, type, r,g,b, w,h, life):
+parts.spawn(&Spawn { pos, vel, gravity, angle, spin, kind, rgb, w, h, life }); // -> Option<slot>
+// FUN_800326B4(x,y,z, vx,vy,vz, life, len, r,g,b):
+sparks.spawn(pos, vel, life, len, rgb);
+// race frame (FUN_8007916C): FUN_8008727C and FUN_800327D0
+parts.update(dt, &sin_table /* 0x800A88C0, 4096 x i16 */);
+sparks.update(dt);
+```
+**Asks of A** (you own the race state / update order):
+1. Own one `Particles` + one `Sparks` in the race state (e.g. `ItemState` or
+   `RaceGlobals`) and call the two updates where FUN_8007916C calls
+   FUN_8008727C / FUN_800327D0 (relative to the item code as the game does).
+   Replace every FUN_800870E8 / FUN_800326B4 call in the ported item code
+   (FUN_80068C6C, FUN_80069648, FUN_80069334, FUN_8007BBF0, FUN_8007F03C,
+   FUN_80082708, FUN_8008650C, caseD_* in 0x8006C..0x8006E, FUN_8003E91C,
+   FUN_80040428) with `spawn(...)`, keeping their random draws. Expose them
+   read-only on Session (`session.particles()`, `session.sparks()` or via
+   `items()`), mr-bevy effects.rs draws them.
+2. I added the one line `pub mod particles;` to mr-sim/src/lib.rs (next to
+   your `pub mod items;`): please keep it and include it when you commit
+   lib.rs (I committed particles.rs + its bin/test only).
+3. The HUD reads these record bytes from `Session::record()` /
+   `kart_records()` (so `KartState::to_record` must write them): +0x444
+   message value, +0x468 effect clock, +0x47E meter slide (96 parked, 0 full),
+   +0x48A turbo meter, +0x48E arrow angle, +0x496 map flags, +0x4B2 character,
+   +0x4D0..+0x4D5 weapons/charge, +0x4D7 player, +0x4F1 effect, +0x4F9,
+   +0x4FC message id (0 "LAP 2", 8 "FINAL LAP", 15 "HITS" with +0x444 = -1 ->
+   "-1 HIT"; FUN_80049440), +0x503 wrong-way counter.
+4. The special-move banner globals DAT_800B07F4 (i8, -1 none) /
+   DAT_800B07F6 / DAT_800B0E95: please expose them on `ItemState` (any
+   names); mr-bevy hud.rs `special_globals` reads them (stubbed to none now).
+5. For drawing pickups / projectiles I use your posted `ItemState` API
+   (pickups: kind, pos(), state, scale, token_colour; projectiles: active,
+   pos, flags, spin, owner).
+
+**Item HUD** (mr-assets `hud_items`): `race_hud(&HudTables, &ItemTables,
+&HudState, &ItemHud) -> Vec<Prim>`; checked 9,714/9,714 primitives against
+the GP0 packets of 345 oracle frames. mr-bevy hud.rs builds `ItemHud` from
+the live session each frame (and from a replay sidecar).
+(2026-10-13, B, follow-up) How mr-bevy will read your state: effects.rs
+builds a scratch `Mem` with `ItemState::write`, the kart records,
+`Particles::write` / `Sparks::write` (added) and draws from game layout,
+the same code that replays oracle captures. So beyond the asks above I only
+need: (6) the token group spins DAT_800B0B90 (4 x i16, FUN_8007BBF0?) kept
+in `ItemState` and written by `ItemState::write`, and (7) the camera roll
+(`CameraState::roll`, +0x54) which the session already has. I will wire
+`session.items()` in mr-bevy as soon as it is committed (HEAD does not have
+it yet, so mr-bevy cannot reference it before your commit).
 ### C music + audio output
 (2026-10-12, C) The output bus, in mr-bevy/src/audio.rs (`AudioOutPlugin`,
 registered in main.rs by C). One rodio stream at 44,100 Hz stereo; rodio/cpal

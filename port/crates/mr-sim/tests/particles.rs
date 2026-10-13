@@ -75,3 +75,16 @@ fn sparks_move_and_fade() {
     s.update(2);
     assert_eq!(s.list[0].life, 0xFF);
 }
+
+#[test]
+fn read_write_round_trip() {
+    let a = list(50, "79b8f8ffe0a9000039fe000098ffffffc0ffffffea000000f8ffffffffffffff0000000004004b004b0000000208000408044002b00dfcff8080802e", "8080800c2d002d00");
+    let mut m = Mem::new(vec![0; 0x20_0000], vec![0; 0x400]);
+    a.write(&mut m);
+    assert_eq!(Particles::read(&m, vec![]), a);
+    let mut s = Sparks::default();
+    s.spawn([1, 2, 3], [4, 5, 6], 20, 16, [1, 2, 3]);
+    s.update(2);
+    s.write(&mut m);
+    assert_eq!(Sparks::read(&m), s);
+}

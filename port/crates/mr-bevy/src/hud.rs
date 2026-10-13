@@ -165,8 +165,20 @@ fn state_from_player(p: Res<crate::Player>, g: Res<HudGlobals>, mut input: ResMu
 /// every kart (minimap), the camera matrix (arrow), the frame counter and
 /// race clock, and the HUD pulse (DAT_800B0E10, stepped here once per sim
 /// frame the way FUN_8005C2EC does). Replays have no session: no item HUD.
-fn items_from_player(p: Res<crate::Player>, mut input: ResMut<ItemHudInput>, mut pulse: Local<(HudPulse, i32)>) {
+fn items_from_player(
+    p: Res<crate::Player>,
+    cap: Option<Res<crate::capture::CaptureReplay>>,
+    mut rows: Option<ResMut<crate::effects::CapRows>>,
+    mut input: ResMut<ItemHudInput>,
+    mut pulse: Local<(HudPulse, i32)>,
+) {
     if input.manual {
+        return;
+    }
+    if let (Some(cap), Some(rows)) = (cap.as_ref(), rows.as_mut()) {
+        if let Some(m) = rows.mem(cap.vb) {
+            input.state = Some(capture_items(&m));
+        }
         return;
     }
     let crate::Driver::Sim(run) = &p.driver else {
@@ -212,6 +224,38 @@ fn items_from_player(p: Res<crate::Player>, mut input: ResMut<ItemHudInput>, mut
         karts,
         players: g.humans.max(1) as usize,
     });
+}
+
+/// `--replay-capture` of an fx capture: the item HUD from the captured RAM
+/// (every kart, the camera, the globals; frame counter and pulse as the
+/// frame drew them is approximated by the row itself).
+fn capture_items(m: &mr_sim::mem::Mem) -> ItemHud {
+    let k0 = 0x800C_30A8u32;
+    let n = (m.i16(0x800B_0DFE) + m.i16(0x800B_0C98)).clamp(1, 6) as u32;
+    let karts = (0..n)
+        .map(|k| {
+            let a = k0 + 0x504 * k;
+            MapKart { x: m.i32(a), z: m.i32(a + 8), heading: m.i16(a + 0xE), flags: m.u8(a + 0x496), character: m.u8(a + 0x4B2) }
+        })
+        .collect();
+    let mut cam = [[0i16; 3]; 3];
+    for (k, v) in cam.iter_mut().flatten().enumerate() {
+        *v = m.i16(0x800C_4F40 + 2 * k as u32);
+    }
+    ItemHud {
+        frame: m.i32(0x800B_0D90),
+        pulse: HudPulse([m.i16(0x800B_0E10), m.i16(0x800B_0E12)]),
+        race_time: m.i32(0x800B_0A94),
+        countdown: m.i32(0x800B_0C70),
+        mode: m.u8(0x800B_0D46),
+        course: m.u8(0x800B_0FAC),
+        e38: m.i16(0x800B_0E38),
+        special: (m.i8(0x800B_07F4) as i16, m.i16(0x800B_07F6), m.i8(0x800B_0E95)),
+        cam,
+        kart: m.slice(k0, 0x504).to_vec(),
+        karts,
+        players: m.i16(0x800B_0E28).max(1) as usize,
+    }
 }
 
 /// A replayed oracle trace with its kart sidecar: the item HUD from the

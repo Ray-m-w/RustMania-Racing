@@ -138,3 +138,21 @@ fn quad_matches_fun_8002fd04() {
     // off-screen right: culled
     assert!(hud_items::quad(&it, 560, 0x22, 10, 10, 0, 0, 0, 1, 1, [0x80; 3], 0x15, 0, 0x60).is_none());
 }
+
+#[test]
+fn rival_line_in_results() {
+    let Some((ht, _, _)) = setup() else { return };
+    assert_eq!((ht.you_beat.as_str(), ht.beat_you.as_str(), ht.names[1].as_str()), ("YOU BEAT", "BEAT YOU", "GONZO"));
+    let st = HudState { finished: true, lap: 3, laps: 3, ..HudState::default() };
+    let base = hud::Results { best_lap: 11000, total_time: 33000, place: 1, ..hud::Results::default() };
+    let n0 = ht.results(&st, &base).len();
+    // "YOU BEAT GONZO": 12 glyphs at y 0x1E - 8
+    let won = ht.results(&st, &hud::Results { rival: Some(1), ..base });
+    assert_eq!(won.len(), n0 + 12);
+    assert!(won[n0..].iter().all(|s| s.y == 0x1E - 8 && s.h == 16));
+    // blinking off
+    assert_eq!(ht.results(&st, &hud::Results { rival: Some(1), rival_blink: 50, ..base }).len(), n0);
+    // lost: "GONZO BEAT YOU" (12 glyphs again)
+    let n2 = ht.results(&st, &hud::Results { place: 2, ..base }).len();
+    assert_eq!(ht.results(&st, &hud::Results { rival: Some(1), place: 2, ..base }).len(), n2 + 12);
+}

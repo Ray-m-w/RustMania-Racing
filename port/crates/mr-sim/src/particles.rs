@@ -345,6 +345,30 @@ impl Particles {
         }
         Particles { list, next: m.i32(addr::NEXT), types, phase: [0, 0] }
     }
+
+    /// Write the list back in the game's layout (oracle harness, renderers
+    /// that read game memory).
+    pub fn write(&self, m: &mut Mem) {
+        for (i, p) in self.list.iter().enumerate() {
+            let a = addr::LIST + STRIDE * i as u32;
+            let s = addr::SIDE + 8 * i as u32;
+            for (k, v) in p.pos.iter().chain(p.vel.iter()).chain([p.gravity, p.link, p.word20].iter()).enumerate() {
+                m.put_u32(a + 4 * k as u32, *v as u32);
+            }
+            m.put_u16(a + 0x24, p.life as u16);
+            m.put_u16(a + 0x26, p.w as u16);
+            m.put_u16(a + 0x28, p.h as u16);
+            m.write(a + 0x2A, &[p.b2a, p.b2b, p.sprite, p.kind, p.b2e, p.behaviour, p.frames, p.frame]);
+            m.put_u16(a + 0x32, p.flags);
+            m.put_u16(a + 0x34, p.angle);
+            m.put_u16(a + 0x36, p.spin as u16);
+            m.write(a + 0x38, &[p.rgb[0], p.rgb[1], p.rgb[2], p.code]);
+            m.write(s, &[p.base_rgb[0], p.base_rgb[1], p.base_rgb[2], p.life0]);
+            m.put_u16(s + 4, p.w0 as u16);
+            m.put_u16(s + 6, p.h0 as u16);
+        }
+        m.put_u32(addr::NEXT, self.next as u32);
+    }
 }
 
 /// One streak (0x800B4540 + 0x20 * i).
@@ -434,5 +458,16 @@ impl Sparks {
             };
         }
         Sparks { list, next: m.u8(addr::SPARK_NEXT) }
+    }
+
+    pub fn write(&self, m: &mut Mem) {
+        for (i, s) in self.list.iter().enumerate() {
+            let a = addr::SPARKS + 0x20 * i as u32;
+            for (k, v) in s.pos.iter().chain(s.vel.iter()).enumerate() {
+                m.put_u32(a + 4 * k as u32, *v as u32);
+            }
+            m.write(a + 0x18, &[s.life, s.len, s.base[0], s.base[1], s.base[2], s.rgb[0], s.rgb[1], s.rgb[2]]);
+        }
+        m.put_u8(addr::SPARK_NEXT, self.next);
     }
 }

@@ -1,4 +1,4 @@
-# Race HUD (minimal: countdown, position, lap, timer)
+# Race HUD (countdown, position, lap, timer, items, minimap)
 
 Rust: `port/crates/mr-assets/src/hud.rs` (tables from the exe, layout, software
 reference renderer), `port/crates/mr-bevy/src/hud.rs` (overlay), CLI
@@ -105,14 +105,10 @@ previous string (DAT_800B0B22, set by FUN_800474E8).
 Not ported: "YOU BEAT x" / "x BEAT YOU" (07E2 & 0x10), "NEW COURSE"
 unlocks, and the two FUN_8002FD04 icons (controller-dependent).
 
-**Not ported** (all drawn by the same frame, outside this minimal HUD):
-- item slot outline and meter (FUN_8004CBC8, FUN_80049440);
-- minimap (96x64 SPRT, clut 0x31BA, plus kart PolyF3 markers);
-- lap-split popup (FUN_80049FD8, DAT_800B07E2 & 8);
-- per-lap effects (FUN_8004A310);
-- finish/results (FUN_8004CEA0, "WINNER"/"LOSER");
-- minigame sparkles (FUN_8002FD04);
-- split-screen layouts and clip windows.
+**Not ported**: the lap-split popup (FUN_80049FD8, DAT_800B07E2 & 8, not
+in a 1-player race), "WINNER"/"LOSER", the minigame sparkles
+(FUN_8002FD04 in FUN_8004E8E8), split-screen layouts. The item HUD
+(Session 4) is at the end of this file.
 
 ## Rust API
 
@@ -205,3 +201,81 @@ unlocks, and the two FUN_8002FD04 icons (controller-dependent).
 Countdown elements are [CODE] only. The grid savestate used by the oracle
 routes starts at race clock 1430, after the countdown, so there is no oracle
 frame of it yet.
+
+
+## Item HUD (Session 4, track B)
+
+Rust: `port/crates/mr-assets/src/hud_items.rs` (`race_hud` = the whole
+1-player HUD in add order), `port/crates/mr-bevy/src/hud.rs` (drawing),
+`mr-hudx` (layout from an fx capture), `tools/oracle/hudx_check.py`
+(GP0 check), test `port/crates/mr-assets/tests/hud_items.rs`.
+
+### Primitives
+
+- **FUN_8002FD04**(x, y, hw, hh, flags, angle, u, v, uw, vh, r, g, b,
+  slot, clut_off, abr): a POLY_FT4 (0x2C, |2 unless abr 0x60). Corner x
+  offsets are scaled by 512/320 (`(dx << 9) / 0x140`). Angle 0: an
+  axis-aligned quad, culled when x0 > 0x1FF, x1 < 0, y0 > 0xEF or y1 < 0.
+  Otherwise the corners rotate with the 1.14 sine table (0x800A88C0,
+  cos = +1024 entries) and the quad is culled only when all four corners
+  are off one side. UVs (u, v)..(u + uw, v + vh), bytes; a negative uw
+  mirrors. tpage = slot tpage + abr; clut = slot clut + clut_off; slot
+  table 0x800DFF00 stride 0x10. [CODE 8002fd04] [RAM]
+- **FUN_8002F8F4**(x, y, u, v, w, h, r, g, b, slot, clut_off, abr): a SPRT
+  (0x64, modulated, |2 unless abr 0x60), then a DR_MODE with the page.
+  [CODE 8002f8f4] [RAM]
+- **FUN_800474E8 clip windows** (added): the string is skipped when its row
+  misses y 0..0xEF (DAT_800B0688 / 068A) or its span misses x (x >= 0x201
+  or x + width <= -1); glyphs wholly outside x 0..0x1FF (DAT_800B0E9E /
+  0EA4) are skipped; rows cut by the y window are trimmed. Seen with the
+  sliding "SPECIAL MOVE". [CODE 800474e8] [RAM]
+
+### Elements (1 player, FUN_8004F688 case 1, in add order)
+
+| Element | Call | Reads | Tag |
+|---|---|---|---|
+| Status icon | FUN_8002F8F4(0xED, 0x30, uv (0x80, 0x40), 0x25 x 0x18, slot 0x15, clut 6, opaque) while +0x4F9 & 0x7F (drawn even before the minigame; y 0xA8 while counting down). Seen as the bomb above the place. | +0x4F9 | [CODE] [RAM] |
+| "SPECIAL MOVE" | DAT_800B07F4 (i8) != -1: the starter (+0x4D7 == DAT_800B0E95) blinks it at (0x100, 0x78), 24 px, colour 5, while DAT_800B07F6 < 0x5A and (07F6 % 30) < 15; another kart with +0x4F1 != -1 slides it across: x = (+0x468 << 10) / 300 - 0x100, colour 7, blinking on +0x468 % 30 < 15, with two 0x18 character icons at x -+ 0xA0 (table 0x800AC218 + c * 0x14: +0x12 u, +0x13 v, +0x14 slot, +0x15 on; the right one mirrored) | 07F4, 07F6, 0E95, +0x4F1, +0x468 | [CODE 80049440] [RAM] |
+| Direction arrow | FUN_80032A40(0x3C, +0x48E, player) when +0x4F9 & 0x7F == 0: "WRONG WAY" (0x100, 0x3C, 16 px, colour 7) when +0x503 > 0xE; then an 8-point outline (exe 0x80020F1C: x 0,256,128,128,-128,-128,-256,0; z 256,64,64,-256,-256,64,64,0) rotated by the angle, through the camera matrix (rows 0/1/2, x and z columns), projected x = (X << 16) / ((Z + 0x300) * 0x140), y = ((Y + 0x180) << 7) / (Z + 0x300), minus point 7's y, scaled * 12 / 32; 7 white LineF2 around (0x100, 0x3C). DAT_800B0E38 >= 7 uses a flat variant (k 15). | +0x48E, +0x503, camera 0x800C4F40 | [CODE 80032a40] [RAM] |
+| Banner / popup | +0x4FC != -1 (0xFF): text at (0x100, 0xB4), 24 px. Ids 10, 11, 13, 15: sprintf("%i " / "+%i ", +0x444) + the message (15: "HIT" / "HITS" by abs(+0x444) >= 2), colour 5 if +0x444 > 0 else 7 ("-1 HIT"); 12: a rotating 0x14 quad (uv 0x90, slot 9); 14: "1 NEW VEHICLE" or "%i NEW VEHICLES"; others the string of 0x800AB424 (0 "LAP 2" ... 7 "LAP 9", 8 "FINAL LAP", 9 "WRONG WAY", 16 "+1 KNOCKOUT", ...) in colour 5 | +0x4FC, +0x444 | [CODE 80049440] [RAM] |
+| Place | as before | | |
+| Weapon slots | FUN_8004CBC8(0x2D): for slot 0 / 1 at (0x30, 0x1F / 0x3B): the icon FUN_8004C184, then, when the charge +0x4D4+slot < 8 (signed), a ring quad (uv (0xC0, 0x80) 0x37, slot 0x15, clut 0xB, half size pulse / 2; opaque when the slot is empty, -1). Icon: nothing for charge -1; charge 0x40 or abs < 4: the held weapon +0x4D0+2*slot opaque; else the next one +0x4D1+2*slot then the held one, semi-transparent (type 3 stays opaque). Types: 0 spinning (uv 0x40,0x56, 0x29, slot 0x15 clut 5, half = pulse*42/80); 1 spinning (0xC0,0xC0, 0x13x0x37, clut 0xF, pulse*20/96 x pulse*56/96); 2 the 16-frame animation 0x800A8848 (u, v, uw shorts; vh 0x1F; slot 0x14 clut 7; wobble angle sin/128; half pulse/2); 3 (0x40,0x82, 0x27x0x3D, slot 0x14 clut 9, pulse*40/128 x pulse*62/128). The ring is an animated texture (strip 0x19). | +0x4D0..+0x4D5, pulse | [CODE 8004cbc8, 8004c184] [RAM] |
+| LAP n/m | as before | | |
+| Turbo meter | FUN_8004A310: two additive sparkle quads at x = 0x1D0 + +0x47E, y 0x22 (uv 0xA0,0xC0, 0x1F, slot 0x15 clut 0xE; sizes pulse * DAT_800B07BE / DAT_800B07C6 * 32 >> 14; colours 0x800B07B8.., spinning both ways); the ring quad at (x, 0x3E); the thermometer at x2 = 0x230 - +0x47E: SPRT (x2-0xC, 0x1D) uv (0, 0xC0) 0x18x0x23 additive and SPRT (x2-0x11, 0x1D) uv (0x18, 0xC0) 0x22x0x25 (slot 0x14 clut 0xC); the fill SPRT (x2-0xF, 0x30-(f-0x11)) uv (0x60, 0x22-f) 0x1E x f (slot 0x15 clut 3), f = +0x48A * 0x22 / 0x1A4. +0x47E is 96 while filling (sparkles off-screen) and 0 when full (thermometer off-screen, sparkles in). | +0x47E, +0x48A, pulse | [CODE 8004a310] [RAM] |
+| Minimap | FUN_80048A0C (FUN_80051698, after every player's HUD, countdown 0): DOCK uses the per-course table 0x800AC6DC + course * 0x14 (course flags 0x800ACB3A & 2): u, v, w, h = 128, 128, 96, 64 and bounds x0, z0, x1, z1 (world >> 5) = -20250, 44150, 47400, -28900. Per kart: mx = 0x1E0 - w + w * (x >> 5 - x0) / abs(x1 - x0), my = 0xE1 - h - h * (z >> 5 - z0) / abs(z1 - z0); a PolyF3 arrow FUN_800307D4 (0, -b), (a, a), (-a, a) rotated by +0xE (x / 0x2800, y >> 14), colour 0x800AC227 + c * 0x14 (character +0x4B2); human players (a, b) = (5, 10), hidden while clock % 150 > 74; others (4, 8). +0x496 & 0x60: the character icon instead. Then the map SPRT (0x180, 0xA1) 96x64 uv (128, 128) slot 5, clut + (v >> 6) * 4 + (u >> 6) (drawn under the arrows). | all karts | [CODE 80048a0c, 800307d4] [RAM] |
+| Timer | as before | | |
+
+**HUD pulse** DAT_800B0E10 / 0E12 (FUN_8005C2EC, after the frame counter
+step): targets (0x10, 0x1C) while frame % 120 < 60, else swapped; each
+moves by dt toward its target. Slot k of player p uses pulse[(p & 1) ^ k];
+the meter uses pulse[p] for the sparkles and pulse[p ^ 1] for the ring.
+[CODE 8005c2ec] [RAM]
+
+### Verification (2026-10-13)
+
+`python tools/oracle/hudx_check.py analysis/fx/race3 --lag 0` (fx capture
+of race3 with items on: RAM every VBlank + GP0 dumps of the two frames
+around every 50th VBlank):
+- **9,714 / 9,714 port primitives matched** exactly (vertices, UVs,
+  texpage, CLUT, raw/semi, colour) over **345 frames** (VB 50..8650):
+  weapon slots (type-2 icons, the stacked next weapon semi-transparent),
+  the turbo meter filling and full (sparkles), "LAP 2", "FINAL LAP",
+  "-1 HIT", the sliding "SPECIAL MOVE" with its icons, the direction arrow
+  (966 lines), the minimap (782 kart arrows + the map), place, LAP, timer.
+- Race frames: the only unmatched game primitives that look like HUD are
+  three 256x5 SPRTs at (256, 193) (texpage 0x12C, 15-bit), every frame, not
+  drawn by FUN_8004F688 / FUN_80048A0C (unknown, not ported). Frames after
+  the finish show the results panel, which mr-hudx does not lay out
+  (checked in Session 3).
+- State timing: the RAM row of the frame's VBlank, except the frame
+  counter, race clock and pulse, which FUN_8005C2EC advances after the
+  draw (taken from the row before the counter's last step).
+- Test `race_hud_with_items_matches_game_frame` locks the 40 primitives of
+  VB 3800 ("-1 HIT", both slots, meter 252/420, arrow, six karts).
+
+In the Bevy window the item HUD comes from the live session
+(`items_from_player`): the record, every kart's record, the camera matrix,
+the frame counter and the pulse stepped per sim frame; replays use the
+sidecar record alone (player marker only, pulse phase from the tick).
+Side-by-side: `analysis/fx/shots/sbs_items_2330.png` (oracle VB 2330 vs a
+replay of lap1 at tick 1161), `analysis/fx/shots/sbs_fx.png` (effects).

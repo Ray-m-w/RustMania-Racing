@@ -14,6 +14,7 @@
 mod audio;
 mod sfx;
 mod animtex;
+mod effects;
 mod ghost;
 mod hud;
 mod fps;
@@ -402,6 +403,7 @@ fn main() {
         .add_plugins(fps::plugin)
         .add_plugins(hud::HudPlugin)
         .add_plugins(animtex::AnimTexPlugin)
+        .add_plugins(effects::EffectsPlugin)
         .add_plugins(karts::KartsPlugin)
         .add_plugins(audio::AudioOutPlugin)
         .add_plugins(sfx::SfxPlugin)

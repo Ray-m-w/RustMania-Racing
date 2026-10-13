@@ -67,6 +67,10 @@ pub mod addr {
     pub const PTR_HITS: u32 = 0x800B_0228;
     pub const PTR_BEST_LAP: u32 = 0x800B_0354;
     pub const PTR_PRESS_START: u32 = 0x800B_0284;
+    pub const PTR_YOU_BEAT: u32 = 0x800B_0234;
+    pub const PTR_BEAT_YOU: u32 = 0x800B_0238;
+    /// Character names, pointers at stride 8 ("KERMIT", "GONZO", ...).
+    pub const NAMES: u32 = 0x800A_B128;
 }
 
 /// Texture slot (0x800DFF00 table, RAW.md) the font lives in.
@@ -176,6 +180,9 @@ pub struct HudTables {
     pub did_not_finish: String,
     pub hits: String,
     pub press_start: String,
+    pub you_beat: String,
+    pub beat_you: String,
+    pub names: Vec<String>,
 }
 
 impl HudTables {
@@ -205,6 +212,9 @@ impl HudTables {
             did_not_finish: exe_ptr_str(exe, addr::PTR_DID_NOT_FINISH)?,
             hits: exe_ptr_str(exe, addr::PTR_HITS)?,
             press_start: exe_ptr_str(exe, addr::PTR_PRESS_START)?,
+            you_beat: exe_ptr_str(exe, addr::PTR_YOU_BEAT)?,
+            beat_you: exe_ptr_str(exe, addr::PTR_BEAT_YOU)?,
+            names: (0..12).map(|i| exe_ptr_str(exe, addr::NAMES + 8 * i)).collect::<Option<Vec<_>>>()?,
         })
     }
 
@@ -426,6 +436,11 @@ pub struct Results {
     pub press_start: bool,
     /// The frame counter the prompt blinks with (shown while c % 60 < 45).
     pub frame: i32,
+    /// Rival races (DAT_800B07E2 & 0x10): the rival's character
+    /// (DAT_800B07FE) for "YOU BEAT x" (place 1) / "x BEAT YOU", blinking
+    /// with DAT_800B0AF0 (shown while % 60 < 45). None in a normal race.
+    pub rival: Option<u8>,
+    pub rival_blink: i32,
 }
 
 /// "%i:%i%i.%i%i" (hundredths) as FUN_8004cea0 formats times; `plus` = the
@@ -613,6 +628,14 @@ impl HudTables {
         out.extend(self.text(&[b'0' + p], cx, y, 0, Size::Large, 7, 0x60));
         let dx = self.suffix_dx[(p - 1) as usize] as i32;
         out.extend(self.text(self.suffixes[(p - 1) as usize].as_bytes(), cx + dx, y - 5, 0, Size::Small, 4, 0x60));
+        // FUN_8004CEA0 tail: "YOU BEAT x" / "x BEAT YOU" in rival races
+        if let Some(c) = r.rival {
+            if r.rival_blink.rem_euclid(0x3C) < 0x2D {
+                let name = self.names.get(c as usize).cloned().unwrap_or_default();
+                let line = if r.place == 1 { format!("{} {}", self.you_beat, name) } else { format!("{} {}", name, self.beat_you) };
+                out.extend(self.text(line.as_bytes(), 0x100, 0x1E, 0, Size::Medium, 6, 0x60));
+            }
+        }
         // PRESS START, blinking
         if r.press_start && r.frame.rem_euclid(0x3C) < 0x2D {
             out.extend(self.text(self.press_start.as_bytes(), 0x100, 0xD2, 0, Size::Medium, 4, 0x60));

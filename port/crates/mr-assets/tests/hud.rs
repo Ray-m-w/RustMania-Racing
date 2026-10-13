@@ -114,6 +114,7 @@ fn results_panel_matches_game_frame() {
         hits_taken: 6,
         press_start: true,
         frame: 8068,
+        ..hud::Results::default()
     };
     let st = HudState { mode: 10, lap: 3, laps: 3, position: 3, finished: true, results: Some(r), ..HudState::default() };
     let s = t.layout(&st);

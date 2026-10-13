@@ -106,3 +106,11 @@ What E / F should know:
   as before. Item / particle state (`session.items()`, `particles()`) is the
   last real tick's: up to one tick behind the karts on screen (it was one
   tick ahead before). `sim_tick` takes its buttons from `PadLatch`.
+### Finishing (lead)
+(2026-10-13) `psxfx` is per view: `PsxFxView(VIEW_MAIN | VIEW_FAR | VIEW_HUD)`;
+`FxPrim` has `view`, `bucket`, `always_depth`, `smooth`, `tri`, `cull_back`
+(build with `..Default::default()`). psxmesh keeps semi-transparent polygons
+out of meshes: `psxmesh::semi_prims` -> `FxSemi` component. effects.rs
+`FxSource` / `FxLookahead`: effects follow the karts' display endpoints.
+New options: `render_latency` (low default), `lighting` default enhanced.
+

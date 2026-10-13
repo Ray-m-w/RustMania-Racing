@@ -467,7 +467,8 @@ fn tilt_and_lean(k: &mut KartState, g: &mut RaceGlobals, w: &World, n130: [i32; 
     if k.special == 0 && k.carried == -1 {
         k.bounce_vel = k.bounce_vel.wrapping_add((k.prev_vy as i32 - k.vy).wrapping_mul(4));
         if k.chassis_flags & 2 != 0 {
-            let b = rng_next(g, w) as i8 as i32;
+            // 60 Hz mode: the same byte on both ticks of a pair, drawn once.
+            let b = g.replay_draws(|g| rng_next(g, w)) as i8 as i32;
             k.bounce_kick = k.bounce_kick.wrapping_add(b * 2);
         }
     }

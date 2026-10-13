@@ -88,6 +88,10 @@ pub struct SessionConfig {
     /// Session 3 items-off runs: the AI's item buttons are masked
     /// (`ai::items_off`) and nobody collects pickups.
     pub items: bool,
+    /// Session 5: logic rate, 30 (the game: dt = 2 VBlanks per tick) or 60
+    /// (dt = 1, the 60 Hz mode; docs/spec/kart-physics-ledger.md "60 Hz
+    /// mode"). `tick` advances 1/30 s or 1/60 s of game time.
+    pub logic_hz: u8,
 }
 
 /// The opponents of the oracle's slot-2 DOCK race (analysis/ai/*): Clifford
@@ -118,6 +122,7 @@ impl SessionConfig {
             round_robin_start: 1,
             lineup: None,
             items: true,
+            logic_hz: 30,
         }
     }
 
@@ -182,6 +187,46 @@ pub struct Session {
     /// The BIOS rand() seed 0x80009010 (rand_seed() reads it).
     pub rand_state: u32,
     cfg: SessionConfig,
+}
+
+/// Everything a session changes as it runs (all but the world and the
+/// exe's tables): `Session::snapshot` / `restore`. Used to look a tick
+/// ahead without keeping it (mr-bevy's display prediction) and to start a
+/// 60 Hz session from a 30 Hz one (examples/feel60.rs).
+#[derive(Clone)]
+pub struct Snapshot {
+    kart: KartState,
+    record: Vec<u8>,
+    globals: RaceGlobals,
+    water: WaterAnim,
+    camera: CameraState,
+    camera_globals: CameraGlobals,
+    ticks: u64,
+    leader_progress_override: Option<i32>,
+    rng_override: Option<u32>,
+    race_pos_override: Option<u8>,
+    autopilot: bool,
+    others: Vec<OtherKart>,
+    player_ai: crate::ai::AiState,
+    best_start: u8,
+    pick: usize,
+    load_frame: bool,
+    rng_skip_items: Option<u32>,
+    camera_peek: bool,
+    rand_state: u32,
+    cfg: SessionConfig,
+}
+
+impl Snapshot {
+    /// The player's kart in the snapshot.
+    pub fn kart(&self) -> &KartState {
+        &self.kart
+    }
+
+    /// Session ticks at the snapshot.
+    pub fn ticks(&self) -> u64 {
+        self.ticks
+    }
 }
 
 /// A kart other than the player's (slot 1..): an AI opponent.
@@ -303,6 +348,27 @@ pub fn bios_rand_rewind(seed: u32, n: u32) -> u32 {
     s
 }
 
+/// FUN_800912F8 for kart `slot` (`f` = the AI's button choice). 60 Hz mode:
+/// the AI decides on the first tick of a pair, with dt = 2 (its timers and
+/// +0x4CB count the pair's VBlanks), and the buttons hold for the second
+/// tick, so its decisions and random draws keep the game's rate. 30 Hz: `f`.
+fn ai_tick(g: &mut RaceGlobals, slot: usize, f: impl FnOnce(&mut RaceGlobals) -> u16) -> u16 {
+    if !g.hz60.on {
+        return f(g);
+    }
+    let i = slot.min(7);
+    if g.hz60.beat() {
+        let dt = g.dt;
+        g.dt = 2;
+        let b = f(g);
+        g.dt = dt;
+        g.hz60.ai_hold[i] = b;
+        b
+    } else {
+        g.hz60.ai_hold[i]
+    }
+}
+
 impl Session {
     /// DOCK, Kermit in the RACER against five AI opponents.
     pub fn new(disc: &mut mr_disc::Disc) -> Result<Session, SessionError> {
@@ -332,7 +398,7 @@ impl Session {
         let setup = RaceSetup { mode: 1, race_type: 0, race_flags: 0, challenge: 0, humans: 1, karts: n as i16 };
         let mut rand_state = cfg.rand_seed;
         let mut globals = RaceGlobals {
-            dt: 2,
+            dt: if cfg.logic_hz == 60 { 1 } else { 2 },
             mode: 1,
             race_clock: 0,
             // FUN_8008C4AC @0x8008DA4C: 300 + 180 VBlanks to GO.
@@ -365,6 +431,7 @@ impl Session {
             fx: Some(Box::new(crate::items::Fx { particles: crate::particles::Particles::from_exe(&exe), sparks: Default::default() })),
             // DOCK's race setup: no rain (0x800B0B9A = 0, 0x800B07E2 = 0).
             kart_fx_rain: false,
+            hz60: crate::globals::Hz60 { on: cfg.logic_hz == 60, ..Default::default() },
         };
         // FUN_8008C4AC: the first human's grid slot (*rng++ % karts), the
         // other karts on the following slots; with no opponents the
@@ -433,7 +500,7 @@ impl Session {
         cam_bytes[0x66..0x68].copy_from_slice(&(-1i16).to_le_bytes());
         let camera = CameraState::from_bytes(&cam_bytes);
         let camera_globals = CameraGlobals {
-            dt: 2,
+            dt: if cfg.logic_hz == 60 { 1 } else { 2 },
             countdown: 0,
             countdown_len: 300,
             laps: cfg.laps,
@@ -508,8 +575,85 @@ impl Session {
     /// One game tick (dt = 2) with the PS1 pad word `buttons` (active high:
     /// 0x4000 CROSS accelerates, 0x2000 CIRCLE brakes, 0x8000 SQUARE jumps,
     /// 0x80 / 0x20 left / right; see update::btn).
+    ///
+    /// In the 60 Hz mode (`SessionConfig::logic_hz` 60) a tick is one VBlank
+    /// (dt = 1): call it 60 times a second.
     pub fn tick(&mut self, buttons: u16) -> Result<(), SessionError> {
-        self.tick_dt(buttons, 2)
+        let dt = if self.globals.hz60.on { 1 } else { 2 };
+        self.tick_dt(buttons, dt)
+    }
+
+    /// The whole changing state (see `Snapshot`).
+    pub fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            kart: self.kart.clone(),
+            record: self.record.clone(),
+            globals: self.globals.clone(),
+            water: self.water,
+            camera: self.camera.clone(),
+            camera_globals: self.camera_globals.clone(),
+            ticks: self.ticks,
+            leader_progress_override: self.leader_progress_override,
+            rng_override: self.rng_override,
+            race_pos_override: self.race_pos_override,
+            autopilot: self.autopilot,
+            others: self.others.clone(),
+            player_ai: self.player_ai,
+            best_start: self.best_start,
+            pick: self.pick,
+            load_frame: self.load_frame,
+            rng_skip_items: self.rng_skip_items,
+            camera_peek: self.camera_peek,
+            rand_state: self.rand_state,
+            cfg: self.cfg,
+        }
+    }
+
+    /// Put the session back in a state `snapshot` took (of this session or
+    /// another on the same course with the same opponents' models).
+    pub fn restore(&mut self, s: &Snapshot) {
+        self.kart = s.kart.clone();
+        self.record.clone_from(&s.record);
+        self.globals.clone_from(&s.globals);
+        self.water = s.water;
+        self.camera.clone_from(&s.camera);
+        self.camera_globals.clone_from(&s.camera_globals);
+        self.ticks = s.ticks;
+        self.leader_progress_override = s.leader_progress_override;
+        self.rng_override = s.rng_override;
+        self.race_pos_override = s.race_pos_override;
+        self.autopilot = s.autopilot;
+        self.others.clone_from(&s.others);
+        self.player_ai = s.player_ai;
+        self.best_start = s.best_start;
+        self.pick = s.pick;
+        self.load_frame = s.load_frame;
+        self.rng_skip_items = s.rng_skip_items;
+        self.camera_peek = s.camera_peek;
+        self.rand_state = s.rand_state;
+        self.cfg = s.cfg;
+    }
+
+    /// The logic rate: 30 (the game) or 60 (the 60 Hz mode).
+    pub fn logic_hz(&self) -> u8 {
+        if self.globals.hz60.on { 60 } else { 30 }
+    }
+
+    /// Switch the logic rate (30 or 60). Takes effect at a 30 Hz step
+    /// boundary (after the second tick of a 60 Hz pair); returns whether it
+    /// switched now. A race switched mid-way is no longer the faithful race.
+    pub fn set_logic_hz(&mut self, hz: u8) -> bool {
+        if self.globals.hz60.phase != 0 {
+            return false;
+        }
+        self.globals.hz60.on = hz == 60;
+        self.cfg.logic_hz = if hz == 60 { 60 } else { 30 };
+        true
+    }
+
+    /// Seconds of game time per `tick`.
+    pub fn tick_seconds(&self) -> f64 {
+        if self.globals.hz60.on { 1.0 / 60.0 } else { 1.0 / 30.0 }
     }
 
     /// A tick of `dt` VBlanks (the game uses 3 when a frame runs long; live
@@ -543,6 +687,9 @@ impl Session {
             ks.push(std::mem::take(&mut o.kart));
         }
         self.frame(&mut ks, buttons, dt);
+        if self.globals.hz60.on {
+            self.globals.hz60.phase ^= 1;
+        }
         let mut it = ks.into_iter();
         self.kart = it.next().unwrap();
         for (o, k) in self.others.iter_mut().zip(it) {
@@ -607,7 +754,9 @@ impl Session {
         //    robin 0x800C3058[n]. None while the countdown runs (oracle
         //    start_probe: every AI kart's +0x4CB grows from race load to GO;
         //    the counter itself steps every frame).
-        if g.countdown == 0 {
+        //    60 Hz mode: once per pair (the round robin keeps the game's
+        //    rate; +0x4CB counts VBlanks either way).
+        if g.countdown == 0 && g.hz60.beat() {
             crate::progress::path_position(&mut ks[self.pick % n], w);
         }
         // 4. The kart loop, slot order. The leader's progress feeds the
@@ -628,18 +777,21 @@ impl Session {
                 let ai = if s == 0 { &mut self.player_ai } else { &mut self.others[s - 1].ai };
                 let seed = &mut self.rand_state;
                 let mut rand = || bios_rand(seed);
-                let mut b = crate::ai::ai_buttons(&mut ks[s], ai, g, &ctx, w, &mut rand);
-                if !self.cfg.items {
-                    b = crate::ai::items_off(b);
-                }
+                let b = ai_tick(g, s, |g| {
+                    let b = crate::ai::ai_buttons(&mut ks[s], ai, g, &ctx, w, &mut rand);
+                    if !self.cfg.items { crate::ai::items_off(b) } else { b }
+                });
                 crate::update::kart_update_at(ks, s, g, w, &inp, b, -1, &mut rand);
             } else {
                 let seed = &mut self.rand_state;
                 let mut rand = || bios_rand(seed);
                 let b = if s == 0 && self.autopilot {
                     let ctx = crate::ai::AiContext { karts: n as i16, kart0_flags: ks[0].flags, kart0_race_pos: ks[0].race_pos, difficulty: g.difficulty, cup: g.cup, driver_pos: &[] };
-                    let b = crate::ai::ai_buttons(&mut ks[0], &mut self.player_ai, g, &ctx, w, &mut rand);
-                    if self.cfg.items { b } else { crate::ai::items_off(b) }
+                    let items = self.cfg.items;
+                    ai_tick(g, 0, |g| {
+                        let b = crate::ai::ai_buttons(&mut ks[0], &mut self.player_ai, g, &ctx, w, &mut rand);
+                        if items { b } else { crate::ai::items_off(b) }
+                    })
                 } else {
                     buttons
                 };
@@ -673,7 +825,9 @@ impl Session {
             ks[0].shown_pos = p;
             ks[0].pos_flash = 0;
         }
-        self.pick = (self.pick + 1) % n;
+        if g.hz60.pair_end() {
+            self.pick = (self.pick + 1) % n;
+        }
         // 5b. After the kart loop (FUN_8007916C @0x80079A8C..): effects
         //     FUN_8006C388, FUN_8007F03C (kart particles, items/kart_fx.rs),
         //     FUN_8007A9DC, pickups FUN_8007BBF0,
@@ -692,9 +846,11 @@ impl Session {
             k.to_record(rec);
         }
         let k = &ks[0];
-        // 6. Random pointer step.
-        let r = g.rng.wrapping_add(1);
-        g.rng = if RNG_WRAP < r { g.rng.wrapping_sub(0x5DB) } else { r };
+        // 6. Random pointer step (60 Hz mode: once per pair).
+        if g.hz60.beat() {
+            let r = g.rng.wrapping_add(1);
+            g.rng = if RNG_WRAP < r { g.rng.wrapping_sub(0x5DB) } else { r };
+        }
         // 7. Camera: intro (countdown >= 300), chase, and the trackside
         //    cameras once the player has finished (camera.rs).
         let ck = CameraKart::from_record(&self.record, Some(k.trail));
@@ -717,7 +873,7 @@ impl Session {
         //    under the ground at random: one random byte), the particle and
         //    spark lists (FUN_8008727C, FUN_800327D0).
         for k in ks.iter().take(g.humans.max(0) as usize) {
-            if k.splash == 0 && (k.float_state != 0 || (k.below_ground != 0 && k.special != 0)) {
+            if g.hz60.beat() && k.splash == 0 && (k.float_state != 0 || (k.below_ground != 0 && k.special != 0)) {
                 g.rng = g.rng.wrapping_add(1);
             }
         }

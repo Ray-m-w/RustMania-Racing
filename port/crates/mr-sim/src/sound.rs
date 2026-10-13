@@ -237,7 +237,8 @@ pub fn wall_hit(k: &KartState, g: &mut RaceGlobals, w: &World, strength: i32) {
 /// < 0x10 plays 0x1F; with it set 0x20.
 pub fn splash(k: &KartState, g: &mut RaceGlobals, w: &World) {
     let id = if k.splash == 0 {
-        if crate::update::rng_next(g, w) < 0x10 {
+        // 60 Hz mode: tried once per pair.
+        if g.hz60.beat() && crate::update::rng_next(g, w) < 0x10 {
             0x1F
         } else {
             return;

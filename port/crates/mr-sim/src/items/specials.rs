@@ -504,7 +504,8 @@ pub fn effects_frame(karts: &mut [KartState], g: &mut RaceGlobals, w: &World, ca
             effect_step(&mut karts[j], j, old_t[j], near, g, w, rand, &mut stop);
             let k = &mut karts[j];
             if k.effect != -1 {
-                let r = crate::update::rng_next(g, w) as i8 as i32;
+                // 60 Hz mode: one rumble draw per pair (`replay_draws`).
+                let r = g.replay_draws(|g| crate::update::rng_next(g, w)) as i8 as i32;
                 crate::update::rumble(k, g, s16(div_pow2(r, 1) + 0x80));
             }
             if stop {
@@ -558,6 +559,9 @@ fn effect_step(k: &mut KartState, j: usize, old_t: i32, near: bool, g: &mut Race
     let dt = g.dt;
     let timer = k.homing_timer as i32;
     let every = |d: i32| div_pow2(old_t, d as u32) < div_pow2(timer, d as u32);
+    // 60 Hz mode: the per-tick random tries (particles, spins, sounds) run
+    // on the first tick of a pair only; timers step by dt as at 30 Hz.
+    let beat = g.hz60.beat();
     match k.effect {
         1 => {
             if every(4) {
@@ -565,7 +569,7 @@ fn effect_step(k: &mut KartState, j: usize, old_t: i32, near: bool, g: &mut Race
                 k.shape_t = 0;
                 k.shape_n = 0x1E;
             }
-            if near {
+            if near && beat {
                 // Smoke puff: a size byte, rand() for its height, 8 bytes.
                 let b0 = crate::update::rng_next(g, w) as i8 as i32;
                 let sz = ((((if b0 < 0 { b0 + 7 } else { b0 }) as u32) >> 3).wrapping_add(0x20) as i32) << 16 >> 16;
@@ -629,7 +633,7 @@ fn effect_step(k: &mut KartState, j: usize, old_t: i32, near: bool, g: &mut Race
             k.engine = ((0x10 - tt) * 0x100) as i16;
             k.target_x = tt;
             // FUN_800861F0 glow (render).
-            if k.effect == 4 && near && crate::update::rng_next(g, w) < 0x20 {
+            if k.effect == 4 && near && beat && crate::update::rng_next(g, w) < 0x20 {
                 let r = rbytes(g, w, 10);
                 let c = (r[0] >> 2) + 0x20;
                 super::particle(
@@ -648,7 +652,7 @@ fn effect_step(k: &mut KartState, j: usize, old_t: i32, near: bool, g: &mut Race
             }
         }
         5 => {
-            if crate::update::rng_next(g, w) < 0x20 {
+            if beat && crate::update::rng_next(g, w) < 0x20 {
                 let b = if (crate::update::rng_next(g, w) as i8) < 0 { 0x55 } else { -0x55 };
                 if (k.spin_rate as i32).abs() < 0x55 {
                     k.spin_rate = b;
@@ -701,7 +705,7 @@ fn effect_step(k: &mut KartState, j: usize, old_t: i32, near: bool, g: &mut Race
                 k.eff_30c = 0xFFF - (b << 5);
             }
             // FUN_800861F0 (render).
-            if near && crate::update::rng_next(g, w) < 0x40 {
+            if near && beat && crate::update::rng_next(g, w) < 0x40 {
                 let r1 = crate::update::rng_next(g, w) as i8;
                 if r1 < 0 {
                     let r = rbytes(g, w, 8);
@@ -744,7 +748,7 @@ fn effect_step(k: &mut KartState, j: usize, old_t: i32, near: bool, g: &mut Race
                 let pa = pa as i32;
                 k.target_x = if pa < d { pa } else { d };
                 k.target_yaw = if pa < d { d - pa } else { 0 };
-                if (d << 16) != 0 && near {
+                if (d << 16) != 0 && near && beat {
                     let r = rbytes(g, w, 9);
                     let b0 = sb(r[0]);
                     let sz = ((((if b0 < 0 { b0 + 3 } else { b0 }) as u32) >> 2).wrapping_add(0x40) as i32) << 16 >> 16;
@@ -775,7 +779,7 @@ fn effect_step(k: &mut KartState, j: usize, old_t: i32, near: bool, g: &mut Race
             }
         }
         10 => {
-            if near {
+            if near && beat {
                 if crate::update::rng_next(g, w) < 0x40 {
                     let r = rbytes(g, w, 6);
                     let c = (r[0] >> 1) | 0x80;
@@ -816,7 +820,7 @@ fn effect_step(k: &mut KartState, j: usize, old_t: i32, near: bool, g: &mut Race
                 tt = if t2 > 0x20 { 0x20 } else { t2 };
             }
             k.engine = ((0x40 - (tt * 3) / 2) * 0x40) as i16;
-            if k.effect == 0x18 && crate::update::rng_next(g, w) < 0x20 {
+            if k.effect == 0x18 && beat && crate::update::rng_next(g, w) < 0x20 {
                 let b: i16 = if (crate::update::rng_next(g, w) as i8) < 0 { 0x55 } else { -0x55 };
                 if (k.spin_rate as i32).abs() < 0x55 {
                     k.spin_rate = b;
@@ -862,7 +866,9 @@ fn effect_step(k: &mut KartState, j: usize, old_t: i32, near: bool, g: &mut Race
                 }
             }
             k.eff_30c = m << 4;
-            k.eff_310 = (k.eff_310.wrapping_add(k.eff_314)) & 0xFFF;
+            if beat {
+                k.eff_310 = (k.eff_310.wrapping_add(k.eff_314)) & 0xFFF;
+            }
             // FUN_800861F0 (render) when +0x318 != 0.
         }
         16 => {
@@ -889,7 +895,7 @@ fn effect_step(k: &mut KartState, j: usize, old_t: i32, near: bool, g: &mut Race
                 let b = crate::update::rng_next(g, w);
                 k.target_x = (b >> 4) as i32 + 0xF;
             }
-            if k.effect == 0x11 && crate::update::rng_next(g, w) < 8 {
+            if k.effect == 0x11 && beat && crate::update::rng_next(g, w) < 8 {
                 crate::sound::at(g, w, 0x58, 0x1400, 0xA0, [k.x, k.y, k.z], -1);
             }
         }

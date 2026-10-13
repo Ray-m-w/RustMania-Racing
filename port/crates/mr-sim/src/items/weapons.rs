@@ -262,11 +262,14 @@ fn step(i: usize, karts: &mut [KartState], g: &mut RaceGlobals, w: &World, rand:
     }
     let was_floor = p.on_floor;
     let was_alt = p.on_alt;
-    if p.flags & 0x40 != 0 && p.grounded != 0 && rng_next(g, w) < 0x20 {
+    // 60 Hz mode: the random hop, the whine and the trail are tried once
+    // per pair (their per-second rates stay the game's).
+    let beat = g.hz60.beat();
+    if p.flags & 0x40 != 0 && p.grounded != 0 && beat && rng_next(g, w) < 0x20 {
         p.vel[1] = -0x540;
         crate::sound::at(g, w, 0x15, 0x1600, 0x80, p.pos, -1);
     }
-    if p.flags & 0x400 != 0 && p.sound_timer == 0 && rng_next(g, w) < 0x20 {
+    if p.flags & 0x400 != 0 && p.sound_timer == 0 && beat && rng_next(g, w) < 0x20 {
         // The whine, again in 30..93 VBlanks.
         crate::sound::at(g, w, 0xB, 0x1600, 0xA0, p.pos, -1);
         p.sound_timer = ((rng_next(g, w) >> 2) as i16) + 0x1E;
@@ -463,7 +466,7 @@ fn step(i: usize, karts: &mut [KartState], g: &mut RaceGlobals, w: &World, rand:
     let p = g.items.projectiles[i];
     if p.active {
         // FUN_800861F0 shadow (render); trail particles.
-        if rng_next(g, w) < 0x80 {
+        if g.hz60.beat() && rng_next(g, w) < 0x80 {
             let c = ((rng_next(g, w) >> 2) + 0x40) as i32;
             let v = [div_pow2(p.vel[0], 3), div_pow2(p.vel[1], 3), div_pow2(p.vel[2], 3)];
             if p.flags & 0x600 != 0 {

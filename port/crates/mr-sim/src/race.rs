@@ -34,7 +34,10 @@ pub fn frame_clock(g: &mut RaceGlobals, karts: &mut [&mut KartState], best_start
             go(g, karts, best_start, rand);
         }
     }
-    rand();
+    // The per-frame draw (60 Hz mode: once per pair, the game's rate).
+    if g.hz60.beat() {
+        rand();
+    }
 }
 
 /// 0x8005C4A8: GO. Human karts keep the boost they earned in the start game

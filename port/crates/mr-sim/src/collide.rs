@@ -170,8 +170,11 @@ fn pair(a: &mut KartState, b: &mut KartState, g: &mut RaceGlobals, w: &World, r:
         // 0x80040378: one kart lands on the other.
         rumble(a, g, 200);
         rumble(b, g, 200);
-        a.bounce_kick -= 1000;
-        b.bounce_kick -= 1000;
+        // The kick is added in every sub-step of the next update (two at
+        // 30 Hz): the 60 Hz mode's one sub-step takes both.
+        let kick = if g.hz60.on { 2000 } else { 1000 };
+        a.bounce_kick -= kick;
+        b.bounce_kick -= kick;
         let (va, vb) = (a.vy, b.vy);
         a.vy = vb;
         b.vy = va;

@@ -479,7 +479,17 @@ pub fn after_kart_loop(
                 k.to_record(rec);
             }
             let rs: Vec<&[u8]> = recs.iter().map(|r| r.as_slice()).collect();
-            kart_fx::frame(&rs, g, w, cams);
+            // 60 Hz mode: the spawner runs once per pair with the pair's
+            // dt (its spawn tries, random draws and rain tries keep the
+            // game's rate; the particles themselves move every tick).
+            if g.hz60.beat() {
+                let dt = g.dt;
+                if g.hz60.on {
+                    g.dt = 2;
+                }
+                kart_fx::frame(&rs, g, w, cams);
+                g.dt = dt;
+            }
         }
         None => {}
     }

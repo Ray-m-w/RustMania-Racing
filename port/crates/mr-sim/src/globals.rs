@@ -78,6 +78,58 @@ pub struct RaceGlobals {
     /// (race setup; both 0 on DOCK in every oracle race): rain hits on the
     /// karts.
     pub kart_fx_rain: bool,
+    /// Session 5: the 60 Hz logic mode (off = the game's 30 Hz; see
+    /// docs/spec/kart-physics-ledger.md "60 Hz mode"). Not game memory.
+    pub hz60: Hz60,
+}
+
+/// The 60 Hz logic mode: every tick is one VBlank (dt = 1); two ticks make
+/// one step of the game's 30 Hz logic (a "pair"). Terms the game applies
+/// once per tick regardless of dt (random kicks and draws, AI decisions,
+/// impulses) run on the first tick of a pair only, so their rates per second
+/// stay the game's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Hz60 {
+    pub on: bool,
+    /// 0 = first tick of the pair, 1 = second.
+    pub phase: u8,
+    /// Per kart slot: the buttons FUN_800912F8 (AI / autopilot) chose on the
+    /// first tick of the pair, held for the second.
+    pub ai_hold: [u16; 8],
+}
+
+impl Hz60 {
+    /// True on every tick at 30 Hz and on the first tick of each pair at
+    /// 60 Hz: where a once-per-game-tick term runs.
+    #[inline]
+    pub fn beat(&self) -> bool {
+        !self.on || self.phase == 0
+    }
+
+    /// True on every tick at 30 Hz and on the second tick of each pair at
+    /// 60 Hz: where a step that closes a game tick runs (round robin).
+    #[inline]
+    pub fn pair_end(&self) -> bool {
+        !self.on || self.phase == 1
+    }
+}
+
+impl RaceGlobals {
+    /// 60 Hz mode: the random-byte draws of a term the game runs once per
+    /// tick (a pitch jitter, a kick) consume the stream on the first tick
+    /// of a pair only; on the second they read the bytes at the pointer
+    /// without consuming them, so the stream moves at the game's rate. At
+    /// 30 Hz (every tick a beat) this is `f(self)`.
+    #[inline]
+    pub fn replay_draws<R>(&mut self, f: impl FnOnce(&mut RaceGlobals) -> R) -> R {
+        if self.hz60.beat() {
+            return f(self);
+        }
+        let p = self.rng;
+        let r = f(self);
+        self.rng = p;
+        r
+    }
 }
 
 /// Two locals of FUN_80064B5C that its special-move path (+0x4D6) reads
@@ -150,6 +202,7 @@ impl RaceGlobals {
             stack: StackSlots::default(),
             kart_fx_rain: m.i16(0x800B_0B9A) == 2 || m.u8(0x800B_07E2) & 9 != 0,
             fx: None,
+            hz60: Hz60::default(),
             lap_record: m.i32(0x800E_0190u32.wrapping_add((8 * m.i8(0x800B_0E32) as i32 + 0x20 * m.i8(0x800B_0E38) as i32) as u32)),
         }
     }

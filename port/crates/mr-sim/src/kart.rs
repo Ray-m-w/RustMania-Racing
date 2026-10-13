@@ -38,6 +38,16 @@ macro_rules! kart_fields {
             /// +0x1AC: vehicle matrix (body x lean), FUN_80025D8C; weapons
             /// launch along it (FUN_80068C6C -> FUN_8007D58C).
             pub vmat: [[i16; 3]; 3],
+            /// 60 Hz mode only (not game memory): the world velocity the
+            /// last kart-frame -> world conversion wrote (vx, vz) and the
+            /// 1/4096 remainders its truncation dropped; the next
+            /// conversion back to the kart frame uses them while +0x2F4 /
+            /// +0x2FC still hold those values (kart-physics-ledger.md
+            /// "60 Hz mode", the velocity frame conversion). None at 30 Hz.
+            pub hz60_vel: Option<[i32; 4]>,
+            /// 60 Hz mode only: +0x2D2 (steer) at the start of the pair,
+            /// what the power turn's yaw reads on both ticks of it.
+            pub hz60_steer: i16,
         }
 
         /// Byte offsets of every scalar field, for reports.

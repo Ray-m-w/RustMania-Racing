@@ -86,9 +86,13 @@ fn teleport(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
     if t0 == 0 {
         crate::sound::at(g, w, 0x1E, 0x1600, 0x60, [k.x, k.y, k.z], -1);
     }
-    let r0 = crate::update::rng_next(g, w) as i8 as i32;
-    let r1 = crate::update::rng_next(g, w) as i8 as i32;
-    let r2 = crate::update::rng_next(g, w) as i8 as i32;
+    // 60 Hz mode: the end-point jitter is drawn once per pair.
+    let (r0, r1, r2) = g.replay_draws(|g| {
+        let r0 = crate::update::rng_next(g, w) as i8 as i32;
+        let r1 = crate::update::rng_next(g, w) as i8 as i32;
+        let r2 = crate::update::rng_next(g, w) as i8 as i32;
+        (r0, r1, r2)
+    });
     let end = [tr.to[0] * 0x20 + r0 * 2, tr.to[1] * 0x20 + r1 * 2, tr.to[2] * 0x20 + r2 * 2];
     if g.game_state == 0xC {
         unreachable_in_scope!("trigger on course 12 (offset end point)");

@@ -179,8 +179,9 @@ pub fn kart_update_full(k: &mut KartState, others: &mut Others, g: &mut RaceGlob
 
     // 0x80064D40: engine sound pitch draws one random byte per tick.
     let human = (k.player_index as i32) < g.humans as i32;
+    // 60 Hz mode: the byte is drawn once per pair (`replay_draws`).
     if human && g.mode != 0x10 {
-        crate::sound::engine(k, g, w);
+        g.replay_draws(|g| crate::sound::engine(k, g, w));
     }
 
     // 0x80064F94: which camera is nearest (only matters with 2+ humans).
@@ -467,7 +468,8 @@ pub fn kart_update_full(k: &mut KartState, others: &mut Others, g: &mut RaceGlob
     if buttons & jm != 0 && (k.effect == 2 || k.status & 8 != 0 || k.stun > 999) {
         buttons -= jm;
     }
-    if k.ground_contact != 0 && (k.effect as u8).wrapping_sub(0x13) < 2 && rng_next(g, w) < 0x20 {
+    // (60 Hz mode: the random jump is tried once per pair.)
+    if k.ground_contact != 0 && (k.effect as u8).wrapping_sub(0x13) < 2 && g.hz60.beat() && rng_next(g, w) < 0x20 {
         buttons |= jm;
     }
     if buttons & jm == 0 {
@@ -541,10 +543,18 @@ pub fn kart_update_full(k: &mut KartState, others: &mut Others, g: &mut RaceGlob
 
     // 0x80066500: accelerate + brake together: power turn.
     k.accel_spin = 0;
+    if g.hz60.beat() {
+        k.hz60_steer = k.steer;
+    }
     if c.accel && c.brake {
         if k.ground_contact != 0 && k.fwd_speed > 0 {
             let v = (k.fwd_speed >> 6).min(0x10);
-            let d = div_pow2(k.steer as i32 * v * dt, 6);
+            // The yaw reads the steer value as the tick starts, a tick
+            // behind the steering below. 60 Hz mode: the value at the start
+            // of the pair on both ticks (with the mid-pair value the power
+            // turn turned 25 % further per tap).
+            let steer = if g.hz60.on { k.hz60_steer } else { k.steer };
+            let d = div_pow2(steer as i32 * v * dt, 6);
             yaw = yaw.wrapping_add(d);
             k.heading = k.heading.wrapping_add(d as i16);
             lim.grip = div_pow2(lim.grip * v * 3, 5);
@@ -719,7 +729,10 @@ pub fn kart_update_full(k: &mut KartState, others: &mut Others, g: &mut RaceGlob
     if k.brake_hold > 0x80 {
         k.brake_hold = 0x80;
     }
-    if g.countdown == 0 && k.vehicle_class & 0x50 != 0 && k.coast_hold != 0 && k.coast_hold < 8 && rng_next(g, w) < 0x10 {
+    // 60 Hz mode: tried once per pair; the hold counts 1 per tick, so the
+    // window is 1..6 (three tries, as the game's 2, 4, 6).
+    let skid_window = if g.hz60.on { 7 } else { 8 };
+    if g.countdown == 0 && k.vehicle_class & 0x50 != 0 && k.coast_hold != 0 && k.coast_hold < skid_window && g.hz60.beat() && rng_next(g, w) < 0x10 {
         k.skid = 1;
         crate::sound::skid(k, g, w);
     } else {
@@ -781,11 +794,24 @@ pub fn kart_update_full(k: &mut KartState, others: &mut Others, g: &mut RaceGlob
     }
 
     // 0x80067028: velocity in the kart frame, integrate dt sub-steps.
-    let a = (-(k.heading as i32)) & 0xFFF;
+    // The game converts once per tick with the heading after both sub-steps
+    // of steering, so its first VBlank already moves in the frame of the
+    // second. 60 Hz mode: on the first tick of a pair the frame is the
+    // heading plus this tick's yaw (the turn the second tick repeats with
+    // the same buttons); the second tick uses its own heading. Without it a
+    // power slide built 2 % more sideways speed and the hairpin cost the
+    // AI-driven kart +0.2 s (kart-physics-ledger.md "60 Hz mode").
+    let hconv = if g.hz60.on && g.hz60.beat() { (k.heading as i32 + yaw16) & 0xFFF } else { k.heading as i32 };
+    let a = (-hconv) & 0xFFF;
     let (ca, sa) = (t.cos(a), t.sin(a));
-    side0 = div_pow2(mul(k.vx, ca).wrapping_add(mul(k.vz, sa)), 12);
+    let mut fwd;
+    if g.hz60.on {
+        (side0, fwd) = to_kart_frame_60(k, ca, sa);
+    } else {
+        side0 = div_pow2(mul(k.vx, ca).wrapping_add(mul(k.vz, sa)), 12);
+        fwd = div_pow2(mul(k.vz, ca).wrapping_sub(mul(k.vx, sa)), 12);
+    }
     g.stack.side0 = side0;
-    let mut fwd = div_pow2(mul(k.vz, ca).wrapping_sub(mul(k.vx, sa)), 12);
     let px = k.push_x as i32;
     let pz = k.push_z as i32;
     let push_side = div_pow2(px * ca + pz * sa, 12);
@@ -854,10 +880,14 @@ pub fn kart_update_full(k: &mut KartState, others: &mut Others, g: &mut RaceGlob
     k.push_z = 0;
     k.fwd_speed = fwd;
     k.side_speed = side;
-    let h = k.heading as i32;
+    let h = hconv;
     let (ch, sh) = (t.cos(h), t.sin(h));
-    k.vx = div_pow2(mul(side, ch).wrapping_add(mul(fwd, sh)), 12);
-    k.vz = div_pow2(mul(fwd, ch).wrapping_sub(mul(side, sh)), 12);
+    let (nx, nz) = (mul(side, ch).wrapping_add(mul(fwd, sh)), mul(fwd, ch).wrapping_sub(mul(side, sh)));
+    k.vx = div_pow2(nx, 12);
+    k.vz = div_pow2(nz, 12);
+    if g.hz60.on {
+        k.hz60_vel = Some([k.vx, k.vz, nx.wrapping_sub(k.vx << 12), nz.wrapping_sub(k.vz << 12)]);
+    }
     let mx = div_pow2(mul(sum_side, ch).wrapping_add(mul(sum_fwd, sh)), 12);
     let mz = div_pow2(mul(sum_fwd, ch).wrapping_sub(mul(sum_side, sh)), 12);
     k.x = k.x.wrapping_add(mx);
@@ -961,7 +991,7 @@ pub fn kart_update_full(k: &mut KartState, others: &mut Others, g: &mut RaceGlob
 
     // 0x80067834: impact sound draws a random byte.
     if human && k.impact > 800 {
-        crate::sound::impact(k, g, w);
+        g.replay_draws(|g| crate::sound::impact(k, g, w));
     }
 
     // 0x8006789C: object interactions and ground contact.
@@ -1076,7 +1106,9 @@ pub fn kart_update_full(k: &mut KartState, others: &mut Others, g: &mut RaceGlob
 
     // 0x80068090: body sway inputs.
     let dside = k.side_speed - old_side;
-    let s2 = side0 / 2;
+    // The sideways speed itself (not a change) is added once per tick: at
+    // 60 Hz half of it per tick keeps the game's rate.
+    let s2 = if g.hz60.on { side0 / 4 } else { side0 / 2 };
     let a7 = dside * 2 - s2;
     let a8 = (old_fwd - k.fwd_speed) * 2;
     k.sway[9] = k.sway[9].wrapping_add(a7);
@@ -1199,17 +1231,19 @@ pub fn kart_update_full(k: &mut KartState, others: &mut Others, g: &mut RaceGlob
     // 0x80068790: effect wobble (none on the solo path).
     {
         // 0x80068790: effect wobble of the body-sway springs.
+        // Per-tick kicks: halved per tick in the 60 Hz mode.
+        let h = if g.hz60.on { 1 } else { 0 };
         let mut add = None;
         if k.status & 0x8000 != 0 {
             let idx = (((k.homing_timer as i32).wrapping_mul(0xC0)) & 0x1FC0) / 2;
-            add = Some(div_pow2(t.sin_raw(idx), 5));
+            add = Some(div_pow2(t.sin_raw(idx), 5 + h));
         } else if k.status & 0x80 != 0 {
-            k.sway[5] = k.sway[5].wrapping_add(0x200);
+            k.sway[5] = k.sway[5].wrapping_add(0x200 >> h);
         } else if k.effect == 0x16 {
             let idx = ((k.homing_timer as i32) & 0x3F) * 0x40;
-            add = Some(div_pow2(t.sin_raw(idx), 6));
+            add = Some(div_pow2(t.sin_raw(idx), 6 + h));
         } else if k.effect == 0x15 {
-            k.sway[5] = k.sway[5].wrapping_sub(0x200);
+            k.sway[5] = k.sway[5].wrapping_sub(0x200 >> h);
         }
         if let Some(a) = add {
             k.sway[10] = k.sway[10].wrapping_add(a);
@@ -1268,6 +1302,23 @@ pub fn kart_update_full(k: &mut KartState, others: &mut Others, g: &mut RaceGlob
             k.warn_timer = 0x1E;
         }
     }
+}
+
+/// 60 Hz mode: the world -> kart frame conversion of the velocity
+/// (0x80067028) from the full-precision velocity the previous conversion
+/// back left (`KartState::hz60_vel`), truncated once. A 30 Hz tick rounds
+/// once each way; two 60 Hz ticks would round four times and lose speed
+/// (top speed -0.2 %): carrying the remainder of one direction keeps two
+/// roundings per 1/30 s.
+fn to_kart_frame_60(k: &KartState, ca: i32, sa: i32) -> (i32, i32) {
+    let (fx, fz) = match k.hz60_vel {
+        Some([vx, vz, rx, rz]) if vx == k.vx && vz == k.vz => ((vx as i64) * 4096 + rx as i64, (vz as i64) * 4096 + rz as i64),
+        _ => ((k.vx as i64) * 4096, (k.vz as i64) * 4096),
+    };
+    let tz = |v: i64| -> i32 { (if v < 0 { -((-v) >> 24) } else { v >> 24 }) as i32 };
+    let side = tz(fx * ca as i64 + fz * sa as i64);
+    let fwd = tz(fz * ca as i64 - fx * sa as i64);
+    (side, fwd)
 }
 
 /// `x + bias` when negative: the first half of div_pow2, kept separate where

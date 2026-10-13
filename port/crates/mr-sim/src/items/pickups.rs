@@ -133,7 +133,9 @@ fn touching(list: &PickupList, x: i32, y: i32, z: i32, r: u32) -> Option<usize> 
 /// `karts` in slot order; `cams` the human cameras (particle bursts only
 /// near a camera); `rand` the BIOS rand() (item boxes' weapon draw).
 pub fn frame(karts: &mut [KartState], g: &mut RaceGlobals, w: &World, c: &CoursePickups, cams: &Cameras, rand: &mut dyn FnMut() -> i32) {
-    if g.mode != 0x12 {
+    // 60 Hz mode: karts collect on the first tick of a pair, at the game's
+    // 30 Hz sampling of their positions (every tick: +8 % tokens).
+    if g.mode != 0x12 && g.hz60.beat() {
         for s in 0..karts.len() {
             collect(&mut karts[s], s, g, w, c, cams, rand);
         }

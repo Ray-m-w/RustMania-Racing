@@ -215,6 +215,7 @@ fn pair(a: &mut KartState, b: &mut KartState, g: &mut RaceGlobals, w: &World, r:
         }
         a.obj_e5 = 1;
         b.obj_e5 = 1;
+        crate::sound::kart_land(a, b, g, w);
         if g.challenge != 0 || r.tagged != -1 {
             crate::unreachable_in_scope!("challenge tag on kart contact");
         }
@@ -304,6 +305,7 @@ fn pair(a: &mut KartState, b: &mut KartState, g: &mut RaceGlobals, w: &World, r:
     let imp = ((push_a - push_b).abs() >> 4).min(0xFF);
     rumble(a, g, imp);
     rumble(b, g, imp);
+    crate::sound::kart_bump(a, b, g, w, imp);
     {
         let (loser, winner, locked): (&mut KartState, &mut KartState, bool) =
             if loser_is_b { (b, a, b_locked) } else { (a, b, a_locked) };

@@ -143,6 +143,7 @@ fn lap_completed(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
         g.lap_threshold = k.best_lap;
     }
     k.lap = k.lap.wrapping_add(1);
+    crate::sound::lap(k, g, w);
     let lap = k.lap as i32;
     let laps = g.laps as i32;
     if lap == laps || g.end_mode > 1 {

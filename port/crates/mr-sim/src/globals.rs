@@ -63,6 +63,8 @@ pub struct RaceGlobals {
     pub cup: i8,
     /// 0x800B0E8C: bit per kart slot with the best start boost at GO.
     pub start_best_mask: u8,
+    /// Sound calls of the frame and the listener (crate::sound, track D).
+    pub sound: crate::sound::SoundState,
 }
 
 pub mod addr {
@@ -118,6 +120,7 @@ impl RaceGlobals {
             difficulty: m.u8(0x800E_039A),
             cup: m.i8(0x800B_0E38),
             start_best_mask: m.u8(0x800B_0E8C),
+            sound: Default::default(),
             lap_record: m.i32(0x800E_0190u32.wrapping_add((8 * m.i8(0x800B_0E32) as i32 + 0x20 * m.i8(0x800B_0E38) as i32) as u32)),
         }
     }

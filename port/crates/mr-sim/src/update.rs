@@ -127,7 +127,7 @@ pub fn kart_update(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
     // 0x80064D40: engine sound pitch draws one random byte per tick.
     let human = (k.player_index as i32) < g.humans as i32;
     if human && g.mode != 0x10 {
-        g.rng = g.rng.wrapping_add(1);
+        crate::sound::engine(k, g, w);
     }
 
     // 0x80064F94: which camera is nearest (only matters with 2+ humans).
@@ -146,6 +146,7 @@ pub fn kart_update(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
                 k.pause_bits &= 0x7F;
             } else if k.pause_bits & 0x80 == 0 {
                 k.pause_bits = ((k.pause_bits.wrapping_add(1)) & 1) | 0x80;
+                crate::sound::view_toggle(g);
             }
         }
         if 300 < g.race_clock {
@@ -317,6 +318,8 @@ pub fn kart_update(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
         }
     }
 
+    crate::sound::not_ready(k, g, w);
+
     // 0x80065E00: remember the previous position and speeds.
     let mut accel = k.accel as i32;
     k.prev_y = k.y;
@@ -426,6 +429,7 @@ pub fn kart_update(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
         } else {
             unreachable_in_scope!("jump while carrying an object");
         }
+        crate::sound::jump(k, g, w);
     }
     if k.ground_contact != 0 && k.carried_drop != 0 {
         k.carried_drop = 0;
@@ -603,6 +607,7 @@ pub fn kart_update(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
     }
     if g.countdown == 0 && k.vehicle_class & 0x50 != 0 && k.coast_hold != 0 && k.coast_hold < 8 && rng_next(g, w) < 0x10 {
         k.skid = 1;
+        crate::sound::skid(k, g, w);
     } else {
         k.skid = 0;
     }
@@ -826,7 +831,7 @@ pub fn kart_update(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
 
     // 0x80067834: impact sound draws a random byte.
     if human && k.impact > 800 {
-        g.rng = g.rng.wrapping_add(1);
+        crate::sound::impact(k, g, w);
     }
 
     // 0x8006789C: object interactions and ground contact.
@@ -904,6 +909,7 @@ pub fn kart_update(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
         && (k.sliding != 0 || k.drift != 0 || k.reversing != 0)
     {
         rumble(k, g, 0x4B);
+        crate::sound::slide(k, g, w);
     }
 
     // 0x80067E64: lap timing, race end, respawn timer.

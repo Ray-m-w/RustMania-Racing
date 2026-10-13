@@ -159,6 +159,7 @@ pub fn kart_ground(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
             g.rng = next;
         }
         rumble(k, g, strength);
+        crate::sound::wall_hit(k, g, w, strength);
         if (k.player_index as i32) < g.humans as i32 {
             // Wall sparks: three particles, three random bytes each.
             g.rng = g.rng.wrapping_add(9);
@@ -314,8 +315,8 @@ pub fn kart_ground(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
         n130 = [inp.alt_normal[0] as i32, inp.alt_normal[1] as i32, inp.alt_normal[2] as i32];
         sound_check = true;
     }
-    if sound_check && k.float_state != 0 && k.splash == 0 {
-        g.rng = g.rng.wrapping_add(1);
+    if sound_check && k.float_state != 0 {
+        crate::sound::splash(k, g, w);
     }
     let alt_blocks = matches!(gq.alt, Some(a) if k.y > a.y && a.y > k.water_y);
     k.support_y = if k.water_y < k.ground_y && !alt_blocks { k.water_y } else { k.ground_y };
@@ -372,6 +373,7 @@ pub fn kart_ground(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
     if k.ground_contact != 0 && old_contact == 0 {
         let v = ((k.vy >> 5).abs()).min(0xFF);
         rumble(k, g, v);
+        crate::sound::landing(k, g, w, v);
     }
     // 0x8003F9B0: vertical speed on the ground; slope push.
     let mut slope_push = true;

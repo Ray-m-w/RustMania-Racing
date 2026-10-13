@@ -28,6 +28,7 @@ pub fn frame_clock(g: &mut RaceGlobals, karts: &mut [&mut KartState], best_start
     if g.countdown == 0 {
         g.race_clock = g.race_clock.wrapping_add(g.dt * 5);
     } else {
+        crate::sound::countdown(g);
         g.countdown -= g.dt;
         if g.countdown < 1 {
             go(g, karts, best_start, rand);

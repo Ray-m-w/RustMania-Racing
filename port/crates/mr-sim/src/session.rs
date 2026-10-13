@@ -324,6 +324,7 @@ impl Session {
             difficulty: cfg.difficulty,
             cup: cfg.cup,
             start_best_mask: 0,
+            sound: Default::default(),
         };
         // FUN_8008C4AC: the first human's grid slot (*rng++ % karts), the
         // other karts on the following slots; with no opponents the
@@ -499,6 +500,7 @@ impl Session {
         let w = &self.world;
         let g = &mut self.globals;
         let n = ks.len();
+        crate::sound::begin_frame(g, ks, dt, self.camera.pos);
         // 0. FUN_8005C2EC (main loop, before the race frame): frame counter,
         //    countdown (GO and the start boosts), race clock, one rand().
         if self.load_frame {
@@ -611,6 +613,7 @@ impl Session {
             ks[0].pos_flash = 0;
         }
         self.pick = (self.pick + 1) % n;
+        crate::sound::character_voices(ks, g, w);
         for (s, k) in ks.iter().enumerate() {
             let rec = if s == 0 { &mut self.record } else { &mut self.others[s - 1].record };
             k.to_record(rec);

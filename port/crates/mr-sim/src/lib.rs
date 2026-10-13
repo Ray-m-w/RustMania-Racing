@@ -36,6 +36,7 @@ pub mod progress;
 pub mod race;
 pub mod render;
 pub mod session;
+pub mod sound;
 pub mod tables;
 pub mod update;
 pub mod vehicle;

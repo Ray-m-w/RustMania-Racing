@@ -24,8 +24,14 @@
 //! taken, the first frame whose displayed state includes a tick computed with
 //! it (interpolation weight > 0), and the first frame that shows such a tick
 //! at full weight. Times are measured at the end of the app frame (Last);
-//! the render + present chain after it is the same in every mode.
+//! the render + present chain after it is the same in every mode. The log
+//! also times the render world's present call of those two frames
+//! (`PresentLog`, after `RenderSystems::Render`): that part depends on
+//! `render_latency` (pipelined rendering presents a frame one app frame
+//! later); the swapchain queue after the present call (at most 1 frame with
+//! `render_latency = low`, 2 otherwise) is not visible to the app.
 
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use bevy::prelude::*;
@@ -107,7 +113,7 @@ fn sample(keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, mut latch: Res
         if went_down != 0 {
             if let Some(l) = log.as_mut() {
                 let g = latch.gen;
-                l.pending.push(Press { gen: g, at: Instant::now(), first: None });
+                l.pending.push(Press { gen: g, at: Instant::now(), first: None, first_frame: None });
             }
         }
     }
@@ -186,6 +192,29 @@ struct Press {
     gen: u64,
     at: Instant,
     first: Option<f64>,
+    /// The app frame that first showed it.
+    first_frame: Option<u64>,
+}
+
+/// Present calls of the render world: (app frame number, time), for
+/// `--latency-log` (shared with the render app).
+#[derive(Resource, Clone, Default)]
+pub struct PresentLog(Arc<Mutex<Vec<(u64, Instant)>>>);
+
+/// The app frame number the render world is drawing.
+#[derive(Resource, Default)]
+struct RenderFrameNo(u64);
+
+fn extract_frame_no(log: bevy::render::Extract<Option<Res<LatencyLog>>>, mut n: ResMut<RenderFrameNo>) {
+    if let Some(l) = log.as_ref() {
+        n.0 = l.frame;
+    }
+}
+
+fn after_present(n: Res<RenderFrameNo>, pl: Res<PresentLog>) {
+    if let Ok(mut v) = pl.0.lock() {
+        v.push((n.0, Instant::now()));
+    }
 }
 
 /// `--latency-log SECONDS` state.
@@ -202,6 +231,9 @@ pub struct LatencyLog {
     full_ms: Vec<f64>,
     frame_ms: Vec<f64>,
     last: Option<Instant>,
+    /// Finished presses: (sample time, first frame showing it, frame at full weight).
+    resolved: Vec<(Instant, u64, u64)>,
+    presents: PresentLog,
 }
 
 impl LatencyLog {
@@ -247,9 +279,11 @@ fn latency_frame(mut log: ResMut<LatencyLog>, latch: Res<PadLatch>, la: Res<Look
         (latch.tick_gen[0], latch.tick_gen[1])
     };
     let mut done = Vec::new();
+    let frame_no = log.frame;
     for (i, pr) in log.pending.iter_mut().enumerate() {
         if pr.first.is_none() && (ga >= pr.gen || (a > 0.0 && gb >= pr.gen)) {
             pr.first = Some(now.duration_since(pr.at).as_secs_f64() * 1000.0);
+            pr.first_frame = Some(frame_no);
         }
         if ga >= pr.gen {
             done.push((i, now.duration_since(pr.at).as_secs_f64() * 1000.0));
@@ -257,6 +291,8 @@ fn latency_frame(mut log: ResMut<LatencyLog>, latch: Res<PadLatch>, la: Res<Look
     }
     for (i, full) in done.into_iter().rev() {
         let pr = log.pending.remove(i);
+        let f = log.frame;
+        log.resolved.push((pr.at, pr.first_frame.unwrap_or(f), f));
         log.first_ms.push(pr.first.unwrap_or(full));
         log.full_ms.push(full);
     }
@@ -270,12 +306,28 @@ fn latency_frame(mut log: ResMut<LatencyLog>, latch: Res<PadLatch>, la: Res<Look
         };
         let n = log.first_ms.len();
         let (mut f, mut u, mut fr) = (log.first_ms.clone(), log.full_ms.clone(), log.frame_ms.clone());
+        // present calls of those frames (render world)
+        let pres: std::collections::HashMap<u64, Instant> = log.presents.0.lock().map(|v| v.iter().copied().collect()).unwrap_or_default();
+        let (mut pf, mut pu) = (Vec::new(), Vec::new());
+        for &(at, f0, f1) in &log.resolved {
+            if let (Some(t0), Some(t1)) = (pres.get(&f0), pres.get(&f1)) {
+                pf.push(t0.duration_since(at).as_secs_f64() * 1000.0);
+                pu.push(t1.duration_since(at).as_secs_f64() * 1000.0);
+            }
+        }
+        let fps = fr.len() as f64 / (fr.iter().sum::<f64>() / 1000.0).max(1e-9);
+        let mut sorted = fr.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let p99 = sorted.get(((sorted.len().max(1) - 1) as f64 * 0.99) as usize).copied().unwrap_or(f64::NAN);
         eprintln!(
-            "LATENCY-LOG logic {} Hz, low_latency {}: {n} presses; sample -> first frame showing it (ms): {}; sample -> shown at full weight (ms): {}; frame (ms): {}",
+            "LATENCY-LOG logic {} Hz, low_latency {}, render_latency {}: {n} presses; sample -> first frame showing it (ms): {}; sample -> shown at full weight (ms): {}; sample -> present call, first frame (ms): {}; sample -> present call, full weight (ms): {}; frame (ms): {}; fps {fps:.1}, frame p99 {p99:.2} ms",
             logic_hz_running(&p),
             latch.low_latency,
+            if crate::settings::Settings::global().render_latency_low() { "low" } else { "normal" },
             stat(&mut f),
             stat(&mut u),
+            stat(&mut pf),
+            stat(&mut pu),
             stat(&mut fr)
         );
         exit.write(AppExit::Success);
@@ -299,6 +351,16 @@ impl Plugin for PacingPlugin {
             .add_systems(PreUpdate, sample.after(bevy::input::InputSystems))
             .add_systems(RunFixedMainLoop, predict.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop));
         if let Some(secs) = crate::settings::arg_value("--latency-log").and_then(|s| s.parse::<f64>().ok()) {
+            let presents = PresentLog::default();
+            if let Some(r) = app.get_sub_app_mut(bevy::render::RenderApp) {
+                r.insert_resource(presents.clone())
+                    .init_resource::<RenderFrameNo>()
+                    .add_systems(bevy::render::ExtractSchedule, extract_frame_no)
+                    .add_systems(bevy::render::Render, after_present.in_set(bevy::render::RenderSystems::Cleanup));
+            }
+            // measure at full rate even without focus (Bevy's game default
+            // drops an unfocused window to 60 updates per second)
+            app.insert_resource(bevy::winit::WinitSettings::continuous());
             app.insert_resource(LatencyLog {
                 secs,
                 start: None,
@@ -310,6 +372,8 @@ impl Plugin for PacingPlugin {
                 full_ms: Vec::new(),
                 frame_ms: Vec::new(),
                 last: None,
+                resolved: Vec::new(),
+                presents,
             })
             .add_systems(Last, latency_frame);
         }

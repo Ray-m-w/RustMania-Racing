@@ -412,8 +412,10 @@ fn main() {
     }
     let st = settings::Settings::global();
     app.insert_resource(st.clone());
-    app
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
+    // render_latency = low: no render thread one frame behind, one queued
+    // swapchain frame (pacing.rs measures it with --latency-log)
+    let low_render = st.render_latency_low();
+    let mut plugins = DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Muppet RaceMania (Rust)".into(),
                 resolution: st.resolution().into(),
@@ -423,10 +425,16 @@ fn main() {
                     bevy::window::WindowMode::Windowed
                 },
                 present_mode: if st.bool("vsync", true) { bevy::window::PresentMode::AutoVsync } else { bevy::window::PresentMode::AutoNoVsync },
+                desired_maximum_frame_latency: if low_render { std::num::NonZeroU32::new(1) } else { None },
                 ..default()
             }),
             ..default()
-        }))
+        });
+    if low_render {
+        plugins = plugins.disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>();
+    }
+    app
+        .add_plugins(plugins)
         .insert_resource(Time::<Fixed>::from_hz(tick_hz as f64))
         .add_plugins(scene::ObjectsPlugin)
         // The game's frame clear on DOCK: GP0 fill 0x025F1300 = rgb (0, 19, 95)

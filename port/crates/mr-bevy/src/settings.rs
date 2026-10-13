@@ -46,6 +46,7 @@ pub const KNOWN: &[Opt] = &[
     Opt { key: "fx_depth_test", default: "true", allowed: "true|false", help: "true = sprites, particles, projectiles and shadows are hidden by walls (the ground under a sprite never hides it, as the game's ordering table draws the ground first); false = always drawn over the scene (debug)" },
     // --- G 60 Hz --- (append below)
     Opt { key: "logic_hz", default: "30", allowed: "30|60", help: "simulation rate: 30 = the game's logic (2 VBlanks per tick, exact against the original); 60 = the 60 Hz mode (1 VBlank per tick, within the feel tolerance of 30; kart-physics-ledger.md \"60 Hz mode\")" },
+    Opt { key: "render_latency", default: "low", allowed: "low|normal", help: "low = no pipelined rendering (the frame is rendered right after its update) and a swapchain of at most 1 queued frame; normal = Bevy's defaults (render one frame behind on its own thread, 2 queued frames)" },
     Opt { key: "low_latency", default: "true", allowed: "true|false", help: "pad sampled every display frame and the coming tick shown as it is sampled (look-ahead on a throw-away copy; the simulation is unchanged); false = the Session 4 display (interpolated one tick behind)" },
 ];
 
@@ -248,6 +249,11 @@ impl Settings {
     }
 
     /// MSAA sample count: 1 (off), 2, 4 or 8.
+    /// `render_latency = low` (default).
+    pub fn render_latency_low(&self) -> bool {
+        self.get("render_latency") != Some("normal")
+    }
+
     pub fn msaa_samples(&self) -> u32 {
         match self.get("msaa").unwrap_or("4") {
             "off" | "1" | "0" => 1,

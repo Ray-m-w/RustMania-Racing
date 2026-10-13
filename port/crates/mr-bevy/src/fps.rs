@@ -16,6 +16,8 @@ pub fn plugin(app: &mut App) {
     let Some(secs) = a.iter().position(|x| x == "--fps-log").and_then(|i| a.get(i + 1)).and_then(|s| s.parse::<f32>().ok()) else {
         return;
     };
+    // full rate even without focus (Bevy drops an unfocused window to 60 Hz)
+    app.insert_resource(bevy::winit::WinitSettings::continuous());
     app.insert_resource(FpsLog { secs, ..default() })
         .add_systems(FixedUpdate, |mut l: ResMut<FpsLog>| l.ticks += 1)
         .add_systems(Last, record);

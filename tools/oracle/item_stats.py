@@ -17,6 +17,7 @@ fields the same way for both, per AI kart (slots 1..5) over the whole run:
   dealt     hits dealt (+0x492 increments, not at the kart's own special)
   taken     hits taken (+0x494 increments, not when any special starts)
   hit rate  dealt / fires (per race, all AI karts)
+  --until-finish: only each kart's race (until +0x4C7 is set).
   "when":   share of fires on each lap; tick of the first special move /
             character special.
 
@@ -42,7 +43,7 @@ def load(path):
     return rows
 
 
-def race_stats(path, slots):
+def race_stats(path, slots, until_finish=False):
     rows = load(path)
     # Special starts per tick (any kart): gspecial -1 -> x.
     g = rows[0]
@@ -58,6 +59,8 @@ def race_stats(path, slots):
         first_move = first_special = None
         for a, b in zip(rs, rs[1:]):
             t = b["tick"]
+            if until_finish and a["finished"]:
+                break
             for c in ("charge0", "charge1"):
                 if a[c] == 0x40 and b[c] == 0xFF:
                     st["fires"] += 1
@@ -112,15 +115,17 @@ def summarize(races, slots):
 def main():
     a = sys.argv
     oi, pi = a.index("--oracle"), a.index("--port")
-    ends = [i for i in (oi, pi, a.index("--json") if "--json" in a else len(a)) if i > 0] + [len(a)]
+    ends = [i for i in (oi, pi, a.index("--json") if "--json" in a else len(a), a.index("--until-finish") if "--until-finish" in a else len(a)) if i > 0] + [len(a)]
 
     def files(i):
         nxt = min(j for j in ends if j > i)
         return [x for x in a[i + 1:nxt] if not x.startswith("--")]
 
     slots = [1, 2, 3, 4, 5]
-    orc = [race_stats(p, slots) for p in files(oi)]
-    prt = [race_stats(p, slots) for p in files(pi)]
+    uf = "--until-finish" in a
+    orc = [race_stats(p, slots, uf) for p in files(oi)]
+    prt = [race_stats(p, slots, uf) for p in files(pi)]
+    print("window:", "each kart's race (until it finishes)" if uf else "the whole run (4,815 ticks, past the AI's finish)")
     ot, orate, olaps, omove, ospec, okart = summarize(orc, slots)
     pt, prate, plaps, pmove, pspec, pkart = summarize(prt, slots)
     no, np_ = len(orc), len(prt)

@@ -105,6 +105,7 @@ fn main() {
     match mode.as_str() {
         "tf" => teacher(&run, &cap, &base, &mut s, from, n, skip_max, verbose),
         "free" => free(&run, &cap, &base, &mut s, from, n, skip_max, verbose),
+        "freeall" => freeall(&run, &cap, &base, &mut s, n, skip_max),
         "rows" => {
             let out = opt("--out").expect("--out CSV");
             oracle_rows(&run, &cap, &base, n, &out);
@@ -336,14 +337,14 @@ fn free(run: &Run, cap: &Capture, base: &[u8], s: &mut Session, from: usize, n: 
 
 /// Item-use statistics rows (tools/oracle/item_stats.py): one per tick and
 /// kart.
-const ROW_HEADER: &str = "tick,slot,charge0,charge1,meter,special,boosting,boost_count,lap,dealt,taken,race_time,finished,gspecial,gowner,clock,character,fires,pickups_box,pickups_token,hits_dealt,hits_taken";
+const ROW_HEADER: &str = "tick,slot,charge0,charge1,meter,special,boosting,boost_count,lap,dealt,taken,race_time,finished,gspecial,gowner,clock,character,fires,pickups_box,pickups_token,hits_dealt,hits_taken,float,buttons,flags";
 
 #[allow(clippy::too_many_arguments)]
 fn row(out: &mut String, tick: usize, slot: usize, k: &KartState, g: (i8, u8, i32), ev: [usize; 5]) {
     out.push_str(&format!(
-        "{tick},{slot},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+        "{tick},{slot},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
         k.weapons[4], k.weapons[5], k.start_timer, k.special, k.boosting, k.boost_count, k.lap, k.contacts_from_above, k.contacts_below,
-        k.race_time, k.finished, g.0, g.1, g.2, k.character, ev[0], ev[1], ev[2], ev[3], ev[4]
+        k.race_time, k.finished, g.0, g.1, g.2, k.character, ev[0], ev[1], ev[2], ev[3], ev[4], k.float_state, k.buttons, k.flags
     ));
 }
 
@@ -388,7 +389,49 @@ fn port_race(run: &Run, cap: &Capture, base: &[u8], s: &mut Session, n: usize, s
     for (slot, k) in std::iter::once(&s.kart).chain(s.others.iter().map(|o| &o.kart)).enumerate() {
         row(&mut out, 0, slot, k, (it.special, it.special_owner, s.globals.race_clock), ev[slot]);
     }
+    // Experiment (--rng-mimic): extra random-pointer bytes per frame drawn
+    // from the game's measured excess over the port (s_1: frame-end
+    // pointer, game - port), standing in for unported consumers.
+    let mimic = std::env::args().any(|a| a == "--rng-mimic");
+    let table: [(u32, u32); 14] = [(0, 1318), (1, 1316), (2, 209), (3, 242), (4, 410), (5, 166), (6, 204), (7, 225), (8, 134), (9, 113), (10, 94), (12, 84), (14, 70), (17, 30)];
+    let total: u32 = table.iter().map(|t| t.1).sum();
+    let mut lcg: u32 = seed.wrapping_mul(747796405).wrapping_add(2891336453);
+    // Experiment (--streams CAPTURE): each frame starts from that other
+    // oracle race's random pointer and rand() seed (the game's own random
+    // streams, all its consumers included).
+    let streams: Option<(Capture, Vec<u8>)> = std::env::args()
+        .position(|a| a == "--streams")
+        .and_then(|i| std::env::args().nth(i + 1))
+        .map(|d| {
+            let c = Capture::open(&d).expect("open --streams capture");
+            let b = c.ram0.clone().expect("ram0");
+            (c, b)
+        });
+    let sticks: Vec<u32> = streams.as_ref().map(|(c, b)| {
+        let w = oracle::dock_world(b);
+        Run::new(c, b, &w).ticks
+    }).unwrap_or_default();
     for i in 0..n {
+        if let Some((c, b)) = &streams {
+            if i < sticks.len() {
+                let m = c.mem_at(sticks[i], Some(b));
+                s.globals.rng = m.u32(0x800B_0BCC);
+                s.rand_state = m.u32(0x8000_9010);
+            }
+        }
+        if mimic {
+            lcg = lcg.wrapping_mul(1664525).wrapping_add(1013904223);
+            let mut r = (lcg >> 8) % total;
+            let mut d = 0;
+            for &(v, c) in &table {
+                if r < c {
+                    d = v;
+                    break;
+                }
+                r -= c;
+            }
+            s.rng_skip_items = Some(d);
+        }
         let mb = cap.mem_at(run.ticks[i + 1], Some(base));
         let buttons = mb.u16(0x800B_0CE8);
         let dt = mb.i32(0x800B_0AEC);
@@ -417,4 +460,72 @@ fn port_race(run: &Run, cap: &Capture, base: &[u8], s: &mut Session, n: usize, s
     }
     std::fs::write(path, out).unwrap();
     println!("port race seed {seed}: {n} ticks -> {path}");
+}
+
+/// Every kart free (the port's own state carried tick to tick); only the
+/// random pointer and the rand() seed at each frame start and the
+/// FUN_8007F03C skip come from the oracle. Reports the first tick each
+/// kart's fields differ from the game's.
+fn freeall(run: &Run, cap: &Capture, base: &[u8], s: &mut Session, n: usize, skip_max: u32) {
+    let nk = 1 + s.others.len();
+    let mut skip_at: BTreeMap<usize, u32> = BTreeMap::new();
+    for i in 0..n {
+        let ma = cap.mem_at(run.ticks[i], Some(base));
+        let mb = cap.mem_at(run.ticks[i + 1], Some(base));
+        let want = ItemState::read(&mb);
+        for d in 0..=skip_max {
+            if forced(s, &ma, &mb, d).is_err() {
+                break;
+            }
+            let ok = s.items().pickups == want.pickups && s.items().projectiles == want.projectiles && s.items().blink == want.blink;
+            if ok && karts_match(s, &mb, nk) {
+                skip_at.insert(i, d);
+                break;
+            }
+        }
+    }
+    // From tick 1: the restore frame (tick 0) is not a normal frame.
+    let m0 = cap.mem_at(run.ticks[1], Some(base));
+    s.load_mem(&m0);
+    let mut first: Vec<Option<(usize, Vec<String>)>> = vec![None; nk];
+    let mut gfirst: Option<usize> = None;
+    for i in 1..n {
+        let ma = cap.mem_at(run.ticks[i], Some(base));
+        let mb = cap.mem_at(run.ticks[i + 1], Some(base));
+        s.globals.rng = ma.u32(0x800B_0BCC);
+        s.rand_state = ma.u32(0x8000_9010);
+        s.rng_skip_items = Some(*skip_at.get(&i).unwrap_or(&0));
+        let buttons = mb.u16(0x800B_0CE8);
+        if let Err(e) = s.tick_dt(buttons, mb.i32(0x800B_0AEC)) {
+            println!("STOPPED at tick {i}: {e}");
+            break;
+        }
+        let ours = records(s);
+        for k in 0..nk {
+            if first[k].is_some() {
+                continue;
+            }
+            let refr = mb.slice(KART_ARRAY + 0x504 * k as u32, RECORD_SIZE);
+            let d: Vec<String> = FIELD_OFFSETS
+                .iter()
+                .filter(|&&(name, off, sz)| !COSMETIC.contains(&name) && ours[k][off..off + sz] != refr[off..off + sz])
+                .map(|&(name, off, sz)| format!("{name} {} vs {}", val(&ours[k][off..off + sz]), val(&refr[off..off + sz])))
+                .collect();
+            if !d.is_empty() {
+                first[k] = Some((i + 1, d));
+            }
+        }
+        let og = mr_sim::globals::RaceGlobals::read(&mb);
+        let g = &s.globals;
+        if gfirst.is_none() && (g.end_mode, g.race_clock, g.countdown, g.frame, g.lap_threshold, g.lap_record) != (og.end_mode, og.race_clock, og.countdown, og.frame, og.lap_threshold, og.lap_record) {
+            gfirst = Some(i + 1);
+            println!("globals differ at tick {}: port {:?} game {:?}", i + 1, (g.end_mode, g.race_clock, g.countdown, g.frame, g.lap_threshold, g.lap_record), (og.end_mode, og.race_clock, og.countdown, og.frame, og.lap_threshold, og.lap_record));
+        }
+    }
+    for (k, f) in first.iter().enumerate() {
+        match f {
+            Some((t, d)) => println!("kart {k}: first difference at tick {t}: {:?}", d.iter().take(6).collect::<Vec<_>>()),
+            None => println!("kart {k}: exact on every tick"),
+        }
+    }
 }

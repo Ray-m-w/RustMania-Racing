@@ -46,7 +46,7 @@ fn main() {
     let every: u64 = a.iter().position(|x| x == "--every").and_then(|i| a.get(i + 1)).map(|s| s.parse().unwrap()).unwrap_or(100);
     let mut disc = mr_disc::Disc::open_default().unwrap();
     let mk = |d: &mut mr_disc::Disc, dt: i32| {
-        let mut s = Session::new(d).unwrap();
+        let mut s = Session::solo(d).unwrap();
         s.leader_progress_override = Some(1000);
         s.race_pos_override = Some(6);
         while s.kart.race_time < 1430 {

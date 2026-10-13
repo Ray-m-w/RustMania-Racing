@@ -5,7 +5,7 @@
 //!                 [--oracle-trace analysis/traces/lap1.oracle.trace.jsonl]
 //!                 [--out analysis/traces/lap1.standalone.trace.jsonl]
 //!
-//! 1. Session::new's kart record vs the oracle's at the first captured
+//! 1. Session::solo's kart record vs the oracle's at the first captured
 //!    VBlank, field by field; then again after idling until the race clock
 //!    matches the oracle's (the savestate was taken 143 ticks into the race).
 //! 2. Free run with the buttons the oracle trace recorded per tick (the lap1
@@ -35,7 +35,7 @@ fn main() {
     let oracle_rng = args.iter().any(|a| a == "--oracle-rng");
 
     let mut disc = mr_disc::Disc::open_default().expect("disc");
-    let mut s = Session::new(&mut disc).expect("session");
+    let mut s = Session::solo(&mut disc).expect("session");
 
     // ---- 1. initial state ----
     let vb0 = cap.vbs[0];
@@ -58,7 +58,7 @@ fn main() {
         }
         let _ = diff_records;
     };
-    report("Session::new vs oracle VBlank 1", &s.record);
+    report("Session::solo vs oracle VBlank 1", &s.record);
     let target = cap.i32(vb0, KART_ARRAY + 0x358).unwrap();
     let mut idle = 0;
     if catchup6 {

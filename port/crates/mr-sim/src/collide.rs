@@ -42,6 +42,25 @@ pub fn frame_contacts(k: &mut KartState, others: &mut [KartState], g: &mut RaceG
     }
 }
 
+/// FUN_800418D8 over every kart: the per-frame resets, then every pair
+/// (j, i), j < i, in order, sharing one nearest-kart table (0x800C3068,
+/// indexed by +0x4D7).
+pub fn frame_contacts_all(karts: &mut [KartState], g: &mut RaceGlobals, w: &World, rules: &ContactRules) {
+    let n = karts.len();
+    let mut nearest = vec![0x7FFF_FFFFu32; n.max(8)];
+    for k in karts.iter_mut() {
+        k.aim_dist = 0x7FFF_FFFF;
+        k.nearest_kart = -1;
+        k.close_kart = 0;
+    }
+    for j in 0..n {
+        let (head, tail) = karts.split_at_mut(j + 1);
+        for o in tail.iter_mut() {
+            pair(&mut head[j], o, g, w, rules, &mut nearest);
+        }
+    }
+}
+
 fn eng(v: i16, e: i16) -> i32 {
     div_pow2(mul(v as i32, e as i32), 12)
 }

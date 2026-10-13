@@ -20,21 +20,14 @@ places it is not one-for-one:
   has its own seed, so AI path branches and jumps differ from any recorded
   race. With the oracle's seed the decisions are exact except in frames
   where other code drew first (4 of 23,206 kart-ticks).
-- Contacts among AI karts: collide.rs tests kart 0 against the rest; the
-  AI harness calls it once per kart with the karts after it (all pairs in
-  the game's order) but its per-call resets of +0x2CC/+0x4DC/+0x501 then
-  forget pairs (j, i) for j < i: the nearest-kart / close-kart fields are
-  not the game's (only battle AI reads them). Port the full pair loop.
-- update.rs has the two AI paths as `unreachable_in_scope!` (catch-up
-  scaling 0x80065850, re-roll timer 0x80068048); the harness runs AI karts
-  with flag bit 0 cleared and does both after the update
-  (`harness::ai_kart_tick`). Exact for motion at difficulty 8 (the in-tick
-  catch-up differs by <= 3, which changes no speed cap), but the re-roll's
-  random byte is drawn after the rest of the update instead of at
-  0x80068048. Wire `ai::catchup_scale` / `ai::reroll` into update.rs.
-- Race position (FUN_800837F8 / FUN_800834C0) is not ported for AI karts:
-  the "behind kart 0" rule (R1 on straights, specials) and the catch-up
-  target read +0x4BE / +0x388, which a session must produce for every kart.
+- Contacts: the session runs the full pair loop (`collide::frame_contacts_all`,
+  one reset, pairs (j, i) j < i in order, one nearest-kart table). The
+  mr-ai harness (src/bin/mr-ai) still calls `frame_contacts` once per kart
+  and so forgets earlier pairs' nearest / close fields (its own analysis
+  only).
+- update.rs now calls `ai::catchup_scale` (0x80065850) and `ai::reroll`
+  (0x80068078) in place; the mr-ai harness's `ai_kart_tick` (flag bit 0
+  cleared, both after the update) is kept for its teacher forcing only.
 - FUN_80090FAC (battle AI), FUN_80090670 (backward path walk) and the
   time-trial ghost branch are ported from the code but never ran against
   the oracle (no battle / reverse / ghost capture).
@@ -46,26 +39,37 @@ places it is not one-for-one:
   loaded (the oracle's RAM kept an earlier load's).
 
 Race flow (Session 3, mr-sim race.rs / session.rs):
-- After the finish the game hands the player's kart to the AI (flags bit 0)
-  and FUN_800912F8 drives it on round the course (race3P: a full lap, with R1
-  special moves and weapons). The session gives the finished kart no buttons
-  (it rolls to a stop) until the AI port drives it
-  (`Session::finished_kart_buttons`).
+- After the finish the AI drives the player's kart (`ai_buttons`, items
+  off: no R1 specials / weapons as the oracle's race3P had).
 - Camera during the intro fly-by (countdown >= 300, camera mode 10) and after
   the finish (finished-kart / results cameras): not in camera.rs; the session
-  holds the camera.
+  holds the camera. Consequence: during the intro the game's FUN_80041CC4
+  makes every kart look at the flying camera (aim +0x2C0, distance 0); in
+  the session the camera is inactive then (mode -1), so the aim and the
+  body sway that follows it differ (cosmetic) and the random pointer
+  0x800B0BCC drifts by a few draws per frame from the oracle's (the sway
+  draws), which reaches AI jumps / blink timing.
+- Water animation state (0x800AFEF0) at race load: it runs on between races
+  in the game; the session starts it from the exe's initial values. With
+  the oracle's state the load frame is exact (random pointer included).
+- Race load: the BIOS rand() seed and the random pointer at load decide
+  the opponents and the grid. `SessionConfig::dock_default` uses the
+  oracle's (start_probe: seed 0x832B2260, pointer 0x8001FC4E); the
+  pointer reset to 0x8001F94C (`RNG_START`, FUN_8008ACE4) did not happen
+  at that load, so it is only the solo session's start.
 - The frame that switches to the results (mode 10) runs FUN_800606D0 (not
   ported; sound / results set-up) and is a long frame in the game (dt 4
   after it); the session switches mode and skips that frame's simulation.
-- The kart-init random draws (copy_button +0x4DA, ...) come from the shared
-  random pointer after the AI karts' inits: the first "Copy the buttons"
-  button differs from a recorded race until the AI inits are ported.
+- AI start boost at GO (0x8005C538): rand() / (32767 / (best start x
+  difficulty / 16 + 1) + 1) as an i16; with no best start yet the divisor
+  wraps to -32768 and the AI gets 0. Ported, but not yet seen non-zero
+  against the oracle.
 - The finish voice (FUN_80060580), the "race won" save bit 0x800E0196 and the
   lap-record table 0x800E0190 bytes beyond the time: not modelled.
-- `RaceGlobals::field` (every kart's finished / lap) is a snapshot taken
-  before the kart loop; the game reads the live records, so a kart finishing
-  earlier in the same frame is seen there. Only matters for an early finish
-  (another kart already in) with two karts crossing in one frame.
+- After the player finishes (mode 10) the game stops lap timing for every
+  kart, so AI karts still racing never finish (oracle race3P: 0x800B0CD8
+  stays); the session does the same. The results screen's ranking of those
+  karts (by progress?) is not ported.
 
 ## 1. Stubbed branches (`unreachable_in_scope!`, panic when reached)
 Paths the solo player does not take on DOCK. Address = the game code skipped.
@@ -75,7 +79,6 @@ Paths the solo player does not take on DOCK. Address = the game code skipped.
 | update.rs | nearest-camera search with 2+ humans (0x80064FB0) | multiplayer |
 | update.rs | TRIANGLE look-at when no kart is near / mode 0x14 (FUN_800728C0) | camera lock search, challenge mode |
 | update.rs | special state +0x4D6 != 0 (track reset / special move, FUN_800913F4) | special move / reset |
-| update.rs | AI catch-up scaling (0x80065850) | AI |
 | update.rs | R1 with a full meter (+0x48A = 0x1A4) on a path: special move (0x80065B5C) | special move |
 | update.rs | L1 / L2 with a charged weapon slot: fire (FUN_80068C6C) | weapons |
 | update.rs | R2 with a full meter: character special (FUN_8006B828) | special move |
@@ -84,13 +87,11 @@ Paths the solo player does not take on DOCK. Address = the game code skipped.
 | update.rs | effects +0x4F1 = 0x15 / 0x16 | item effects |
 | update.rs | time-trial ghost FUN_8006F64C (race type 3) | not a race |
 | update.rs | 10-minute limit: kart handed to the AI (+0x4C7 = 2) | race clock > 179999 |
-| update.rs | respawn timer +0x47A expiring (FUN_8009192C) | not reached on DOCK |
 | ground.rs | ground contact in a special state; wall hit while carrying | special move / items |
 | progress.rs | object lists FUN_800628FC / FUN_80061BC4 / FUN_800632BC / FUN_80063C24 / FUN_80062E38 / FUN_800627E0 with non-empty lists | DOCK has none (pointers 0x800D1C68/8C/98/A4 null, 0x800B0C58/0E00/0C68 zero) |
 | progress.rs | DOCK's two trigger objects (0x800D1C9C, count 0x800B0DC6 = 2) touched, pickup states (+0x4E6, +0x4E7) | items |
 | progress.rs | lap timing in modes 2/7/20, race flags 8/2, time trial, 10-minute limit | other modes |
 | progress.rs | challenge win bits at the finish (race flag 0x10) | challenge mode |
-| race.rs | AI start boost at GO (rand() / difficulty) | AI port |
 | race.rs | race progress in battle / time trial / race flag 1 | other modes |
 | session.rs | one of two human players finished | split screen |
 | progress.rs | FUN_80090670 path mode (+0x4DF != 0), track direction in modes 2/7/0x14 | other modes |
@@ -336,3 +337,34 @@ the revisit list), the results screen / mode-10 timer 0x800B0AF0.
   by a constant instead of dt, easing `x += (t - x) >> n` once per tick:
   lurch, steer lag, catch-up ramp, boost glow) and measure each one's share
   of the divergence by making it per-VBlank in the dt = 1 run only.
+
+## 11. Six-kart session (AI integrated)
+`Session::new` loads the race as FUN_8008C4AC: grid draw (`ai::grid_start`),
+the player's FUN_800609F4, then per AI slot the opponent draw
+(`ai::pick_opponent`) and its FUN_800609F4 (`ai::init_opponent`, vehicle
+template from `ai::vehicle_templates` + the vehicle model's wheels), then
+FUN_8009192C over every kart (`ai::race_load_roll`). Per frame: FUN_8005C2EC
+(GO now includes the AI start boost), water, contacts over every pair,
+FUN_80041A20 (the human) and FUN_80041CC4 (every kart), FUN_8009004C for the
+round-robin kart (none while the countdown runs), the kart loop in slot order
+(AI and the finished player: `ai_buttons` -> `items_off` -> update with
+player -1; humans: the pad; FUN_80086B7C for human slots), then the render
+pass and race positions for every kart.
+
+Verified:
+- race load against the oracle (analysis/oracle/start_probe, with the
+  oracle's seed / pointer / water state): opponents, grid, all six records'
+  named fields, random pointer and rand() seed equal; then every kart's
+  motion fields and buttons (item bits masked) exact for 372 frames
+  through the countdown and GO to 130 race ticks; at 373 an oracle AI kart
+  turbos (items on in that capture) (tests/race.rs
+  six_kart_race_load_matches_oracle);
+- the player's race3 route in the oracle-fed harness: unchanged (exact to
+  the finish);
+- AI behaviour, 18 standalone races (`examples/full_race.rs --oracle-lineup
+  --seed S`, player idle, items off) vs the six items-off oracle races
+  (analysis/ai/n_*), tools/oracle/ai_stats.py: lap means +0.3 / -0.5 / -0.5
+  / +0.2 / +1.1 % per kart (limit 3 %), pooled +0.11 %, line median /
+  p90 deltas <= 0.012 / 0.057 (limit 0.10), mean finishing positions within
+  0.5 places (limit 1.5): PASS;
+- the finished player driven by the AI past the finish (tests/race.rs).

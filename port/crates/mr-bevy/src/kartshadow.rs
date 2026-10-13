@@ -227,17 +227,19 @@ fn alpha_image(vt: &VramTextures, images: &mut Assets<Image>, tpage: u16, clut: 
 
 /// Kart records to shadow, in list-slot order. Player only for now; other
 /// karts (Session::others) slot in here.
-fn kart_records(p: &crate::Player) -> Vec<(&[u8], Option<&[u8]>)> {
-    let mut v = Vec::new();
-    if let Some(k) = p.kart.as_deref() {
-        v.push((k, p.prev_kart.as_deref()));
-    }
-    v
+/// Every fed kart (crate::karts::KartFeed: the session's six karts, a capture
+/// replay, or the player alone), with its previous tick for interpolation.
+fn kart_records(feed: &crate::karts::KartFeed) -> Vec<(&[u8], Option<&[u8]>)> {
+    feed.now
+        .iter()
+        .map(|f| (&f.record[..], feed.prev.iter().find(|q| q.slot == f.slot).map(|q| &q.record[..])))
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
 pub fn update_shadows(
     p: Res<crate::Player>,
+    feed: Res<crate::karts::KartFeed>,
     time: Res<Time<Fixed>>,
     mut st: ResMut<ShadowState>,
     vt: Res<VramTextures>,
@@ -248,7 +250,7 @@ pub fn update_shadows(
     mut q: Query<(&KartShadow, &Mesh3d, &MeshMaterial3d<StandardMaterial>, &mut Visibility)>,
 ) {
     let Some((eye, cm)) = p.pose.cam else { return };
-    let karts = kart_records(&p);
+    let karts = kart_records(&feed);
     let have: Vec<usize> = q.iter().map(|(k, ..)| k.0).collect();
     for i in 0..karts.len() {
         if !have.contains(&i) {

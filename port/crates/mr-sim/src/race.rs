@@ -30,7 +30,7 @@ pub fn frame_clock(g: &mut RaceGlobals, karts: &mut [&mut KartState], best_start
     } else {
         g.countdown -= g.dt;
         if g.countdown < 1 {
-            go(g, karts, best_start);
+            go(g, karts, best_start, rand);
         }
     }
     rand();
@@ -39,18 +39,34 @@ pub fn frame_clock(g: &mut RaceGlobals, karts: &mut [&mut KartState], best_start
 /// 0x8005C4A8: GO. Human karts keep the boost they earned in the start game
 /// (+0x446); 0x800E02BA remembers the best; every kart's boost becomes
 /// ticks (<< 3) and the HUD flash +0x4FC = 0xB shows it.
-fn go(g: &mut RaceGlobals, karts: &mut [&mut KartState], best_start: &mut u8) {
+fn go(g: &mut RaceGlobals, karts: &mut [&mut KartState], best_start: &mut u8, rand: &mut dyn FnMut() -> i32) {
+    // 0x8005C538: AI karts draw their boost as rand() / d, d from the best
+    // start so far (0x800E02BA, as it stood before this GO) and the AI
+    // difficulty 0x800E039A: d = 32767 / (best * difficulty / 16 + 1) + 1
+    // (as an i16: 32768 wraps to -32768, so with no best start yet the AI
+    // gets 0).
+    let scaled = crate::fixed::div_pow2(*best_start as i32 * g.difficulty as i8 as i32, 4) + 1;
+    let d = crate::fixed::s16(32767 / scaled + 1);
+    let mut best = 0i32;
     for k in karts.iter_mut() {
         if g.mode == 1 {
-            if k.flags & 1 == 0 {
-                if (*best_start as i16) < k.boost_count {
-                    *best_start = k.boost_count as u8;
-                }
-            } else {
-                crate::unreachable_in_scope!("AI start boost (rand() / difficulty) at GO");
+            if k.flags & 1 != 0 {
+                k.boost_count = (rand() / d) as i16;
+            } else if (*best_start as i16) < k.boost_count {
+                *best_start = k.boost_count as u8;
             }
         } else {
             k.boost_count = 0;
+        }
+        best = best.max(k.boost_count as i32);
+    }
+    // 0x800B0E8C: the karts with the best start (bit per slot).
+    g.start_best_mask = 0;
+    if best > 0 {
+        for (i, k) in karts.iter().enumerate() {
+            if k.boost_count as i32 == best {
+                g.start_best_mask |= 1 << i;
+            }
         }
     }
     g.countdown = 0;

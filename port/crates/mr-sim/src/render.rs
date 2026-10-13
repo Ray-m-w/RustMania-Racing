@@ -195,14 +195,22 @@ pub fn aim_at_course(k: &mut KartState, g: &crate::RaceGlobals, w: &World) {
     }
 }
 
-/// FUN_80041CC4: the camera override of the aim (finished karts, the
-/// countdown, status 0x10000). `cam_mode` = camera record +0x64.
-pub fn aim_camera_override(k: &KartState, g: &crate::RaceGlobals, cam_mode: i16) {
-    let countdown_done = g.countdown_len <= g.countdown;
-    if cam_mode as i8 != -1
-        && (k.status & 0x10000 != 0 || (k.special == 0 && ((k.finished != 0 && k.status & 0x20000 == 0) || countdown_done)))
-    {
-        crate::unreachable_in_scope!("aim taken from the camera (FUN_80041CC4)");
+/// FUN_80041CC4 for one kart: while its camera (+0x4F2; one camera in a
+/// one-player race) is active (`cam_mode` = camera +0x64 != -1), a kart in
+/// status 0x10000, a finished one (not in status 0x20000), or any kart
+/// during the intro (countdown >= 300) looks at the camera: aim = the eye
+/// position (camera +0x28) >> 5, aim distance 0.
+pub fn aim_camera_override(k: &mut KartState, g: &crate::RaceGlobals, cam_mode: i16, cam_pos: [i32; 3]) {
+    if cam_mode == -1 {
+        return;
+    }
+    let take = k.status & 0x10000 != 0
+        || (k.special == 0 && ((k.finished != 0 && k.status & 0x20000 == 0) || g.countdown >= g.countdown_len));
+    if take {
+        k.aim_dist = 0;
+        k.aim_x = cam_pos[0] >> 5;
+        k.aim_y = cam_pos[1] >> 5;
+        k.aim_z = cam_pos[2] >> 5;
     }
 }
 

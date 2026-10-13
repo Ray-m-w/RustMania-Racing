@@ -20,6 +20,7 @@ macro_rules! unreachable_in_scope {
     };
 }
 
+pub mod ai;
 pub mod body;
 pub mod camera;
 pub mod collide;

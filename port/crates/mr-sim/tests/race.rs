@@ -134,11 +134,12 @@ laps {:?} clock {}", after.iter().map(|k| (k.lap, k.finished)).collect::<Vec<_>>
 /// 480), 240 countdown ticks to GO, then 142 race ticks.
 #[test]
 fn session_countdown_to_go() {
+    std::env::set_current_dir(oracle::repo_root()).unwrap();
     let Ok(mut disc) = mr_disc::Disc::open_default() else {
         eprintln!("skip: no disc");
         return;
     };
-    let mut s = mr_sim::session::Session::new(&mut disc).unwrap();
+    let mut s = mr_sim::session::Session::solo(&mut disc).unwrap();
     assert_eq!(s.phase(), RacePhase::Intro { countdown: 480 });
     let mut seen = Vec::new();
     for _ in 0..241 {
@@ -173,7 +174,11 @@ fn session_countdown_to_go() {
 fn start_game_matches_oracle() {
     let root = oracle::repo_root();
     let dir = root.join("analysis/oracle/start_game");
-    let Ok(mut disc) = mr_disc::Disc::open_default() else { return };
+    std::env::set_current_dir(oracle::repo_root()).unwrap();
+    let Ok(mut disc) = mr_disc::Disc::open_default() else {
+        eprintln!("skip: no disc");
+        return;
+    };
     if !dir.join("meta.json").exists() {
         eprintln!("skip: no capture at {}", dir.display());
         return;
@@ -183,7 +188,7 @@ fn start_game_matches_oracle() {
     let load = *cap.vbs.iter().find(|&&v| key(v).0 == 480 && cap.read(v, 0x800B_0D46, 2).unwrap() == [1, 0]).unwrap();
     let vbs: Vec<u32> = cap.vbs.iter().copied().filter(|&v| v >= load).collect();
     let ends: Vec<u32> = vbs.windows(2).filter(|w| key(w[0]) != key(w[1])).map(|w| w[0]).collect();
-    let mut s = mr_sim::session::Session::new(&mut disc).unwrap();
+    let mut s = mr_sim::session::Session::solo(&mut disc).unwrap();
     // Random-pointer driven fields and the AI karts' contacts.
     let skip = [
         "copy_button", "aim_x", "aim_y", "aim_z", "aim_dist", "nearest_kart", "race_pos", "shown_pos", "pos_flash", "progress", "course_point",
@@ -216,4 +221,116 @@ fn start_game_matches_oracle() {
     // Load frame + 239 frames (one of them dt 3) = 480 VBlanks.
     assert_eq!(go, Some(239));
     assert!(s.best_start > 0);
+}
+
+/// The six-kart session from race load against the oracle's load from the
+/// course menu (analysis/oracle/start_probe, no input): with the BIOS seed
+/// and random pointer the oracle had before the load (0x832B2260,
+/// 0x8001FC4E) and its water-animation state, the race load picks the same
+/// opponents and grid and builds the same six records, and every kart's
+/// motion stays exact through the countdown, GO and the first race ticks
+/// (to frame 372; at 373 an oracle AI kart fires a turbo: items are on in
+/// that capture, off in the session).
+#[test]
+fn six_kart_race_load_matches_oracle() {
+    let root = oracle::repo_root();
+    let dir = root.join("analysis/oracle/start_probe");
+    std::env::set_current_dir(oracle::repo_root()).unwrap();
+    let Ok(mut disc) = mr_disc::Disc::open_default() else {
+        eprintln!("skip: no disc");
+        return;
+    };
+    if !dir.join("meta.json").exists() {
+        eprintln!("skip: no capture at {}", dir.display());
+        return;
+    }
+    let cap = Capture::open(&dir).unwrap();
+    let key = |vb: u32| (cap.i32(vb, 0x800B_0C70).unwrap(), cap.i32(vb, 0x800B_0A94).unwrap());
+    let load = *cap.vbs.iter().find(|&&v| key(v).0 == 480 && cap.read(v, 0x800B_0D46, 2).unwrap() == [1, 0]).unwrap();
+    let vbs: Vec<u32> = cap.vbs.iter().copied().filter(|&v| v >= load).collect();
+    let ends: Vec<u32> = vbs.windows(2).filter(|w| key(w[0]) != key(w[1])).map(|w| w[0]).collect();
+    let mut cfg = mr_sim::session::SessionConfig::dock_default();
+    cfg.rand_seed = 0x832B_2260;
+    cfg.rng_start = 0x8001_FC4E;
+    let mut s = mr_sim::session::Session::with_config(&mut disc, cfg).unwrap();
+    s.water = mr_sim::water::WaterAnim::from_bytes(cap.read(load, 0x800A_FEF0, 0x20).unwrap());
+    let m = cap.mem_at(load, None);
+    assert_eq!((s.globals.rng, s.rand_seed()), (m.u32(0x800B_0BCC), m.u32(0x8000_9010)), "random state after the load");
+    // Load: every named field of every kart (the session's records also
+    // carry a render pass for drawing; the game's look point is still 0).
+    for (slot, k) in std::iter::once(&s.kart).chain(s.others.iter().map(|o| &o.kart)).enumerate() {
+        let o = KartState::from_record(cap.read(load, KART_ARRAY + (RECORD_SIZE * slot) as u32, RECORD_SIZE).unwrap());
+        let d: Vec<_> = k.diff(&o).into_iter().filter(|d| !d.starts_with("trail")).collect();
+        assert!(d.is_empty(), "kart {slot} at load: {d:?}");
+    }
+    let motion = ["x", "y", "z", "pitch", "heading", "roll", "vx", "vy", "vz", "fwd_speed", "side_speed", "lap", "buttons", "race_pos"];
+    for (j, &vb) in ends.iter().enumerate().take(372) {
+        let m = cap.mem_at(vb, None);
+        s.tick_dt(m.u16(0x800B_0CE8), m.i32(0x800B_0AEC)).unwrap();
+        assert_eq!((s.countdown(), s.race_clock()), (m.i32(0x800B_0C70), m.i32(0x800B_0A94)), "frame {j}");
+        for (slot, _, _, r) in s.kart_records() {
+            let mut o = cap.read(vb, KART_ARRAY + (RECORD_SIZE * slot) as u32, RECORD_SIZE).unwrap().to_vec();
+            let b = u16::from_le_bytes([o[0x44E], o[0x44F]]) & !mr_sim::ai::btn::ITEMS;
+            o[0x44E..0x450].copy_from_slice(&b.to_le_bytes());
+            let bad: Vec<&str> = mr_sim::kart::FIELD_OFFSETS.iter().filter(|&&(n, off, sz)| motion.contains(&n) && r[off..off + sz] != o[off..off + sz]).map(|e| e.0).collect();
+            assert!(bad.is_empty(), "frame {j} kart {slot}: {bad:?}");
+        }
+    }
+}
+
+/// A standalone race from load to the finish: the five opponents run the
+/// three laps (the player idles on the grid), every AI kart finishes, the
+/// results rank them by finishing order.
+#[test]
+fn standalone_six_kart_race_finishes() {
+    std::env::set_current_dir(oracle::repo_root()).unwrap();
+    let Ok(mut disc) = mr_disc::Disc::open_default() else {
+        eprintln!("skip: no disc");
+        return;
+    };
+    let mut s = mr_sim::session::Session::new(&mut disc).unwrap();
+    assert_eq!(s.others.len(), 5);
+    let mut t = 0;
+    while !s.others.iter().all(|o| o.kart.finished != 0) {
+        s.tick(0).unwrap();
+        t += 1;
+        assert!(t < 8000, "AI karts did not finish");
+    }
+    let r = s.results();
+    for (i, x) in r.iter().take(5).enumerate() {
+        assert_eq!((x.place as usize, x.finished, x.lap_times.len()), (i + 1, true, 3), "{x:?}");
+        assert!(x.slot != 0);
+        assert!(x.lap_times.iter().all(|&l| (11_000..17_000).contains(&l)), "{x:?}");
+    }
+    assert_eq!((r[5].slot, r[5].finished), (0, false));
+    eprintln!("standalone race: {t} ticks, {:?}", r.iter().map(|x| (x.slot, x.race_time)).collect::<Vec<_>>());
+}
+
+/// The player's kart after the finish is driven by the AI as in the game:
+/// on autopilot the player finishes, the race goes to the results (mode 10)
+/// and the kart keeps moving under FUN_800912F8.
+#[test]
+fn finished_player_is_driven_by_the_ai() {
+    std::env::set_current_dir(oracle::repo_root()).unwrap();
+    let Ok(mut disc) = mr_disc::Disc::open_default() else {
+        eprintln!("skip: no disc");
+        return;
+    };
+    let mut s = mr_sim::session::Session::new(&mut disc).unwrap();
+    s.autopilot = true;
+    let mut t = 0;
+    while s.kart.finished == 0 {
+        s.tick(0).unwrap();
+        t += 1;
+        assert!(t < 8000, "the player did not finish");
+    }
+    assert_eq!(s.kart.flags & 1, 1);
+    assert!(matches!(s.phase(), RacePhase::Finished { .. }));
+    let p0 = (s.kart.x, s.kart.z);
+    for _ in 0..300 {
+        s.tick(0).unwrap();
+    }
+    assert_eq!(s.globals.mode, 10);
+    let d = ((s.kart.x - p0.0) as i64).abs() + ((s.kart.z - p0.1) as i64).abs();
+    assert!(d > 100_000, "the finished kart did not drive on ({d})");
 }

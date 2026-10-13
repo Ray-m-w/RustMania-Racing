@@ -246,8 +246,15 @@ which follows a change with a 0x1E-VBlank flash `kart().pos_flash`),
 place: slot (0 = player), place, finished, race_time (+0x358, stops at the
 finish), lap_times (+0x35C.., rounded to multiples of 3 at each lap end),
 best_lap (+0x384), character, vehicle), `best_start` (0x800E02BA).
-Karts: `Session::kart` is the player (slot 0); `Session::others` holds karts
-1.. (`OtherKart { kart }`), empty until the AI port fills it; the contact
-pass, the round-robin path / progress pick, positions, GO and results already
-run over all of them. `race_pos_override` / `leader_progress_override` are
-analysis knobs (the oracle race's 6th place and catch-up).
+Karts: `Session::kart` / `record` are the player (slot 0); `Session::others`
+holds the five AI opponents (`OtherKart { kart, record, ai, character,
+vehicle, driver, vehicle_model, character_model }`, slot order 1..5).
+`Session::kart_records()` yields `(slot, character, vehicle, &record)` for
+every kart, each record the full 0x504 bytes after the last tick's render
+pass (what part placement reads). `Session::new` = DOCK with five
+opponents (the oracle's race-load seed); `Session::solo` = the player alone
+(analysis). `SessionConfig`: `rand_seed`, `rng_start` (decide opponents and
+grid), `opponents`, `difficulty`, `lineup` (fixed opponents, e.g.
+`ORACLE_LINEUP`), `round_robin_start`. `Session::autopilot` lets the AI
+drive the player. `race_pos_override` / `leader_progress_override` are
+analysis knobs only.

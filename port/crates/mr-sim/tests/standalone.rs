@@ -97,7 +97,7 @@ fn session_grid_state_matches_oracle() {
     }
     let cap = Capture::open(&dir).unwrap();
     let mut disc = mr_disc::Disc::open_default().unwrap();
-    let mut s = Session::new(&mut disc).unwrap();
+    let mut s = Session::solo(&mut disc).unwrap();
     let vb0 = cap.vbs[0];
     let orec = cap.read(vb0, KART_ARRAY, RECORD_SIZE).unwrap();
     // The savestate was taken 143 ticks into the race; idle to the same clock.
@@ -164,7 +164,7 @@ fn standalone_render_fields_match_oracle() {
     let n = 200;
     let rep = run.teacher_forcing(n);
     let mut disc = mr_disc::Disc::open_default().unwrap();
-    let mut s = Session::new(&mut disc).unwrap();
+    let mut s = Session::solo(&mut disc).unwrap();
     s.leader_progress_override = Some(1000);
     let r0 = cap.read(run.ticks[0], KART_ARRAY, RECORD_SIZE).unwrap();
     while s.kart.race_time < cap.i32(run.ticks[0], KART_ARRAY + 0x358).unwrap() {

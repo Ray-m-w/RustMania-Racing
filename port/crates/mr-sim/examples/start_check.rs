@@ -25,7 +25,7 @@ fn main() {
         }
     }
     let mut disc = mr_disc::Disc::open_default().unwrap();
-    let mut s = Session::new(&mut disc).unwrap();
+    let mut s = Session::solo(&mut disc).unwrap();
     let skip: &[&str] = &["copy_button", "aim_x", "aim_y", "aim_z", "aim_dist", "nearest_kart", "race_pos", "shown_pos", "pos_flash", "progress", "course_point", "catchup",
         // Random-pointer driven (the AI karts' inits and updates share the
         // pointer) and AI contacts:

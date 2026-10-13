@@ -32,7 +32,7 @@ pub mod addr {
     /// Character table, 4 bytes per character: (camera mount +0x188, +0x18A).
     /// The first halfword is rewritten at model load (FUN_80087ACC).
     pub const CHARACTER_MOUNT: u32 = 0x800A_C038;
-    /// Position-history rings, 0x300 bytes per kart (BSS).
+    /// Position-history rings, 12 x 16 bytes per kart (BSS).
     pub const HISTORY: u32 = 0x800D_4098;
 }
 
@@ -176,7 +176,6 @@ pub fn init_kart(p: &KartInit, rng: &mut u32, rand: &mut dyn FnMut() -> i32) -> 
         crate::progress::path_position(&mut k, w);
         k.to_record(&mut r);
     }
-    // (0x488 = FUN_80081170 course-point index: not ported, see the ledger.)
     r[0x4B4] = 8;
     put16(&mut r, 0x442, 0x1000);
     // Body matrix +0x18C = identity, copied to +0x1AC and +0x1CC.
@@ -232,7 +231,7 @@ pub fn init_kart(p: &KartInit, rng: &mut u32, rand: &mut dyn FnMut() -> i32) -> 
     r[0x4A9] = 0x40;
     let mut k;
     if (p.slot as i16) < s.karts {
-        let hp = addr::HISTORY + 0x300 * p.slot as u32;
+        let hp = addr::HISTORY + (16 * crate::camera::GAME_TRAIL_LEN) as u32 * p.slot as u32;
         put32(&mut r, 0x2DC, hp as i32);
         let h = heading;
         let hx = x + t.sin_raw(h) * -2;
@@ -242,6 +241,11 @@ pub fn init_kart(p: &KartInit, rng: &mut u32, rand: &mut dyn FnMut() -> i32) -> 
         k.trail = [TrailEntry { pos: [hx, hy, hz], count: 2 }; TRAIL_LEN];
     } else {
         k = KartState::from_record(&r);
+    }
+    // +0x488: FUN_80081170(x >> 5, y >> 5, z >> 5, course, 0x10, 0, 0): the
+    // nearest course point, searched from point 0.
+    if let Some((i, _)) = crate::race::course_point(w, &k, 0) {
+        k.course_point = i;
     }
     k.to_record(&mut r);
     (r, k)

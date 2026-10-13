@@ -248,9 +248,8 @@ pub fn kart_update(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
             }
         }
         k.catchup = n as u8;
-        if g.split_screen == 0 && g.race_over == 0 && k.flags & 1 != 0 {
-            unreachable_in_scope!("AI catch-up scaling");
-        }
+        // 0x80065850: an AI kart's catch-up is scaled by the difficulty.
+        crate::ai::catchup_scale(k, g, g.difficulty, g.cup);
     } else {
         k.catchup = 0;
     }
@@ -932,7 +931,9 @@ pub fn kart_update(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
             let n = k.respawn_timer as i32 - dt;
             k.respawn_timer = n as i16;
             if n.wrapping_mul(0x10000) < 1 {
-                unreachable_in_scope!("respawn FUN_8009192C");
+                // 0x80068078: FUN_8009192C(kart, 1): re-roll the special-move
+                // preference.
+                crate::ai::reroll(k, g, w, g.karts);
             }
         }
     }

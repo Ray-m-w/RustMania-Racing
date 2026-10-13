@@ -293,22 +293,30 @@ impl SimRun {
         let mut disc = mr_disc::Disc::open_default().expect("open the disc (MRM_DISC or game.toml)");
         // Session::new starts at race load: intro, the "Copy the buttons"
         // start game, then GO (docs/spec/kart-physics.md, race flow).
-        let mut session = mr_sim::session::Session::new(&mut disc).expect("start the mr-sim session");
-        // Until AI karts run: catch-up as in the oracle race (player 6th,
-        // leader far ahead) -> speed cap 0xA00. Overrides go in before the
-        // countdown, the ramped catch-up value after (as mr-standalone
-        // --catchup-as-6th). Ledger: revisit list.
-        if !leader {
-            session.leader_progress_override = Some(1000);
-            session.race_pos_override = Some(6);
-        }
-        if oracle_grid {
+        let mut session = if oracle_grid {
+            // Comparisons with the oracle's lap routes: the solo session, with
+            // the catch-up the oracle race had (player 6th, leader far ahead).
+            // Overrides before the countdown, the ramped value after
+            // (mr-standalone --catchup-as-6th).
+            let mut s = mr_sim::session::Session::solo(&mut disc).expect("start the mr-sim session");
+            if !leader {
+                s.leader_progress_override = Some(1000);
+                s.race_pos_override = Some(6);
+            }
             // The oracle's grid savestate is at race clock 1430 (383 ticks in).
-            session.idle_until_race_time(1430).expect("idle to the oracle grid");
-        }
-        if !leader {
-            session.kart.catchup = 180;
-        }
+            s.idle_until_race_time(1430).expect("idle to the oracle grid");
+            if !leader {
+                s.kart.catchup = 180;
+            }
+            s
+        } else {
+            // Play: the full race - Kermit and five AI opponents from race
+            // load; positions and catch-up come from the real field.
+            let mut s = mr_sim::session::Session::new(&mut disc).expect("start the mr-sim session");
+            // --autopilot: the game's AI drives Kermit too (demo / soak test).
+            s.autopilot = std::env::args().any(|a| a == "--autopilot");
+            s
+        };
         let a: Vec<String> = std::env::args().collect();
         let route = a.iter().position(|x| x == "--route").and_then(|i| a.get(i + 1)).map(|p| parse_route(&std::fs::read_to_string(p).expect("read --route")));
         SimRun { session, align: 0, buttons: vec![], rows: vec![], stopped: None, route }
@@ -418,7 +426,7 @@ fn setup_camera(mut c: Commands) {
     c.insert_resource(GlobalAmbientLight { brightness: 1500.0, ..default() });
 }
 
-fn sim_tick(mut p: ResMut<Player>, keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, mut hud_g: ResMut<hud::HudGlobals>) {
+fn sim_tick(mut p: ResMut<Player>, keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, mut hud_g: ResMut<hud::HudGlobals>, mut feed: ResMut<karts::KartFeed>) {
     let buttons = input::sample(&keys, &pads);
     p.prev = p.pose;
     let tick = p.tick;
@@ -455,6 +463,9 @@ fn sim_tick(mut p: ResMut<Player>, keys: Res<ButtonInput<KeyCode>>, pads: Query<
                 }
             }
             let s = &run.session;
+            // Every kart's record to the renderer (karts.rs, shadows).
+            feed.external = true;
+            feed.set_records(s.kart_records().map(|(slot, _, _, r)| (slot as u8, r)));
             // HUD globals from the session (countdown 0x800B0C70, start value
             // 0x800B07F8 = 300, race clock 0x800B0A94).
             hud_g.countdown = s.countdown();

@@ -303,3 +303,32 @@ fn dock_vis_node_and_selection() {
         assert!(!sel.iter().any(|x| x.object == d.objects.iter().position(|y| y.offset == o.offset).unwrap()));
     }
 }
+
+#[test]
+fn dock_banner_matches_gte() {
+    let Some(mut disc) = disc() else { return };
+    let (_, d, sin) = load(&mut disc, "COURSE_A/DOCK.DAT");
+    let b = d.banners().expect("DOCK has a banner");
+    assert_eq!(b.banners.len(), 1);
+    let bn = b.banners[0];
+    assert_eq!((bn.mid, bn.angle, bn.spacing), ([-13519, -33, -1112], 3848, 347));
+    // GTE: the 33 vertices FUN_800313bc transformed (V = vertex - mid, i16)
+    // in one oracle frame, reproduced exactly at cloth phase (119, 1614).
+    let gte = "-1667 347 -502;-1651 0 -543;-1621 -347 -618;-1287 -347 -519;-1282 0 -531;-1279 347 -538;-953 -347 -419;-916 0 -510;-895 347 -562;-627 -347 -300;-579 0 -421;-552 347 -487;-310 -347 -157;-278 0 -238;-260 347 -283;-2 347 5;-1 0 3;0 -347 0;256 347 293;275 0 244;309 -347 159;551 347 488;579 0 421;627 -347 300;899 347 553;919 0 505;954 -347 417;1284 347 525;1285 0 522;1287 -347 517;1622 -347 616;1653 0 536;1671 347 492";
+    let want: std::collections::HashSet<[i32; 3]> = gte
+        .split(';')
+        .map(|t| {
+            let v: Vec<i32> = t.split_whitespace().map(|x| x.parse().unwrap()).collect();
+            [v[0], v[1], v[2]]
+        })
+        .collect();
+    let cloth = b.cloth(&sin, (119, 1614));
+    let qs = b.quads(0, &cloth, &sin);
+    let got: std::collections::HashSet<[i32; 3]> =
+        qs.iter().flat_map(|q| q.pos).map(|p| [p[0] - bn.mid[0], p[1] - bn.mid[1], p[2] - bn.mid[2]]).collect();
+    assert_eq!(got, want);
+    assert_eq!(qs.len(), 20);
+    assert_eq!(qs[1].uv, [[0, 0x80], [31, 0x80], [31, 0x9F], [0, 0x9F]]);
+    assert_eq!(qs[0].uv[0], [0x40, 0x10]);
+    assert!(b.visible(0, [-13519, 0, -1112]) && !b.visible(0, [0, 0, 0]));
+}

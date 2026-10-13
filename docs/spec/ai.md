@@ -221,8 +221,18 @@ n_* with the same routes.
   geometry, probe corners, radius, counts, handling, camera mount,
   identity bytes equal for all five.
 
-## Tolerance and comparison
-See docs/notes/SESSION-3-ai.md (numbers, method) — summary filled in there.
+## Tolerance and comparison (docs/notes/SESSION-3-ai.md for the numbers)
+Behaviour, not ticks (owner, 2026-10-12). From 6 items-off oracle races
+(18 laps per kart): per kart mean lap time within max(3 %, 2 standard
+errors) of the oracle's, all karts pooled within 1.5 %, |lateral| / width
+median and p90 within 0.10, mean finishing position within 1.5 places.
+18 port races (`mr-ai free`, `tools/oracle/ai_stats.py`): per kart lap
+means -0.6..+0.8 %, pooled +0.09 %, line within 0.04, positions within
+0.22 places: PASS.
 
 ## Integration (Session)
-See docs/notes/SESSION-3-ai.md "API for N AI karts".
+docs/notes/SESSION-3-ai.md section 4: race-load order (templates, grid,
+`pick_opponent` + `init_opponent` per slot, `race_load_roll`), the per-tick
+order (all-pairs contacts, round-robin `path_position`, `ai_buttons` ->
+`items_off` -> `kart_update(.., -1)`), and the two update.rs hooks
+(`catchup_scale` at 0x80065850, `reroll` at 0x80068078).

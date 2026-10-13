@@ -390,6 +390,7 @@ fn main() {
             ..default()
         }))
         .insert_resource(Time::<Fixed>::from_hz(30.0))
+        .add_plugins(scene::ObjectsPlugin)
         .insert_resource(ClearColor(Color::srgb(0.25, 0.2, 0.45)))
         .insert_resource(Player { driver, pose: Pose::default(), prev: Pose::default(), tick: 0, buttons: 0, kart: None, prev_kart: None })
         .insert_resource(ghost::Ghost::new(ghost))

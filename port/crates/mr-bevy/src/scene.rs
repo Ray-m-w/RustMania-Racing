@@ -171,6 +171,25 @@ pub fn setup(
             });
     }
 
+    // The waving start/finish banner (DAT chunk id 9, FUN_800351e8): an
+    // animated cloth, rebuilt every tick by update_banners.
+    if let Some(b) = dat.banners() {
+        if let Some(slot) = dslots[dat::BANNER_TEX_SLOT as usize] {
+            let tex_key = (slot.tpage.wrapping_add(dat::BANNER_TPAGE_ADD), slot.clut.wrapping_add(dat::BANNER_CLUT_ADD));
+            let mut mesh_handles = Vec::new();
+            let mut cache = psxmesh::MatCache::default();
+            for i in 0..b.banners.len() {
+                let polys = banner_polys(&b, i, &sin, BANNER_PHASE_ROW0, tex_key);
+                let parts = psxmesh::build_cached(&polys, &mut tex, &mut images, &mut meshes, &mut mats, &mut cache, world);
+                for (mesh, mat) in parts {
+                    commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mat), Transform::default(), Visibility::Hidden, BannerMesh(i)));
+                    mesh_handles.push((i, mesh));
+                }
+            }
+            commands.insert_resource(BannerState { banners: b, sin: SinTable(sin.0.clone()), tex_key, cache, meshes: mesh_handles });
+        }
+    }
+
     commands.insert_resource(crate::TrackVis { dat, zone: 0 });
 
     // Sky dome (DOCK.AXE): gouraud quads drawn around the eye with zero
@@ -337,4 +356,93 @@ pub fn object_polys(dat: &Dat, o: &dat::Object, sin: &SinTable, slots: &[Option<
         }
     }
     out
+}
+
+
+// ---------------------------------------------------------------------------
+// Start/finish banner (DAT.md "Banner")
+// ---------------------------------------------------------------------------
+
+/// Cloth phase (DAT_800afee4, DAT_800afee6) at trace row 0 of the lap1
+/// grid savestate: measured on the oracle (row 506 = (3171, 102)), stepping
+/// (0x37, 0x3E) per race frame. The game never resets it, so it depends on
+/// the power-on history; any value is a valid "look".
+pub const BANNER_PHASE_ROW0: (u16, u16) = (4013, 1498);
+
+#[derive(Component)]
+pub struct BannerMesh(pub usize);
+
+#[derive(Resource)]
+pub struct BannerState {
+    pub banners: dat::Banners,
+    pub sin: SinTable,
+    pub tex_key: (u16, u16),
+    pub cache: psxmesh::MatCache,
+    pub meshes: Vec<(usize, Handle<Mesh>)>,
+}
+
+/// Banner `i` as PS1 polygons (GPU vertex order 0, 1, 3, 2) for `row0` + ticks.
+pub fn banner_polys(b: &dat::Banners, i: usize, sin: &SinTable, phase: (u16, u16), tex: (u16, u16)) -> Vec<PsxPoly> {
+    let cloth = b.cloth(sin, phase);
+    b.quads(i, &cloth, sin)
+        .iter()
+        .map(|q| {
+            let ord = [0usize, 1, 3, 2];
+            PsxPoly {
+                pos: ord.iter().map(|&k| q.pos[k]).collect(),
+                uv: ord.iter().map(|&k| q.uv[k]).collect(),
+                rgb: ord.iter().map(|&k| [q.shade[k]; 3]).collect(),
+                tex: Some(tex),
+                semi: false,
+            }
+        })
+        .collect()
+}
+
+/// Per frame: animate the cloth for the current sim tick (phase = row-0
+/// phase + tick * (0x37, 0x3E)) and show each banner only when its midpoint
+/// is within 0x2000 DAT units of the eye on every axis (FUN_800351e8).
+pub fn update_banners(
+    p: Res<crate::Player>,
+    mut st: ResMut<BannerState>,
+    mut tex: ResMut<VramTextures>,
+    mut images: ResMut<Assets<Image>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut mats: ResMut<Assets<StandardMaterial>>,
+    mut q: Query<(&BannerMesh, &mut Visibility)>,
+) {
+    if !p.is_changed() {
+        return;
+    }
+    let row = (p.tick - 1).max(0) as u32;
+    let phase = dat::Banners::phase_after(BANNER_PHASE_ROW0, row);
+    let world = |v: [i32; 3]| crate::to_bevy(v[0] * 32, v[1] * 32, v[2] * 32);
+    let st = &mut *st;
+    for (i, handle) in st.meshes.clone() {
+        let polys = banner_polys(&st.banners, i, &st.sin, phase, st.tex_key);
+        let parts = psxmesh::build_cached(&polys, &mut tex, &mut images, &mut meshes, &mut mats, &mut st.cache, world);
+        for (tmp, _) in parts {
+            if let Some(m) = meshes.remove(&tmp) {
+                let _ = meshes.insert(&handle, m);
+            }
+        }
+    }
+    let eye = p.pose.cam.map(|(e, _)| [e[0] / 32, e[1] / 32, e[2] / 32]);
+    for (b, mut v) in q.iter_mut() {
+        let show = eye.is_some_and(|e| st.banners.visible(b.0, e));
+        let want = if show { Visibility::Inherited } else { Visibility::Hidden };
+        if *v != want {
+            *v = want;
+        }
+    }
+}
+
+/// Track objects outside the DAT scenery lists (the banner) - registered with
+/// one line in main.rs.
+pub struct ObjectsPlugin;
+
+impl Plugin for ObjectsPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(Update, update_banners.before(crate::shot));
+    }
 }

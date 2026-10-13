@@ -14,7 +14,7 @@ Simulation state is never derived from rendering (ADR-0002 split).
 | Kart/driver parts | per-part matrices from the kart record | same rules (kartmodel.rs, MDL.md) | exact for the parts; depth-cue colour factors (+0x414..) not applied |
 | Lighting / fog | per-vertex colours, depth cue | per-vertex colours only | depth cue not ported |
 | Resolution / aspect | 512x240, 4:3 | window size, 4:3 projection (90 x 73.7 deg) | modern; widescreen is a later choice |
-| Track objects outside DAT (e.g. the start/finish banner with Kermit's star, drawn by FUN_8002ADA8's object list) | drawn | not drawn | not decoded yet; next render item |
+| Track objects outside DAT scenery | start/finish banner: cloth from DAT chunk 9 (FUN_800351e8, animated by FUN_80035004); kart shadows (0x800C8B38 list, FUN_8002ADA8); pickups (special slots from chunks 0x0C/0x12/0x13); particles (0x800DF688) | banner drawn with the game's geometry, animation, UVs, shading and 0x2000 cull (scene::ObjectsPlugin, DAT.md "Start/finish banner"); cloth phase for replays taken from the lap1 savestate; shadows, pickups, particles not drawn | banner exact to the GTE vertex; the phase is power-on dependent in the game |
 | HUD | position, lap, timer, minimap, items, banners | position, lap, timer, countdown texts/minigame (hud.md); minimap, item slots, "LAP 2" banner, results not yet | Session 3 minimal HUD |
 | AI karts, items, effects (stars, sparks, skid marks, shadow) | drawn | not drawn | AI in Session 3; the rest later |
 | Frame rate | 30 Hz logic; 20 Hz in heavy scenes | 30 Hz logic always, rendering interpolated at display rate | intentional: the port never slows down (physics ledger) |

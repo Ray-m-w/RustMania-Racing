@@ -275,6 +275,57 @@ API: `Dat::vis_zone(eye, prev)`, `Dat::vis_node(zone, eye)`,
 `VisZone::mask_at(node)`, `Dat::drawn(eye, cam, &mask, DrawParams) ->
 Vec<Drawn { object, mesh, layer, list }>`, `DrawParams::DOCK_1P`.
 
+## Start/finish banner (chunk id 9) [CODE 80034ce0, 80035004, 800351e8, 800313bc] [GTE] [GPU]
+The checkered banner with the face stars over the start/finish line is not a
+DAT mesh: it is a cloth grid the game builds from point chunk id 9.
+- Init (FUN_80034ce0, after the track loads; course 0x1E uses a different
+  10 x 10 sheet, "type 2", not decoded): chunk 9 holds point pairs; if the
+  count is even and pairs < 3, each pair (p0, p1) is a banner: dx = (i16)(p1.x
+  - p0.x), dz = (i16)(p1.z - p0.z), angle = ratan2(dx, dz) + 0x400 (12-bit),
+  spacing = sqrt(dx^2 + dz^2) / 10. Grid 11 x 3 vertices (DAT_800b0ec8/eca),
+  built from banner 0's spacing s: x = (s - 11 s)/2 + c s, y = (s - 3 s)/2 +
+  r s, z = 0. DOCK: one banner, ends (-11904, -33, -466) / (-15134, -33,
+  -1758), mid (-13519, -33, -1112), angle 3848, spacing 347.
+- Animation (FUN_80035004, once per race frame from FUN_8007916C): phases a
+  = DAT_800afee4 += 0x37, b = DAT_800afee6 += 0x3E (mod 4096; never reset,
+  so they depend on the power-on history). Vertex (c, r): v = (S[a + 0x179 r]
+  * S[b + 500 c]) >> 14 (S = the sine table, 1.0 = 16384), z = v >> 6, shade
+  = 0xA0 - |v >> 7| (grey vertex colour).
+- Draw (FUN_800351e8 -> FUN_800313bc, list of 76-byte world polygons): only
+  if the midpoint is within 0x2000 DAT units of eye/32 on all three axes.
+  Each vertex is scaled by spacing_i / spacing_0 for banners after the
+  first, rotated about y (x' = (x cos + z sin) >> 12, z' = (-x sin + z cos)
+  >> 12, toward zero) and added to the midpoint. 10 x 2 quads, corners (c,r),
+  (c+1,r), (c+1,r+1), (c,r+1), GPU order 0,1,3,2, double-sided GT4, opaque,
+  texture slot 0x15 with CLUT + 8 and tpage + 0x60; cell UVs span 31 texels:
+  columns 1, 2, 7, 8 show the face (u 0 on columns 1 and 7, else 0x20; v 0x80
+  on row 0, 0xA0 on row 1), the rest the checker (u 0x40, v 0x10). Sorted in
+  the layer-0 ordering table with bias -0x20.
+- Verified: the 33 vertices of one oracle frame (GTE ring, caller
+  FUN_800313bc) are reproduced exactly at phase (119, 1614) (98 of 99 over
+  three frames, phases stepping by (0x37, 0x3E)); on the lap1 savestate the
+  phase at trace row t is (4013 + 55 t, 1498 + 62 t) mod 4096 (RAM read at
+  row 506 = (3171, 102)).
+- API: `Dat::banners() -> Option<Banners>`, `Banners::{cloth(sin, phase),
+  quads(i, &cloth, sin) -> Vec<BannerQuad { pos, uv, shade }>, visible(i,
+  eye), phase_after(start, ticks)}`, `BANNER_TEX_SLOT`, `BANNER_CLUT_ADD`,
+  `BANNER_TPAGE_ADD`, `BANNER_PHASE_STEP`, `ratan2`.
+
+## Other things drawn on the track (not DAT scenery) [CODE]
+- Pickups (out of scope): FUN_8007b448 at race start places special slots
+  0x20.. at chunk id 0x0C's points (DOCK: 11 objects, slots 32..42, the
+  134-vertex untextured meshes and object 269) and fills the pickup tables
+  0x800E1B70.. from chunks 0x12 (92 points) and 0x13 (44 points); items then
+  show/hide/spin them through FUN_8002d72c (scale; 0 -> flags 5 = hidden),
+  FUN_8002d9e4 (angles), FUN_8002df88 (position), FUN_8002e060 (move by).
+- Kart shadows: the list at 0x800C8B38 (one 48-byte quad per kart, filled by
+  FUN_8003e3a0 from the kart record) drawn by FUN_8002ADA8 with the
+  +-0x30000 world-unit cull.
+- Particles/effects (star trail, sparks, flames): list 0x800DF688 drawn by
+  FUN_80011E3C (via FUN_80030444); created by FUN_8002FD04 and relatives.
+- Course 0x1E: FUN_80091B8C animates special slots 0xA0.. and 0x39.. (track
+  specific, not DOCK).
+
 ## Public Rust API (`mr_assets::dat`)
 - `Dat::parse(&[u8]) -> Result<Dat, Error>`; fields `chunks: Vec<Chunk>`,
   `block128`, `objects: Vec<Object>` (layer 0 then layer 1, `layer0_count`),

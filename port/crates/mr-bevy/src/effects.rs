@@ -423,7 +423,7 @@ impl Plugin for EffectsPlugin {
         app.init_resource::<FxFrame>()
             .init_resource::<FxDraw>()
             .add_systems(Startup, setup.after(crate::scene::setup))
-            .add_systems(Update, (capture_source, draw.after(capture_source)));
+            .add_systems(Update, (capture_source, session_source, draw.after(capture_source).after(session_source)));
     }
 }
 
@@ -459,6 +459,38 @@ fn capture_source(cap: Option<Res<crate::capture::CaptureReplay>>, rows: Option<
     items_from_mem(&t, &m, cam, m.i32(0x800B_0D90), &mut out.billboards);
     for k in 0..6u32 {
         kart_effects(&t, m.slice(0x800C_30A8 + 0x504 * k, 0x504), cam, m.i32(0x800B_0D90), &mut out.billboards);
+    }
+    *fx = out;
+}
+
+/// A live mr-sim session: its item state, kart records, frame counter and
+/// camera roll written into a scratch game-layout memory, then the same
+/// conversions as for captures. (Particles and sparks join here once the
+/// session carries them: `Session::particles()` / `sparks()`, track A.)
+fn session_source(p: Res<crate::Player>, cap: Option<Res<crate::capture::CaptureReplay>>, t: Option<Res<FxTables>>, mut fx: ResMut<FxFrame>, mut st: Local<(u64, Option<Mem>)>) {
+    let Some(t) = t else { return };
+    if fx.manual || cap.is_some() {
+        return;
+    }
+    let crate::Driver::Sim(run) = &p.driver else { return };
+    let s = &run.session;
+    if st.1.is_some() && st.0 == s.ticks {
+        return;
+    }
+    st.0 = s.ticks;
+    let m = st.1.get_or_insert_with(|| Mem::new(vec![0; 0x20_0000], vec![0; 0x400]));
+    s.items().write(m);
+    let mut recs = Vec::new();
+    for (slot, _, _, rec) in s.kart_records() {
+        m.write(0x800C_30A8 + 0x504 * slot as u32, rec);
+        recs.push(rec.to_vec());
+    }
+    let frame = s.globals.frame;
+    let cam = FxCamera { roll: s.camera.roll as i32 };
+    let mut out = FxFrame::default();
+    items_from_mem(&t, m, cam, frame, &mut out.billboards);
+    for rec in &recs {
+        kart_effects(&t, rec, cam, frame, &mut out.billboards);
     }
     *fx = out;
 }

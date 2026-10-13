@@ -301,9 +301,10 @@ fn replay_items(p: &crate::Player, pulse: &mut (HudPulse, i32)) -> Option<ItemHu
 }
 
 /// DAT_800B07F4 / DAT_800B07F6 / DAT_800B0E95 (the global special-move
-/// announcement). Not exposed by the session yet (track A's items): none.
-fn special_globals(_s: &mr_sim::session::Session) -> (i16, i16, i8) {
-    (-1, 0, 0)
+/// announcement) from the session's item state (track A).
+fn special_globals(s: &mr_sim::session::Session) -> (i16, i16, i8) {
+    let it = s.items();
+    (it.special as i16, it.special_clock, it.special_owner as i8)
 }
 
 /// The results panel's inputs from a live session once the player has

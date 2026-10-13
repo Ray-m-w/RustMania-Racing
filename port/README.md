@@ -21,6 +21,15 @@ session aligned to the oracle's grid savestate; `--leader` there = no catch-up),
 `--ghost TRACE` (oracle kart as a ghost, drift in the title bar),
 `--shot F --shot-at TICK` (screenshot and exit).
 
+Sound (bevy_audio; the race music streams from TUNES/*.XA on the disc, the
+game's XA queue picks the track): `--no-audio`, `--no-music`,
+`--volume V` / `--music-volume V` / `--sfx-volume V` (linear, 1.0 = the
+game's levels), `--audio-stats` (stream counters on stderr), `--audio-dump F`
+(the mix as a WAV on exit; game audio, keep it under ../analysis/).
+`cargo run --release -p mr-audio --bin mr-xa -- info` lists the music
+channels; `decode` / `compare` / `segments` check the decoder against the
+oracle (../docs/spec/audio.md).
+
 ## Crates
 | crate | what | deps |
 |---|---|---|
@@ -28,6 +37,7 @@ session aligned to the oracle's grid savestate; `--leader` there = no catch-up),
 | mr-assets | RAW, DAT, TER, AXE, MDL, ANM decoders; VRAM model; specs in ../docs/spec/formats | std |
 | mr-sim | the kart update, contacts, race progress, camera, standalone session; oracle harness | std |
 | mr-trace | trace format, comparator (`mr-compare`), SVG plots | std |
+| mr-audio | CD-XA music decoder and the game's XA queue (`xa`), SPU ADPCM / VAB / voice model | std |
 | mr-bevy | window, input, rendering | bevy 0.19.1 |
 
 Only mr-bevy depends on Bevy; the simulation is integer-only and never reads

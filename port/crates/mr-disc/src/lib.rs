@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 pub use iso::{Error, FileEntry, Track};
 
 pub struct Disc {
+    bin: PathBuf,
     track: Track,
     files: HashMap<String, FileEntry>,
 }
@@ -30,7 +31,24 @@ impl Disc {
             .into_iter()
             .map(|f| (normalize(&f.path), f))
             .collect();
-        Ok(Disc { track, files })
+        Ok(Disc { bin, track, files })
+    }
+
+    /// The raw track file this disc reads (the .bin a .cue names).
+    pub fn bin_path(&self) -> &Path {
+        &self.bin
+    }
+
+    /// A second, independent handle on the same image (its own file
+    /// position), e.g. for a streaming thread.
+    pub fn reopen(&self) -> Result<Self, Error> {
+        Self::open(&self.bin)
+    }
+
+    /// Whole raw 2352-byte sectors (CD-XA audio needs the subheader and the
+    /// 2324-byte Form 2 payload). Appends `count * 2352` bytes to `out`.
+    pub fn read_raw(&mut self, lba: u32, count: u32, out: &mut Vec<u8>) -> Result<(), Error> {
+        self.track.read_raw_sectors(lba, count, out)
     }
 
     /// Open the disc named by $MRM_DISC, else by the `disc = "..."` line of

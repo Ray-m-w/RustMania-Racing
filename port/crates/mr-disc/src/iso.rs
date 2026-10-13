@@ -116,6 +116,26 @@ impl Track {
         self.read_raw(lba, count, o)
     }
 
+    /// Number of 2352-byte sectors in the image.
+    pub fn sectors(&self) -> u64 {
+        self.nsect
+    }
+
+    /// `count` whole raw 2352-byte sectors starting at `lba` (sync, header,
+    /// subheader, data, EDC: the bytes a CD-XA Mode 2 Form 2 audio sector
+    /// needs, which the 2048-byte user-data view cuts off). Session 4 C.
+    pub fn read_raw_sectors(&mut self, lba: u32, count: u32, out: &mut Vec<u8>) -> R<()> {
+        let (lba, count) = (lba as u64, count as u64);
+        if lba + count > self.nsect {
+            return Err(Error::ShortRead);
+        }
+        self.file.seek(SeekFrom::Start(lba * SECTOR_RAW))?;
+        let start = out.len();
+        out.resize(start + (count * SECTOR_RAW) as usize, 0);
+        self.file.read_exact(&mut out[start..])?;
+        Ok(())
+    }
+
     /// Stream one file's bytes (exact `size` bytes across ceil-like sector
     /// coverage) into `sink` without materializing it; returns bytes written.
     pub fn read_file(&mut self, lba: u32, size: u64, sink: &mut dyn io::Write) -> R<u64> {

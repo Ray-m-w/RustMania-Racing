@@ -20,4 +20,9 @@ bevy = { version = "=0.19.1", default-features = false, features = [
     "multi_threaded", "bevy_pbr", "bevy_mesh", "bevy_camera", "bevy_light",
     "bevy_asset", "bevy_color", "bevy_log", "bevy_gizmos", "bevy_gizmos_render",
     "std", "async_executor", "bevy_state",
+    # Session 4 C (owner-approved): device output only. bevy_audio -> rodio
+    # 0.22 (playback) -> cpal 0.17; no decoder features (mr-audio decodes the
+    # disc's XA / SPU ADPCM itself). BINLIST.toml [[artifact]] bevy_audio.
+    "bevy_audio",
 ] }
+mr-audio = { path = "../mr-audio" }

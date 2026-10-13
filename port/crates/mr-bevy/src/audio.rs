@@ -1,0 +1,587 @@
+//! Audio output (Session 4, track C): one stream through bevy_audio / rodio
+//! at 44,100 Hz stereo, mixing the race music (CD-XA streamed from the disc
+//! on its own thread, mr_audio::xa) with the SPU voice output track D pushes
+//! (`AudioBus::push_sfx`). The mix follows the SPU: voices + CD input x CD
+//! volume, clamped, x main volume (psxrecomp spu.c), then the user gains.
+//!
+//! Music follows the game's XA queue (mr_audio::xa::XaQueue, docs/spec/
+//! audio.md): at the first race load the course's intro voice clip, then the
+//! course track, looping seamlessly from the file start at the channel's end
+//! marker; a restart leaves the looping track alone; the player's finish
+//! clip interrupts it and the track starts again from the top after the
+//! clip. Levels: music CdMix 0x6C (option table 0x800AC118[12]), voices
+//! 0x60, SPU CD volume 0x7FFE and main volume 0x3FFF (oracle spu_status in
+//! the DOCK race).
+//!
+//! Options: `--no-audio` (no device stream, the bus drops pushes),
+//! `--music-volume V` / `--sfx-volume V` / `--volume V` (linear gain, 1.0 =
+//! the game's level), `--no-music`, `--audio-stats` (bus counters every
+//! 5 s on stderr), `--audio-dump PATH` (the mix as a 44.1 kHz WAV on exit,
+//! up to 10 minutes; decoded game audio: keep it under analysis/).
+#![allow(dead_code)]
+
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use bevy::audio::{AddAudioSource, AudioPlayer, Decodable, PlaybackSettings};
+use bevy::prelude::*;
+use mr_audio::xa::{self, CdMix, Step, TrackRef, XaStream};
+
+pub const RATE: u32 = 44_100;
+/// SFX latency target in frames (46 ms).
+pub const SFX_TARGET: usize = 2048;
+/// SFX queue cap (0.5 s): beyond it the oldest frames are dropped.
+pub const SFX_CAP: usize = RATE as usize / 2;
+/// Music decoded ahead of the device (0.4 s).
+const MUSIC_AHEAD: usize = RATE as usize * 2 / 5;
+/// Frames the device callback takes from the rings at a time.
+const CHUNK: usize = 256;
+
+/// The game's SPU levels in a race (oracle spu_status, DOCK): CD input
+/// volume 0x7FFE (SsSetSerialVol 0x7F), main volume 0x3FFF.
+pub const SPU_CD_VOLUME: i32 = 0x7FFE;
+pub const SPU_MAIN_VOLUME: i32 = 0x3FFF;
+/// Music level option table 0x800AC118 (16 x i16), default index 12
+/// (FUN_8008F448 sets 0x800E0390 = 0x0C0C) = 0x6C; voices 0x800AC138[12] = 0x60.
+pub const MUSIC_LEVEL: u8 = 0x6C;
+pub const VOICE_LEVEL: u8 = 0x60;
+/// DOCK's course index (0x800B0FAC in the oracle's DOCK race).
+pub const DOCK_COURSE: u8 = 3;
+/// Character voice table: 0x800AC22E, 20-byte rows: +0 bit 0 = has voice,
+/// +2 = clip base (track id, 0xFF none). FUN_80060580 plays base + n.
+pub const CHAR_VOICE_TABLE: u32 = 0x800A_C22E;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Bus {
+    Master,
+    Music,
+    Sfx,
+}
+
+struct Shared {
+    enabled: bool,
+    sfx: Mutex<VecDeque<[i16; 2]>>,
+    music: Mutex<VecDeque<[i16; 2]>>,
+    music_paused: AtomicBool,
+    /// One-shot tracks whose end marker the music thread has read.
+    clips_ended: AtomicU64,
+    gains: [AtomicU32; 3],
+    played: AtomicU64,
+    sfx_underruns: AtomicU64,
+    music_underruns: AtomicU64,
+    /// --audio-dump: a copy of the mix.
+    dump: Option<Mutex<Vec<[i16; 2]>>>,
+}
+
+/// The mixer bus (resource; clone = cheap handle). See docs/notes/SESSION-4-coord.md.
+#[derive(Resource, Clone)]
+pub struct AudioBus {
+    sh: Arc<Shared>,
+    music_tx: Option<Sender<MusicCmd>>,
+}
+
+impl AudioBus {
+    fn new(enabled: bool) -> AudioBus {
+        let g = |v: f32| AtomicU32::new(v.to_bits());
+        AudioBus {
+            sh: Arc::new(Shared {
+                enabled,
+                sfx: Mutex::new(VecDeque::with_capacity(SFX_CAP)),
+                music: Mutex::new(VecDeque::with_capacity(MUSIC_AHEAD * 2)),
+                music_paused: AtomicBool::new(false),
+                clips_ended: AtomicU64::new(0),
+                gains: [g(1.0), g(1.0), g(1.0)],
+                played: AtomicU64::new(0),
+                sfx_underruns: AtomicU64::new(0),
+                music_underruns: AtomicU64::new(0),
+                dump: opt_str("--audio-dump").map(|_| Mutex::new(Vec::new())),
+            }),
+            music_tx: None,
+        }
+    }
+
+    /// False with --no-audio: pushes are dropped, sfx_wanted() is 0.
+    pub fn enabled(&self) -> bool {
+        self.sh.enabled
+    }
+
+    /// Append SPU voice output (44.1 kHz [L, R], before the SPU main volume).
+    pub fn push_sfx(&self, frames: &[[i16; 2]]) {
+        if !self.sh.enabled {
+            return;
+        }
+        let mut q = self.sh.sfx.lock().unwrap();
+        q.extend(frames.iter().copied());
+        let over = q.len().saturating_sub(SFX_CAP);
+        q.drain(..over);
+    }
+
+    /// SFX frames queued and not yet played.
+    pub fn sfx_queued(&self) -> usize {
+        self.sh.sfx.lock().unwrap().len()
+    }
+
+    /// SFX frames to render now to keep the queue at SFX_TARGET.
+    pub fn sfx_wanted(&self) -> usize {
+        if !self.sh.enabled {
+            return 0;
+        }
+        SFX_TARGET.saturating_sub(self.sfx_queued())
+    }
+
+    /// Frames the device has consumed (the output clock).
+    pub fn played_frames(&self) -> u64 {
+        self.sh.played.load(Ordering::Relaxed)
+    }
+
+    pub fn set_volume(&self, bus: Bus, gain: f32) {
+        self.sh.gains[bus as usize].store(gain.max(0.0).to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn volume(&self, bus: Bus) -> f32 {
+        f32::from_bits(self.sh.gains[bus as usize].load(Ordering::Relaxed))
+    }
+
+    /// (sfx, music) frames the device wanted but the queue did not have.
+    pub fn underruns(&self) -> (u64, u64) {
+        (self.sh.sfx_underruns.load(Ordering::Relaxed), self.sh.music_underruns.load(Ordering::Relaxed))
+    }
+
+    /// Drive the music thread directly (MusicDirector does this from the
+    /// game's queue; other callers should go through the director).
+    pub fn music(&self, cmd: MusicCmd) {
+        if let Some(tx) = &self.music_tx {
+            let _ = tx.send(cmd);
+        }
+    }
+}
+
+/// Requests to the music thread (the drive side of FUN_800602C4 & co).
+#[derive(Clone, Debug)]
+pub enum MusicCmd {
+    /// CdlSetfilter + CdlReadS from the track's file start; `level` is the
+    /// CdMix byte. Replaces whatever plays (the old track's decoded-ahead
+    /// audio is dropped).
+    Play { track: u16, looping: bool, level: u8 },
+    /// CdlPause + CdMix 0 (FUN_8005F9AC, game pause): keeps the position.
+    Pause,
+    /// FUN_8005FAA4: CdMix back, CdlReadS from the paused position.
+    Resume,
+    /// FUN_8005FA18: stop.
+    Stop,
+}
+
+// ---------------------------------------------------------------- music thread
+
+/// The game's XA file table as named in the exe (0x800ABF78: 12-byte rows
+/// {name pointer, first sector, end sector}, the sectors filled by
+/// CdSearchFile at boot), resolved against the disc directory.
+struct XaFiles {
+    files: Vec<Option<(u32, u32)>>,
+}
+
+impl XaFiles {
+    fn load(disc: &mut mr_disc::Disc) -> XaFiles {
+        let exe = disc.read("SLUS_012.37").unwrap_or_default();
+        let files = xa::exe_xa_file_names(&exe)
+            .into_iter()
+            .map(|n| disc.entry(&n).map(|e| (e.lba, (e.size / 2048) as u32)))
+            .collect();
+        XaFiles { files }
+    }
+
+    fn stream(&self, track: u16, looping: bool) -> Option<XaStream> {
+        let t = TrackRef::from_track_id(track);
+        let (lba, n) = (*self.files.get(t.file_index as usize)?)?;
+        Some(XaStream::new(lba, lba + n, t.channel, looping))
+    }
+}
+
+fn music_thread(mut disc: mr_disc::Disc, sh: Arc<Shared>, rx: Receiver<MusicCmd>) {
+    let files = XaFiles::load(&mut disc);
+    let mut cur: Option<(XaStream, CdMix)> = None;
+    let mut paused = false;
+    let mut buf: Vec<[i16; 2]> = Vec::with_capacity(8192);
+    loop {
+        let have = sh.music.lock().unwrap().len();
+        let busy = cur.is_some() && !paused && have < MUSIC_AHEAD;
+        let cmd = if busy {
+            match rx.try_recv() {
+                Ok(c) => Some(c),
+                Err(mpsc::TryRecvError::Empty) => None,
+                Err(mpsc::TryRecvError::Disconnected) => return,
+            }
+        } else {
+            match rx.recv_timeout(Duration::from_millis(5)) {
+                Ok(c) => Some(c),
+                Err(RecvTimeoutError::Timeout) => None,
+                Err(RecvTimeoutError::Disconnected) => return,
+            }
+        };
+        if let Some(c) = cmd {
+            match c {
+                MusicCmd::Play { track, looping, level } => {
+                    sh.music.lock().unwrap().clear();
+                    cur = files.stream(track, looping).map(|s| (s, CdMix::level(level)));
+                    if cur.is_none() {
+                        warn!("music: track {track:#x} has no file");
+                        sh.clips_ended.fetch_add(1, Ordering::Relaxed);
+                    }
+                    paused = false;
+                    sh.music_paused.store(false, Ordering::Relaxed);
+                }
+                MusicCmd::Pause => {
+                    paused = true;
+                    sh.music_paused.store(true, Ordering::Relaxed);
+                }
+                MusicCmd::Resume => {
+                    paused = false;
+                    sh.music_paused.store(false, Ordering::Relaxed);
+                }
+                MusicCmd::Stop => {
+                    sh.music.lock().unwrap().clear();
+                    cur = None;
+                }
+            }
+            continue;
+        }
+        if !busy {
+            continue;
+        }
+        let Some((st, mix)) = cur.as_mut() else { continue };
+        buf.clear();
+        let step = st.fill(&mut disc, &mut buf, 4096);
+        let mix = *mix;
+        // CdMix (after resampling, as the drive does), then the SPU CD
+        // input volume; the main volume is applied in the mixer.
+        let mut q = sh.music.lock().unwrap();
+        q.extend(buf.iter().map(|&f| {
+            let m = mix.apply(f);
+            [((m[0] as i32 * SPU_CD_VOLUME) >> 15) as i16, ((m[1] as i32 * SPU_CD_VOLUME) >> 15) as i16]
+        }));
+        drop(q);
+        if step == Step::Ended {
+            // A one-shot's end marker (FUN_80060160): the director moves on
+            // once the device has played what was decoded.
+            cur = None;
+            sh.clips_ended.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
+// ---------------------------------------------------------------- the stream
+
+/// The bevy_audio asset whose decoder is the endless mixer stream.
+#[derive(Asset, TypePath, Clone)]
+pub struct MixerSource {
+    sh: Arc<Shared>,
+}
+
+pub struct MixerStream {
+    sh: Arc<Shared>,
+    out: Vec<f32>,
+    pos: usize,
+    sfx: Vec<[i16; 2]>,
+    mus: Vec<[i16; 2]>,
+}
+
+impl MixerStream {
+    fn refill(&mut self) {
+        let sh = &self.sh;
+        self.sfx.clear();
+        self.mus.clear();
+        {
+            let mut q = sh.sfx.lock().unwrap();
+            let n = q.len().min(CHUNK);
+            self.sfx.extend(q.drain(..n));
+        }
+        if self.sfx.len() < CHUNK {
+            sh.sfx_underruns.fetch_add((CHUNK - self.sfx.len()) as u64, Ordering::Relaxed);
+        }
+        if !sh.music_paused.load(Ordering::Relaxed) {
+            let mut q = sh.music.lock().unwrap();
+            let n = q.len().min(CHUNK);
+            self.mus.extend(q.drain(..n));
+            if n < CHUNK && n > 0 {
+                sh.music_underruns.fetch_add((CHUNK - n) as u64, Ordering::Relaxed);
+            }
+        }
+        let g = |b: Bus| f32::from_bits(sh.gains[b as usize].load(Ordering::Relaxed));
+        let (gm, gs, gmaster) = (g(Bus::Music), g(Bus::Sfx), g(Bus::Master));
+        self.out.clear();
+        for i in 0..CHUNK {
+            let s = self.sfx.get(i).copied().unwrap_or([0, 0]);
+            let m = self.mus.get(i).copied().unwrap_or([0, 0]);
+            for c in 0..2 {
+                // SPU: voices + CD, clamp16, x main volume >> 15.
+                let v = (s[c] as f32 * gs + m[c] as f32 * gm).clamp(-32768.0, 32767.0);
+                let v = v * SPU_MAIN_VOLUME as f32 / 32768.0 * gmaster;
+                self.out.push((v / 32768.0).clamp(-1.0, 1.0));
+            }
+        }
+        sh.played.fetch_add(CHUNK as u64, Ordering::Relaxed);
+        if let Some(d) = &sh.dump {
+            let mut d = d.lock().unwrap();
+            if d.len() < RATE as usize * 600 {
+                d.extend(self.out.chunks_exact(2).map(|f| [(f[0] * 32768.0) as i16, (f[1] * 32768.0) as i16]));
+            }
+        }
+        self.pos = 0;
+    }
+}
+
+impl Iterator for MixerStream {
+    type Item = bevy::audio::Sample;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.pos >= self.out.len() {
+            self.refill();
+        }
+        let v = self.out[self.pos];
+        self.pos += 1;
+        Some(v as bevy::audio::Sample)
+    }
+}
+
+impl bevy::audio::Source for MixerStream {
+    fn current_span_len(&self) -> Option<usize> {
+        None
+    }
+    fn channels(&self) -> bevy::audio::ChannelCount {
+        std::num::NonZero::new(2).unwrap()
+    }
+    fn sample_rate(&self) -> bevy::audio::SampleRate {
+        std::num::NonZero::new(RATE).unwrap()
+    }
+    fn total_duration(&self) -> Option<Duration> {
+        None
+    }
+}
+
+impl Decodable for MixerSource {
+    type Decoder = MixerStream;
+    fn decoder(&self) -> MixerStream {
+        MixerStream {
+            sh: self.sh.clone(),
+            out: Vec::with_capacity(CHUNK * 2),
+            pos: 0,
+            sfx: Vec::with_capacity(CHUNK),
+            mus: Vec::with_capacity(CHUNK),
+        }
+    }
+}
+
+// ---------------------------------------------------------------- plugin
+
+pub struct AudioOutPlugin;
+
+fn flag(k: &str) -> bool {
+    std::env::args().any(|a| a == k)
+}
+
+fn opt_str(k: &str) -> Option<String> {
+    let a: Vec<String> = std::env::args().collect();
+    a.iter().position(|x| x == k).and_then(|i| a.get(i + 1)).cloned()
+}
+
+fn opt_f32(k: &str) -> Option<f32> {
+    opt_str(k).and_then(|v| v.parse().ok())
+}
+
+impl Plugin for AudioOutPlugin {
+    fn build(&self, app: &mut App) {
+        let enabled = !flag("--no-audio");
+        let mut bus = AudioBus::new(enabled);
+        if let Some(v) = opt_f32("--volume") {
+            bus.set_volume(Bus::Master, v);
+        }
+        if let Some(v) = opt_f32("--music-volume") {
+            bus.set_volume(Bus::Music, v);
+        }
+        if let Some(v) = opt_f32("--sfx-volume") {
+            bus.set_volume(Bus::Sfx, v);
+        }
+        if enabled && !flag("--no-music") {
+            match mr_disc::Disc::open_default() {
+                Ok(disc) => {
+                    let (tx, rx) = mpsc::channel();
+                    let sh = bus.sh.clone();
+                    std::thread::Builder::new()
+                        .name("mr-music".into())
+                        .spawn(move || music_thread(disc, sh, rx))
+                        .expect("spawn the music thread");
+                    bus.music_tx = Some(tx);
+                }
+                Err(e) => warn!("music off: cannot open the disc ({e})"),
+            }
+        }
+        app.insert_resource(bus).insert_resource(MusicDirector::default());
+        app.add_audio_source::<MixerSource>();
+        if enabled {
+            app.add_systems(Startup, start_stream);
+        }
+        app.add_systems(Update, direct_music);
+        if flag("--audio-stats") {
+            app.add_systems(Update, audio_stats);
+        }
+        app.add_systems(Last, dump_on_exit);
+    }
+}
+
+fn start_stream(mut c: Commands, bus: Res<AudioBus>, mut assets: ResMut<Assets<MixerSource>>) {
+    let h = assets.add(MixerSource { sh: bus.sh.clone() });
+    c.spawn((AudioPlayer::<MixerSource>(h), PlaybackSettings::ONCE));
+}
+
+fn audio_stats(bus: Res<AudioBus>, dir: Res<MusicDirector>, time: Res<Time<Real>>, mut next: Local<f64>) {
+    let t = time.elapsed_secs_f64();
+    if t < *next {
+        return;
+    }
+    *next = t + 5.0;
+    let (su, mu) = bus.underruns();
+    let mq = bus.sh.music.lock().unwrap().len();
+    eprintln!(
+        "audio: t {:.1} s played {:.2} s | xa cur {:?} queue {:?} | music queued {} underrun {} | sfx queued {} underrun {}",
+        t,
+        bus.played_frames() as f64 / RATE as f64,
+        dir.queue.cur.map(|c| format!("{c:#06x}")),
+        dir.queue.q,
+        mq,
+        mu,
+        bus.sfx_queued(),
+        su
+    );
+}
+
+fn dump_on_exit(mut ev: MessageReader<AppExit>, bus: Res<AudioBus>) {
+    if ev.read().next().is_none() {
+        return;
+    }
+    let (Some(path), Some(d)) = (opt_str("--audio-dump"), &bus.sh.dump) else { return };
+    let d = d.lock().unwrap();
+    let n = (d.len() * 4) as u32;
+    let mut b = Vec::with_capacity(44 + d.len() * 4);
+    b.extend_from_slice(b"RIFF");
+    b.extend_from_slice(&(36 + n).to_le_bytes());
+    b.extend_from_slice(b"WAVEfmt ");
+    b.extend_from_slice(&16u32.to_le_bytes());
+    b.extend_from_slice(&1u16.to_le_bytes());
+    b.extend_from_slice(&2u16.to_le_bytes());
+    b.extend_from_slice(&RATE.to_le_bytes());
+    b.extend_from_slice(&(RATE * 4).to_le_bytes());
+    b.extend_from_slice(&4u16.to_le_bytes());
+    b.extend_from_slice(&16u16.to_le_bytes());
+    b.extend_from_slice(b"data");
+    b.extend_from_slice(&n.to_le_bytes());
+    for f in d.iter() {
+        b.extend_from_slice(&f[0].to_le_bytes());
+        b.extend_from_slice(&f[1].to_le_bytes());
+    }
+    let _ = std::fs::write(&path, b);
+    eprintln!("audio: wrote {} frames to {path}", d.len());
+}
+
+// ---------------------------------------------------------------- race phases
+
+/// The game's XA queue driven from the race (docs/spec/audio.md). Other
+/// tracks request character voice clips with `clip(character, n)`.
+#[derive(Resource, Default)]
+pub struct MusicDirector {
+    pub queue: xa::XaQueue,
+    started: bool,
+    last_ticks: u64,
+    intro_played: bool,
+    finished: bool,
+    clips_seen: u64,
+    /// A clip ended on the thread; the device still plays its tail.
+    pending_end: bool,
+    tables: Option<Tables>,
+}
+
+#[derive(Clone, Default)]
+struct Tables {
+    music: Option<u16>,
+    intro: Option<u16>,
+    /// Character rows (flags, clip base).
+    chars: Vec<(u8, u8)>,
+}
+
+fn load_tables() -> Tables {
+    let Ok(mut d) = mr_disc::Disc::open_default() else { return Tables::default() };
+    let exe = d.read("SLUS_012.37").unwrap_or_default();
+    let at = |a: u32| exe.get((a - xa::EXE_T_ADDR) as usize + 0x800).copied();
+    let chars = (0..16u32)
+        .map_while(|c| Some((at(CHAR_VOICE_TABLE + c * 20)?, at(CHAR_VOICE_TABLE + c * 20 + 2)?)))
+        .collect();
+    Tables { music: xa::exe_course_music(&exe, DOCK_COURSE), intro: xa::exe_course_voice(&exe, DOCK_COURSE), chars }
+}
+
+impl MusicDirector {
+    fn tables(&mut self) -> Tables {
+        self.tables.get_or_insert_with(load_tables).clone()
+    }
+
+    /// FUN_80060580(character, n): the character's voice clip (base + n)
+    /// once, then the course track again from its start. Ignored for
+    /// characters without voice. Character = kart record +0x4B2.
+    pub fn clip(&mut self, character: u8, n: u8) {
+        let t = self.tables();
+        let Some(&(flags, base)) = t.chars.get(character as usize) else { return };
+        if flags & 1 == 0 || base == 0xFF {
+            return;
+        }
+        self.queue.request_clip(base as u16 + n as u16, t.music);
+    }
+}
+
+/// Race load / restart / finish -> the queue; the queue -> the music thread.
+fn direct_music(p: Res<crate::Player>, bus: Res<AudioBus>, mut dir: ResMut<MusicDirector>) {
+    if let crate::Driver::Sim(run) = &p.driver {
+        let s = &run.session;
+        let ticks = s.ticks;
+        let fresh = !dir.started || ticks < dir.last_ticks;
+        dir.last_ticks = ticks;
+        if fresh {
+            // Race load (a restart in the port = the game's menu round trip).
+            dir.started = true;
+            dir.finished = false;
+            let t = dir.tables();
+            let intro = if dir.intro_played { None } else { t.intro };
+            dir.intro_played = true;
+            dir.queue.race_load(t.music, intro);
+        }
+        // The player's finish (FUN_80082708, human players only): the
+        // character's clip + 3 for first place, + 2 otherwise.
+        if let mr_sim::race::RacePhase::Finished { place } = s.phase() {
+            if !dir.finished {
+                dir.finished = true;
+                let character = s.record()[0x4B2];
+                dir.clip(character, if place == 1 { 3 } else { 2 });
+            }
+        }
+    }
+    // FUN_80060160: a clip's end marker; the device first plays out what
+    // was decoded before it, then the queue moves on.
+    let ended = bus.sh.clips_ended.load(Ordering::Relaxed);
+    if ended != dir.clips_seen {
+        dir.clips_seen = ended;
+        dir.pending_end = true;
+    }
+    if dir.pending_end && bus.sh.music.lock().unwrap().is_empty() {
+        dir.pending_end = false;
+        dir.queue.clip_ended();
+    }
+    if let Some((track, looping)) = dir.queue.frame() {
+        // FUN_800602C4: CdMix = the music level for tracks < 0x20, else the
+        // voice level. Observed exception: the course intro clip at race
+        // load plays at the music level (oracle cd_in tap: gain exactly
+        // 0x6C/0x60), so some CdMix(music) runs during the load after it
+        // starts (not located).
+        let intro = dir.queue.cur.is_some_and(|c| c & xa::INTRO != 0);
+        let level = if track < 0x20 || intro { MUSIC_LEVEL } else { VOICE_LEVEL };
+        bus.music(MusicCmd::Play { track, looping, level });
+    }
+}

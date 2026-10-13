@@ -35,6 +35,9 @@ macro_rules! kart_fields {
             /// +0x18C: body matrix (4.12, rows), rebuilt after the kart loop
             /// by FUN_80025D8C (body.rs); the camera reads it.
             pub body: [[i16; 3]; 3],
+            /// +0x1AC: vehicle matrix (body x lean), FUN_80025D8C; weapons
+            /// launch along it (FUN_80068C6C -> FUN_8007D58C).
+            pub vmat: [[i16; 3]; 3],
         }
 
         /// Byte offsets of every scalar field, for reports.
@@ -63,6 +66,7 @@ macro_rules! kart_fields {
                 k.weapons.copy_from_slice(&r[0x4D0..0x4D6]);
                 for i in 0..9 {
                     k.body[i / 3][i % 3] = i16::from_le_bytes([r[0x18C + 2 * i], r[0x18D + 2 * i]]);
+                    k.vmat[i / 3][i % 3] = i16::from_le_bytes([r[0x1AC + 2 * i], r[0x1AD + 2 * i]]);
                 }
                 k
             }
@@ -84,6 +88,7 @@ macro_rules! kart_fields {
                 r[0x4D0..0x4D6].copy_from_slice(&self.weapons);
                 for i in 0..9 {
                     r[0x18C + 2 * i..0x18E + 2 * i].copy_from_slice(&self.body[i / 3][i % 3].to_le_bytes());
+                    r[0x1AC + 2 * i..0x1AE + 2 * i].copy_from_slice(&self.vmat[i / 3][i % 3].to_le_bytes());
                 }
             }
         }
@@ -141,6 +146,8 @@ kart_fields! {
     steer_centre: i16 @ 0x178, accel: i16 @ 0x17A, top_speed: i16 @ 0x17C,
     steer_rate: i16 @ 0x17E, stat_d: i16 @ 0x180,
     ride_height: i16 @ 0x184,
+    /// Template halfwords the effect of special 16 scales (FUN_8006C388).
+    f188: i16 @ 0x188, f18a: i16 @ 0x18A,
     /// Written by code outside the kart update (render side); read by the
     /// body-sway target at 0x80068128.
     aim_x: i32 @ 0x2C0, aim_y: i32 @ 0x2C4, aim_z: i32 @ 0x2C8,
@@ -158,13 +165,20 @@ kart_fields! {
     prev_x: i32 @ 0x2E8, prev_y: i32 @ 0x2EC, prev_z: i32 @ 0x2F0,
     /// World velocity per sub-step.
     vx: i32 @ 0x2F4, vy: i32 @ 0x2F8, vz: i32 @ 0x2FC,
-    /// Homing target (status bits 0x20 / 0x40 / 0x80); not used on DOCK.
+    /// Effect parameters (+0x300..+0x318): the homing target of status bits
+    /// 0x20 / 0x80, the spin of 0x40, and the effects' own values
+    /// (FUN_8006B828 sets them, FUN_8006C388 steps them).
     target_x: i32 @ 0x300, target_yaw: i32 @ 0x304, target_z: i32 @ 0x308,
+    eff_30c: i32 @ 0x30C, eff_310: i32 @ 0x310, eff_314: i32 @ 0x314, eff_318: i32 @ 0x318,
     /// Ground height under the kart and the support height (ground or water).
     ground_y: i32 @ 0x31C, support_y: i32 @ 0x320,
     /// Written outside the kart update; read by the body-sway target.
     look_x: i32 @ 0x324, look_y: i32 @ 0x328, look_z: i32 @ 0x32C,
+    /// Driver position (FUN_80025D8C): x, y (`ref_y`), z. Pickups and
+    /// projectile hits test it.
+    drv_x: i32 @ 0x330,
     ref_y: i32 @ 0x338,
+    drv_z: i32 @ 0x340,
     /// Suspension bounce: offset, velocity, impulse.
     bounce: i32 @ 0x348, bounce_vel: i32 @ 0x34C, bounce_kick: i32 @ 0x350,
     /// Status bits (homing, frozen, ...); 0 for the player on DOCK.
@@ -185,6 +199,13 @@ kart_fields! {
     /// and the signed lateral offset from it.
     path_width_l: i32 @ 0x3F4, path_width_r: i32 @ 0x3F8, path_lateral: i32 @ 0x3FC,
     speed_est: i32 @ 0x400,
+    /// AI steering target (+0x3E8.., TER units; FUN_80090D00) and the special
+    /// move's path point (world units; FUN_800913F4).
+    ai_tx: i32 @ 0x3E8, ai_ty: i32 @ 0x3EC, ai_tz: i32 @ 0x3F0,
+    /// Special move (+0x4D6): the chase point that follows the path
+    /// (+0x404..) and the path position of its target (+0x49C / +0x49E).
+    sp_x: i32 @ 0x404, sp_y: i32 @ 0x408, sp_z: i32 @ 0x40C,
+    sp_seg: i16 @ 0x49C, sp_pt: i16 @ 0x49E,
     /// Kart-kart contact bits: other karts' `own_bit` this kart overlaps.
     hit_mask: u16 @ 0x410,
     /// This kart's bit (1 << slot).
@@ -230,6 +251,8 @@ kart_fields! {
     track_dir: i16 @ 0x48E,
     flags: u16 @ 0x496,
     path_seg: i16 @ 0x498, path_pt: i16 @ 0x49A,
+    /// Model slot numbers of the vehicle / driver (-1: none).
+    model_slot: i8 @ 0x4A4, char_slot: i8 @ 0x4A5,
     shape_t: u8 @ 0x4A6, shape_n: u8 @ 0x4A7,
     throttle_hold: u8 @ 0x4AA, coast_hold: u8 @ 0x4AB, brake_hold: u8 @ 0x4AF,
     blink_count: u8 @ 0x4B0,
@@ -280,6 +303,8 @@ kart_fields! {
     effect: i8 @ 0x4F1,
     camera: i8 @ 0x4F2,
     surface: i8 @ 0x4F3,
+    /// Colour of the last turbo token collected (FUN_8007BBF0).
+    token_colour: u8 @ 0x4F4,
     conveyor: u8 @ 0x4F6, conveyor_prev: u8 @ 0x4F7, object_f8: i8 @ 0x4F8,
     pause_bits: u8 @ 0x4F9,
     knockouts: u8 @ 0x4FB,

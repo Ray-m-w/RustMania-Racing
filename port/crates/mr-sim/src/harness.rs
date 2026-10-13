@@ -38,6 +38,8 @@ pub const EXTERNAL: &[(&str, usize, usize)] = &[
     // FUN_8006C388 (after the kart loop, while an item effect is live):
     // effect timers, e.g. the spin after a hit (status 0x40).
     ("homing_timer", 0x468, 2),
+    // FUN_8007BBF0 (after the kart loop): colour of the last turbo token.
+    ("token_colour", 0x4F4, 1),
 ];
 
 /// Kart fields written before the kart loop of the same frame.

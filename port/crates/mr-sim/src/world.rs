@@ -84,6 +84,10 @@ pub struct TickInputs {
     /// leave it before the kart loop (render-side code, not ported); when
     /// set, applied after the contact pass. Only the body sway reads it.
     pub aim: Option<[i32; 4]>,
+    /// The human players' cameras' eye positions (camera +0x28..+0x30,
+    /// world units) as the previous frame left them: status 0x10 / 0x100
+    /// steer a victim toward its camera (0x80066790).
+    pub cameras: [[i32; 3]; 2],
 }
 
 /// DAT chunk ids registered at 0x800D1C48 + 4 * id by the .DAT loader
@@ -108,6 +112,9 @@ pub struct World {
     pub heap: HeapLayout,
     /// The driver model's data the render passes use (KERMIT.MDL).
     pub driver: crate::render::DriverModel,
+    /// Item boxes, turbo tokens, challenge objects (DAT chunks 0x13, 0x12,
+    /// 0x0C).
+    pub pickups: crate::items::pickups::CoursePickups,
 }
 
 impl World {
@@ -213,6 +220,7 @@ impl World {
             exe,
             ter,
             course: Course::from_dat(&dat, &dat_bytes),
+            pickups: crate::items::pickups::CoursePickups::from_dat(&dat, &dat_bytes),
             heap: HeapLayout { faces: STANDALONE_FACES },
         })
     }

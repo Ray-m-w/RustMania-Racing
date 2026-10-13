@@ -51,11 +51,11 @@ pub mod btn {
 pub const METER_FULL: i16 = 0x1A4;
 
 /// AI fields of the kart record that `KartState` does not model (only the
-/// AI code reads or writes them).
+/// AI code reads or writes them). The steering target +0x3E8.. is
+/// `KartState::ai_tx/ai_ty/ai_tz` (the special move FUN_800913F4 writes it
+/// too).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AiState {
-    /// +0x3E8 / +0x3EC / +0x3F0: the point the AI steers at (TER units).
-    pub target: [i32; 3],
     /// +0x4A0: summed heading change over the points walked this tick
     /// (0x800B0CBE): the curvature ahead; small = straight.
     pub turn: i16,
@@ -67,13 +67,11 @@ impl AiState {
     pub fn from_record(r: &[u8]) -> AiState {
         let i32_ = |o: usize| i32::from_le_bytes(r[o..o + 4].try_into().unwrap());
         let i16_ = |o: usize| i16::from_le_bytes([r[o], r[o + 1]]);
-        AiState { target: [i32_(0x3E8), i32_(0x3EC), i32_(0x3F0)], turn: i16_(0x4A0), follow_timer: i16_(0x4A2) }
+        let _ = i32_;
+        AiState { turn: i16_(0x4A0), follow_timer: i16_(0x4A2) }
     }
 
     pub fn to_record(&self, r: &mut [u8]) {
-        for i in 0..3 {
-            r[0x3E8 + 4 * i..0x3EC + 4 * i].copy_from_slice(&self.target[i].to_le_bytes());
-        }
         r[0x4A0..0x4A2].copy_from_slice(&self.turn.to_le_bytes());
         r[0x4A2..0x4A4].copy_from_slice(&self.follow_timer.to_le_bytes());
     }
@@ -451,9 +449,9 @@ pub fn follow_path(
     let a = ((p.heading as i32) + 0x400) & 0xFFF;
     tx = tx.wrapping_add(crate::fixed::div_pow2(off.wrapping_mul(t.sin_raw(a)), 14));
     tz = tz.wrapping_add(crate::fixed::div_pow2(off.wrapping_mul(t.cos_raw(a)), 14));
-    ai.target = [tx, ty, tz];
+    (k.ai_tx, k.ai_ty, k.ai_tz) = (tx, ty, tz);
     let seg = k.path_seg;
-    let mut b = steer_at(k, g, ctx, w, ai.target, seg, ai.turn, rand);
+    let mut b = steer_at(k, g, ctx, w, [tx, ty, tz], seg, ai.turn, rand);
     if k.pause_bits & 0x7F == 0 {
         b |= weapon_roll(rand);
     }
@@ -515,8 +513,8 @@ pub fn battle(
         let mut b = 0;
         if k.nearest_kart != -1 {
             let p = ctx.driver_pos[k.nearest_kart as usize];
-            ai.target = [p[0] >> 5, p[1] >> 5, p[2] >> 5];
-            b = steer_at(k, g, ctx, w, ai.target, -1, ai.turn, rand);
+            (k.ai_tx, k.ai_ty, k.ai_tz) = (p[0] >> 5, p[1] >> 5, p[2] >> 5);
+            b = steer_at(k, g, ctx, w, [k.ai_tx, k.ai_ty, k.ai_tz], -1, ai.turn, rand);
         }
         b | weapon_roll(rand)
     } else {

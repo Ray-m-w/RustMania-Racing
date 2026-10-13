@@ -65,6 +65,24 @@ pub struct RaceGlobals {
     pub start_best_mask: u8,
     /// Sound calls of the frame and the listener (crate::sound, track D).
     pub sound: crate::sound::SoundState,
+    /// Item state: pickups, projectiles, the special in progress
+    /// (crate::items; 0x800E1B70, 0x800DDC50, 0x800B07E0/07F4/07F6, ...).
+    pub items: crate::items::ItemState,
+    /// FUN_80064B5C's stack slots a special move reads without writing
+    /// (see `StackSlots`): what the previous kart update left there.
+    pub stack: StackSlots,
+}
+
+/// Two locals of FUN_80064B5C that its special-move path (+0x4D6) reads
+/// but does not set: the steering rate 0x58(sp) (steering lag) and the
+/// sideways speed 0x48(sp) (body-sway input). The kart updates of a frame
+/// run at the same stack depth, so they hold the last value an ordinary
+/// update stored. Not game memory the capture holds; the harness carries
+/// them over.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StackSlots {
+    pub steer_rate: i32,
+    pub side0: i32,
 }
 
 pub mod addr {
@@ -121,6 +139,8 @@ impl RaceGlobals {
             cup: m.i8(0x800B_0E38),
             start_best_mask: m.u8(0x800B_0E8C),
             sound: Default::default(),
+            items: crate::items::ItemState::read(m),
+            stack: StackSlots::default(),
             lap_record: m.i32(0x800E_0190u32.wrapping_add((8 * m.i8(0x800B_0E32) as i32 + 0x20 * m.i8(0x800B_0E38) as i32) as u32)),
         }
     }

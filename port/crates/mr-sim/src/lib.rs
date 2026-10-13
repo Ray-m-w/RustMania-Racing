@@ -28,6 +28,7 @@ pub mod fixed;
 pub mod globals;
 pub mod harness;
 pub mod init;
+pub mod items;
 pub mod ground;
 pub mod kart;
 pub mod mem;

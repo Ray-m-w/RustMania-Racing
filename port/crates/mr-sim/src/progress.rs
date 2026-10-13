@@ -11,6 +11,11 @@ use crate::world::{TickInputs, World};
 
 /// 0x80067898..0x80067950: object checks wrapped around the ground contact.
 pub fn contact_phase(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &TickInputs) {
+    if k.special != 0 {
+        // 0x80067950: a special move only runs the ground contact.
+        crate::ground::kart_ground(k, g, w, inp);
+        return;
+    }
     // FUN_800628FC: list at 0x800D1C98 (null on DOCK).
     if k.effect == -1 && w.course.has_other_objects {
         unreachable_in_scope!("FUN_800628FC object list");

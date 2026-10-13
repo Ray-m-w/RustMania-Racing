@@ -243,6 +243,10 @@ pub fn tick_inputs(m: &Mem) -> TickInputs {
         water_normal: [h(0x800B_0CA0), h(0x800B_0CA2), h(0x800B_0CA4)],
         alt_normal: [h(0x800B_0EA8), h(0x800B_0EAA), h(0x800B_0EAC)],
         aim: None,
+        cameras: [0, 1].map(|c| {
+            let b = 0x800C_4F40 + 0x70 * c + 0x28;
+            [m.i32(b), m.i32(b + 4), m.i32(b + 8)]
+        }),
     }
 }
 

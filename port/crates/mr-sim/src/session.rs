@@ -84,6 +84,10 @@ pub struct SessionConfig {
     /// slots 1.., instead of the race loader's random draws; the player then
     /// starts on `grid` (no grid draw). E.g. `ORACLE_LINEUP`.
     pub lineup: Option<[(u8, u8); 5]>,
+    /// Items, weapons and specials on (the game's race). Off reproduces the
+    /// Session 3 items-off runs: the AI's item buttons are masked
+    /// (`ai::items_off`) and nobody collects pickups.
+    pub items: bool,
 }
 
 /// The opponents of the oracle's slot-2 DOCK race (analysis/ai/*): Clifford
@@ -113,6 +117,7 @@ impl SessionConfig {
             rng_start: 0x8001_FC4E,
             round_robin_start: 1,
             lineup: None,
+            items: true,
         }
     }
 
@@ -165,7 +170,16 @@ pub struct Session {
     pub pick: usize,
     /// The first race frame after the race load runs with the countdown
     /// held at 480 (oracle: kart updated once, countdown unchanged).
-    load_frame: bool,
+    pub load_frame: bool,
+    /// Analysis only: random bytes drawn between the effect driver and the
+    /// pickups by code the port does not run (FUN_8007F03C's kart
+    /// particles), for the next tick.
+    pub rng_skip_items: Option<u32>,
+    /// The first tick after the race load: the camera's change to the intro
+    /// mode takes its side bit from the next rand() without drawing it
+    /// (oracle start_probe: drawing it puts every later AI decision one
+    /// rand() off; the game enters the intro during the load) [INFER].
+    pub camera_peek: bool,
     rand_state: u32,
     cfg: SessionConfig,
 }
@@ -212,6 +226,7 @@ impl std::error::Error for SessionError {}
 /// What the camera needs from the session: the TER ground query and path,
 /// BIOS rand() and the random byte pointer 0x800B0BCC.
 struct SessionCameraEnv<'a> {
+    peek_rand: bool,
     world: &'a World,
     rand_state: &'a mut u32,
     rng: &'a mut u32,
@@ -233,6 +248,11 @@ impl camera::CameraEnv for SessionCameraEnv<'_> {
     }
 
     fn rand(&mut self) -> i32 {
+        if self.peek_rand {
+            // See `Session::camera_peek`.
+            let mut s = *self.rand_state;
+            return bios_rand(&mut s);
+        }
         bios_rand(self.rand_state)
     }
 
@@ -266,6 +286,21 @@ impl camera::CameraEnv for SessionCameraEnv<'_> {
 pub fn bios_rand(seed: &mut u32) -> i32 {
     *seed = seed.wrapping_mul(0x41C6_4E6D).wrapping_add(0x3039);
     ((*seed >> 16) & 0x7FFF) as i32
+}
+
+/// The seed `n` BIOS rand() calls before `seed` (the LCG run backwards:
+/// the multiplier 0x41C64E6D is odd, so it has an inverse mod 2^32).
+pub fn bios_rand_rewind(seed: u32, n: u32) -> u32 {
+    let a: u32 = 0x41C6_4E6D;
+    let mut inv: u32 = a;
+    for _ in 0..5 {
+        inv = inv.wrapping_mul(2u32.wrapping_sub(a.wrapping_mul(inv)));
+    }
+    let mut s = seed;
+    for _ in 0..n {
+        s = s.wrapping_sub(0x3039).wrapping_mul(inv);
+    }
+    s
 }
 
 impl Session {
@@ -325,6 +360,8 @@ impl Session {
             cup: cfg.cup,
             start_best_mask: 0,
             sound: Default::default(),
+            items: Default::default(),
+            stack: Default::default(),
         };
         // FUN_8008C4AC: the first human's grid slot (*rng++ % karts), the
         // other karts on the following slots; with no opponents the
@@ -426,9 +463,22 @@ impl Session {
             best_start: 0,
             pick: cfg.round_robin_start as usize % n,
             load_frame: true,
+            rng_skip_items: None,
+            camera_peek: true,
             rand_state,
             cfg,
         };
+        if cfg.items {
+            // FUN_8007B448 ran at the course load, before the race load the
+            // seed above stands for (oracle start_probe: the race load's
+            // 32 rand() calls follow 1-per-frame menu draws, no 92-call burst
+            // for the tokens). Their colours come from the 92 seeds that lead
+            // up to it, which leaves the race-load stream as it was.
+            let n = s.world.pickups.tokens.as_ref().map(|l| l.points.len()).unwrap_or(0) as u32;
+            let mut seed = bios_rand_rewind(cfg.rand_seed, n);
+            let mut rand = || bios_rand(&mut seed);
+            crate::items::pickups::init(&mut s.globals.items, &s.world.pickups, false, &mut rand);
+        }
         // The records get a render pass for the starting poses (for drawing
         // before the first tick); the karts themselves keep the load state
         // (look point 0 etc.: the game's first render pass is after the first
@@ -482,6 +532,7 @@ impl Session {
     }
 
     fn tick_inner(&mut self, buttons: u16, dt: i32) {
+        self.globals.items.events.clear();
         // All karts as one slice in slot order (player = 0) for the frame.
         let mut ks: Vec<KartState> = Vec::with_capacity(1 + self.others.len());
         ks.push(std::mem::take(&mut self.kart));
@@ -542,7 +593,9 @@ impl Session {
         //    look-at target (FUN_80041A20 / FUN_80041CC4).
         let rules = crate::collide::ContactRules { karts: n as i32, tagged: -1 };
         crate::collide::frame_contacts_all(ks, g, w, &rules);
-        crate::render::aim_at_course(&mut ks[0], g, w);
+        for k in ks.iter_mut() {
+            crate::render::aim_at_course(k, g, w);
+        }
         for k in ks.iter_mut() {
             crate::render::aim_camera_override(k, g, self.camera.mode, self.camera.pos);
         }
@@ -557,7 +610,7 @@ impl Session {
         //    catch-up.
         g.karts = n as i16;
         let leader = self.leader_progress_override.unwrap_or_else(|| ks.iter().find(|x| x.race_pos == 1).map(|x| x.progress).unwrap_or(ks[0].progress));
-        let inp = TickInputs { leader_progress: leader, water_normal: wn, alt_normal: an, aim: None };
+        let inp = TickInputs { leader_progress: leader, water_normal: wn, alt_normal: an, aim: None, cameras: [self.camera.pos, [0; 3]] };
         for s in 0..n {
             g.field = [(0, 0); 8];
             for (j, x) in ks.iter().enumerate().take(8) {
@@ -571,18 +624,22 @@ impl Session {
                 let ai = if s == 0 { &mut self.player_ai } else { &mut self.others[s - 1].ai };
                 let seed = &mut self.rand_state;
                 let mut rand = || bios_rand(seed);
-                let b = crate::ai::items_off(crate::ai::ai_buttons(&mut ks[s], ai, g, &ctx, w, &mut rand));
-                crate::update::kart_update(&mut ks[s], g, w, &inp, b, -1);
+                let mut b = crate::ai::ai_buttons(&mut ks[s], ai, g, &ctx, w, &mut rand);
+                if !self.cfg.items {
+                    b = crate::ai::items_off(b);
+                }
+                crate::update::kart_update_at(ks, s, g, w, &inp, b, -1, &mut rand);
             } else {
+                let seed = &mut self.rand_state;
+                let mut rand = || bios_rand(seed);
                 let b = if s == 0 && self.autopilot {
                     let ctx = crate::ai::AiContext { karts: n as i16, kart0_flags: ks[0].flags, kart0_race_pos: ks[0].race_pos, difficulty: g.difficulty, cup: g.cup, driver_pos: &[] };
-                    let seed = &mut self.rand_state;
-                    let mut rand = || bios_rand(seed);
-                    crate::ai::items_off(crate::ai::ai_buttons(&mut ks[0], &mut self.player_ai, g, &ctx, w, &mut rand))
+                    let b = crate::ai::ai_buttons(&mut ks[0], &mut self.player_ai, g, &ctx, w, &mut rand);
+                    if self.cfg.items { b } else { crate::ai::items_off(b) }
                 } else {
                     buttons
                 };
-                crate::update::kart_update(&mut ks[s], g, w, &inp, b, s as i16);
+                crate::update::kart_update_at(ks, s, g, w, &inp, b, s as i16, &mut rand);
             }
             if s < g.humans as usize {
                 crate::progress::track_direction(&mut ks[s], g, w);
@@ -613,6 +670,17 @@ impl Session {
             ks[0].pos_flash = 0;
         }
         self.pick = (self.pick + 1) % n;
+        // 5b. After the kart loop (FUN_8007916C @0x80079A8C..): effects
+        //     FUN_8006C388, FUN_8007F03C (no objects on DOCK; its kart
+        //     particles are render side), FUN_8007A9DC, pickups FUN_8007BBF0,
+        //     projectiles FUN_80069648 (items.rs).
+        {
+            let cams = crate::items::Cameras { pos: [self.camera.pos_div32, [0; 3]], n: g.humans.clamp(0, 2) as usize };
+            let seed = &mut self.rand_state;
+            let mut rand = || bios_rand(seed);
+            let skip = self.rng_skip_items.take();
+            crate::items::after_kart_loop(ks, g, w, &cams, self.cfg.items, skip, &mut rand);
+        }
         crate::sound::character_voices(ks, g, w);
         for (s, k) in ks.iter().enumerate() {
             let rec = if s == 0 { &mut self.record } else { &mut self.others[s - 1].record };
@@ -637,7 +705,7 @@ impl Session {
                 ..self.camera_globals.clone()
             },
         };
-        let mut env = SessionCameraEnv { world: w, rand_state: &mut self.rand_state, rng: &mut g.rng };
+        let mut env = SessionCameraEnv { peek_rand: std::mem::take(&mut self.camera_peek), world: w, rand_state: &mut self.rand_state, rng: &mut g.rng };
         camera::tick(&mut self.camera, &inp, &self.camera_tables, &mut env);
     }
 
@@ -730,5 +798,114 @@ impl Session {
 
     pub fn config(&self) -> &SessionConfig {
         &self.cfg
+    }
+
+    /// The race's item state: pickups, projectiles, this tick's events
+    /// (crate::items; docs/notes/SESSION-4-coord.md "A items sim").
+    pub fn items(&self) -> &crate::items::ItemState {
+        &self.globals.items
+    }
+
+    /// Analysis: a session holding the race the game has in memory `m`
+    /// (an oracle capture's frame): every kart, its AI fields, the race
+    /// globals and item state, the camera, the water animation, the BIOS
+    /// rand() seed, the round robin. Opponent models come from the disc.
+    pub fn from_mem(disc: &mut mr_disc::Disc, world: World, m: &crate::mem::Mem) -> Result<Session, SessionError> {
+        let exe = disc.read("SLUS_012.37").map_err(|e| SessionError::Disc(format!("{e:?}")))?;
+        let camera_tables = CameraTables::from_exe(&exe).ok_or_else(|| SessionError::Disc("camera tables".into()))?;
+        let n = (m.i16(0x800B_0DFE) + m.i16(0x800B_0C98)) as usize;
+        let mut others = Vec::new();
+        for slot in 1..n {
+            let a = crate::kart::KART_ARRAY + 0x504 * slot as u32;
+            let rec = m.slice(a, 0x504).to_vec();
+            let (c, v) = (rec[0x4B2], rec[0x4B1]);
+            let cpath = crate::ai::model_path(&world.exe, crate::ai::addr::CHARACTER_PATHS, c, "MDL").ok_or_else(|| SessionError::Disc(format!("character {c}: no model")))?;
+            let vpath = crate::ai::model_path(&world.exe, crate::ai::addr::VEHICLE_PATHS, v, "MDL").ok_or_else(|| SessionError::Disc(format!("vehicle {v}: no model")))?;
+            let b = disc.read(&cpath).map_err(|e| SessionError::Disc(format!("{cpath}: {e:?}")))?;
+            let cm = Mdl::parse(&b).map_err(|e| SessionError::Disc(format!("{cpath}: {e:?}")))?;
+            others.push(OtherKart {
+                kart: crate::oracle::load_kart(m, slot as u32),
+                ai: crate::ai::AiState::from_record(&rec),
+                record: rec,
+                character: c,
+                vehicle: v,
+                driver: crate::render::DriverModel { part0_pivot: cm.parts[0].record.pivot },
+                vehicle_model: vpath,
+                character_model: cpath,
+            });
+        }
+        let record = m.slice(crate::kart::KART_ARRAY, 0x504).to_vec();
+        let mut cfg = SessionConfig::dock_default();
+        cfg.opponents = (n - 1) as u8;
+        let mut s = Session {
+            kart: crate::oracle::load_kart(m, 0),
+            player_ai: crate::ai::AiState::from_record(&record),
+            record,
+            globals: RaceGlobals::read(m),
+            water: WaterAnim::from_bytes(m.slice(crate::water::STATE_ADDR, 0x1C)),
+            camera: CameraState::from_bytes(m.slice(0x800C_4F40, camera::CAMERA_SIZE)),
+            camera_tables,
+            camera_globals: CameraGlobals::from_reader(&|a, l| m.slice(a, l).to_vec()),
+            world,
+            ticks: 0,
+            leader_progress_override: None,
+            rng_override: None,
+            race_pos_override: None,
+            autopilot: false,
+            others,
+            best_start: m.u8(0x800E_02BA),
+            pick: m.u8(0x800C_3058 + n as u32) as usize % n,
+            load_frame: false,
+            rng_skip_items: None,
+            camera_peek: false,
+            rand_state: m.u32(0x8000_9010),
+            cfg,
+        };
+        s.load_mem(m);
+        Ok(s)
+    }
+
+    /// Analysis: overwrite the race state with memory `m` (see `from_mem`;
+    /// the opponents must be the same karts).
+    pub fn load_mem(&mut self, m: &crate::mem::Mem) {
+        let n = 1 + self.others.len();
+        self.kart = crate::oracle::load_kart(m, 0);
+        self.record = m.slice(crate::kart::KART_ARRAY, 0x504).to_vec();
+        self.player_ai = crate::ai::AiState::from_record(&self.record);
+        for (i, o) in self.others.iter_mut().enumerate() {
+            let a = crate::kart::KART_ARRAY + 0x504 * (i + 1) as u32;
+            o.record = m.slice(a, 0x504).to_vec();
+            o.kart = crate::oracle::load_kart(m, (i + 1) as u32);
+            o.ai = crate::ai::AiState::from_record(&o.record);
+        }
+        let stack = self.globals.stack;
+        self.globals = RaceGlobals::read(m);
+        self.globals.stack = stack;
+        self.water = WaterAnim::from_bytes(m.slice(crate::water::STATE_ADDR, 0x1C));
+        self.camera = CameraState::from_bytes(m.slice(0x800C_4F40, camera::CAMERA_SIZE));
+        self.camera_globals = CameraGlobals::from_reader(&|a, l| m.slice(a, l).to_vec());
+        self.best_start = m.u8(0x800E_02BA);
+        // The counter 0x800C3058[n] steps before the race frame reads it.
+        self.pick = (m.u8(0x800C_3058 + n as u32) as usize + 1) % n;
+        self.load_frame = false;
+        self.rand_state = m.u32(0x8000_9010);
+    }
+
+    /// Analysis: write the race state into memory `m` (the fields the port
+    /// models), for comparison with the game's next frame.
+    pub fn store_mem(&self, m: &mut crate::mem::Mem) {
+        let mut rec = self.record.clone();
+        self.kart.to_record(&mut rec);
+        self.player_ai.to_record(&mut rec);
+        m.write(crate::kart::KART_ARRAY, &rec);
+        for (i, o) in self.others.iter().enumerate() {
+            let mut rec = o.record.clone();
+            o.kart.to_record(&mut rec);
+            o.ai.to_record(&mut rec);
+            m.write(crate::kart::KART_ARRAY + 0x504 * (i + 1) as u32, &rec);
+        }
+        self.globals.write(m);
+        self.globals.items.write(m);
+        m.put_u32(0x8000_9010, self.rand_state);
     }
 }

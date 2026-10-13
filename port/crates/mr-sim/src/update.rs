@@ -65,7 +65,60 @@ struct Limits {
     steer_rate: i32,
 }
 
+/// The other karts of the race frame while one kart updates (slot order,
+/// the updating kart's slot left out): what the update touches besides its
+/// own kart (a replaced projectile's owner, the R2 special's victims).
+pub struct Others<'a> {
+    pub before: &'a mut [KartState],
+    pub after: &'a mut [KartState],
+}
+
+impl<'a> Others<'a> {
+    pub fn none() -> Others<'static> {
+        Others { before: &mut [], after: &mut [] }
+    }
+
+    /// The updating kart's slot.
+    pub fn slot(&self) -> usize {
+        self.before.len()
+    }
+
+    /// Kart `j` (None for the updating kart itself or past the end).
+    pub fn get_mut(&mut self, j: usize) -> Option<&mut KartState> {
+        let s = self.before.len();
+        if j < s {
+            self.before.get_mut(j)
+        } else if j == s {
+            None
+        } else {
+            self.after.get_mut(j - s - 1)
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.before.len() + 1 + self.after.len()
+    }
+}
+
+/// FUN_80064B5C for a kart with no other karts in reach and no BIOS
+/// rand() source (analysis of one kart; a weapon fired at a path fork, or
+/// an R2 special, needs `kart_update_at`).
 pub fn kart_update(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &TickInputs, buttons: u16, player: i16) {
+    let mut nr = || -> i32 { unreachable_in_scope!("BIOS rand() in a kart update without a rand source") };
+    kart_update_full(k, &mut Others::none(), g, w, inp, buttons, player, &mut nr)
+}
+
+/// FUN_80064B5C(&karts[s], buttons, player) inside the race frame's kart
+/// loop: the other karts are reachable, `rand` is the BIOS rand().
+#[allow(clippy::too_many_arguments)]
+pub fn kart_update_at(ks: &mut [KartState], s: usize, g: &mut RaceGlobals, w: &World, inp: &TickInputs, buttons: u16, player: i16, rand: &mut dyn FnMut() -> i32) {
+    let (before, rest) = ks.split_at_mut(s);
+    let (k, after) = rest.split_first_mut().expect("kart slot in range");
+    kart_update_full(k, &mut Others { before, after }, g, w, inp, buttons, player, rand)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn kart_update_full(k: &mut KartState, others: &mut Others, g: &mut RaceGlobals, w: &World, inp: &TickInputs, buttons: u16, player: i16, rand: &mut dyn FnMut() -> i32) {
     let t = &w.tables;
     let dt = g.dt;
     let mut buttons = buttons as u32;
@@ -197,7 +250,9 @@ pub fn kart_update(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
             }
         }
     } else {
-        unreachable_in_scope!("special state +0x4D6 (track reset / special move)");
+        // 0x800653D0: the special move (+0x4D6): scale from the meter,
+        // meter drain, FUN_800913F4 along the path.
+        crate::items::specials::special_move_tick(k, g, w, rand);
     }
 
     // 0x80065510: controls.
@@ -283,6 +338,7 @@ pub fn kart_update(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
     }
 
     // 0x80065A50: shoulder buttons (turbo latch, look-back, specials).
+    'shoulder: {
     if k.special == 0 && (k.pickup == -1 || k.wall_flag != 0) && k.effect == -1 && k.stun < 1000 {
         if buttons & btn::R1 as u32 == 0 {
             k.latch_r1 = 0;
@@ -292,33 +348,48 @@ pub fn kart_update(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
             }
             k.latch_r1 = 1;
             if k.start_timer == 0x1A4 && k.path_seg != -1 && g.mode == 1 {
-                unreachable_in_scope!("full-meter R1 special move (+0x4D6)");
+                // 0x80065B5C: the special move; L1 / L2 / R2 are not read
+                // this tick (goto 0x80065E00).
+                let slot = others.slot();
+                crate::items::specials::special_move_start(k, g, w, slot, rand);
+                break 'shoulder;
             }
         }
         if buttons & btn::L1 as u32 == 0 {
             k.latch_l1 = 0;
         } else {
-            fire_weapon(k, g, 0);
+            let slot = others.slot();
+            crate::items::weapons::fire_button(k, slot, others, g, w, 0, rand);
         }
         if buttons & btn::L2 as u32 == 0 {
             k.latch_l2 = 0;
         } else {
-            fire_weapon(k, g, 1);
+            let slot = others.slot();
+            crate::items::weapons::fire_button(k, slot, others, g, w, 1, rand);
         }
         if buttons & btn::R2 as u32 == 0 {
             k.latch_r2 = 0;
         } else {
-            if k.start_timer == 0x1A4 {
-                unreachable_in_scope!("R2 with a full meter: character special (FUN_8006B828)");
-            }
-            if k.latch_r2 == 0 && k.flags & 1 == 0 {
+            let kind = crate::items::specials::special_kind(w, k.character);
+            if k.start_timer == 0x1A4
+                && kind != -1
+                && g.items.special == -1
+                && g.challenge == 0
+                && g.mode != 0xE
+                && (g.mode != 3 || g.split_screen != 0)
+            {
+                // 0x80065CF0: the character special on every other kart.
+                crate::items::specials::character_special(k, others, g, w);
+                k.start_timer = 0;
+                crate::ai::reroll(k, g, w, g.karts);
+            } else if k.latch_r2 == 0 && k.flags & 1 == 0 {
                 g.sound_event = 4;
             }
             k.latch_r2 = 1;
         }
+        crate::sound::not_ready(k, g, w);
     }
-
-    crate::sound::not_ready(k, g, w);
+    }
 
     // 0x80065E00: remember the previous position and speeds.
     let mut accel = k.accel as i32;
@@ -332,8 +403,12 @@ pub fn kart_update(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
     let cap = centre + ((0x50 - centre) * k.catchup as i32) / 0xB4;
     let top = k.top_speed as i32;
 
-    // 0x80065E78: limits by float state and surface.
+    // 0x80065E78..0x80066990: limits, jump, spin, steering. Skipped in a
+    // special move (+0x4D6), which leaves the stack values the later code
+    // reads as the previous kart update left them (see `RaceGlobals::stack`).
     let mut lim = Limits::default();
+    let mut yaw: i32 = 0;
+    if k.special == 0 {
     {
         let saved = k.float_state;
         if k.status & 0x400 != 0 {
@@ -435,7 +510,6 @@ pub fn kart_update(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
         k.carried_drop = 0;
     }
 
-    let mut yaw: i32 = 0;
     if k.item_e7 != -1 || (k.pickup != -1 && k.pickup_timer < 0xF0) {
         c.left = false;
         c.right = false;
@@ -525,7 +599,23 @@ pub fn kart_update(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
             k.heading = k.heading.wrapping_add(v as i16);
         }
         if k.status & 0x40110 != 0 {
-            unreachable_in_scope!("homing / auto-steer (status 0x40110)");
+            // 0x80066790: an effect steers: toward the kart's camera (0x10,
+            // 0x100: sideways to it) or toward +0x300 / +0x308 (0x40000).
+            let (tx, tz) = if k.status & 0x110 == 0 {
+                (k.target_x, k.target_z)
+            } else {
+                let c = inp.cameras[(k.camera as usize).min(1)];
+                (c[0], c[2])
+            };
+            let a = ratan2(t, tx.wrapping_sub(k.x) >> 5, tz.wrapping_sub(k.z) >> 5) & 0xFFF;
+            let mut d = wrap_angle(a - k.heading as i32);
+            if k.status & 0x100 != 0 {
+                let u = if d < 0 { a + 0x400 } else { a - 0x400 };
+                d = wrap_angle((u & 0xFFF) - k.heading as i32);
+            }
+            let v = div_pow2(d, 5);
+            yaw = yaw.wrapping_add(v);
+            k.heading = k.heading.wrapping_add(v as i16);
         }
     }
     if k.status & 0x40 != 0 {
@@ -538,6 +628,12 @@ pub fn kart_update(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
         k.heading = k.heading.wrapping_add(k.target_yaw.wrapping_mul(dt) as i16);
     }
     k.heading = ((k.heading as u16) & 0xFFF) as i16;
+    g.stack.steer_rate = lim.steer_rate;
+    } else {
+        lim.steer_rate = g.stack.steer_rate;
+    }
+    // In a special move the yaw sum is register fp as the caller left it
+    // (low halfword 0 in every oracle frame: +0x448 stays 0).
     let yaw16 = s16(yaw);
 
     // 0x8006699C: steering lag follows the steer value.
@@ -545,13 +641,13 @@ pub fn kart_update(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
         let target = if k.fwd_speed < 0 { -(k.steer as i32) } else { k.steer as i32 };
         let cur = k.steer_lag as i32;
         if cur < target {
-            let n = cur + rate * dt;
+            let n = cur + lim.steer_rate * dt;
             k.steer_lag = n as i16;
             if target < s16(n) {
                 k.steer_lag = target as i16;
             }
         } else if target < cur {
-            let n = cur - rate * dt;
+            let n = cur - lim.steer_rate * dt;
             k.steer_lag = n as i16;
             if s16(n) < target {
                 k.steer_lag = target as i16;
@@ -559,7 +655,25 @@ pub fn kart_update(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
         }
     }
 
-    // 0x80066A08: throttle state, lurch, skid, conveyor, turbo.
+    // 0x80066A08: throttle state, lurch, skid, conveyor, turbo; velocity;
+    // drift; vertical motion. In a special move (0x80066A0C): boosting, the
+    // drift decays, the kart-frame speeds come from the velocity
+    // FUN_800913F4 set (+0x390 = the sideways formula: the game's own).
+    let side0;
+    if k.special != 0 {
+        k.boosting = 1;
+        let n = (k.drift as u16 as i32).wrapping_sub(dt * 4);
+        k.drift = n as i16;
+        if s16(n) < 0 {
+            k.drift = 0;
+        }
+        let a = (-(k.heading as i32)) & 0xFFF;
+        let (ca, sa) = (t.cos(a), t.sin(a));
+        k.fwd_speed = div_pow2(mul(k.vx, ca).wrapping_add(mul(k.vz, sa)), 12);
+        k.side_speed = div_pow2(mul(k.vz, ca).wrapping_sub(mul(k.vx, sa)), 12);
+        // The stack slot 0x48(sp) the sway inputs read.
+        side0 = g.stack.side0;
+    } else {
     if !c.accel || c.brake {
         if k.boosting == 0 {
             if !c.brake || c.accel {
@@ -669,7 +783,8 @@ pub fn kart_update(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
     // 0x80067028: velocity in the kart frame, integrate dt sub-steps.
     let a = (-(k.heading as i32)) & 0xFFF;
     let (ca, sa) = (t.cos(a), t.sin(a));
-    let side0 = div_pow2(mul(k.vx, ca).wrapping_add(mul(k.vz, sa)), 12);
+    side0 = div_pow2(mul(k.vx, ca).wrapping_add(mul(k.vz, sa)), 12);
+    g.stack.side0 = side0;
     let mut fwd = div_pow2(mul(k.vz, ca).wrapping_sub(mul(k.vx, sa)), 12);
     let px = k.push_x as i32;
     let pz = k.push_z as i32;
@@ -748,14 +863,28 @@ pub fn kart_update(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
     k.x = k.x.wrapping_add(mx);
     k.z = k.z.wrapping_add(mz);
     if k.status & 0x20 != 0 {
-        unreachable_in_scope!("status 0x20 homing pull");
+        // 0x80067448: pulled toward +0x300 / +0x308.
+        for _ in 0..substeps(dt) {
+            k.vx = k.vx.wrapping_add(div_pow2(k.target_x.wrapping_sub(k.x), 6));
+            k.vz = k.vz.wrapping_add(div_pow2(k.target_z.wrapping_sub(k.z), 6));
+            k.x = k.x.wrapping_add(k.vx);
+            k.z = k.z.wrapping_add(k.vz);
+        }
     }
 
     // 0x800674A0: drift meter and reversing flag.
     let saved_float = k.float_state;
     let saved_water = k.water_y;
     if k.status & 0x400 != 0 {
-        unreachable_in_scope!("status 0x400 forced float");
+        // 0x800674D0: floated: water physics at a bobbing height above the
+        // support surface (lower for effect 1).
+        let base = if k.effect == 1 { 0x2000 } else { 0x3000 };
+        let idx = ((g.frame & 0x1F) * 0x80 + (k.player_index as i32) * 0x200) & 0xFFF;
+        let y = k.support_y.wrapping_add((k.ride_height as i32) * 0x20).wrapping_sub(base).wrapping_add(div_pow2(t.sin_raw(idx), 3));
+        if y.wrapping_sub(k.ref_y) < 0x4000 {
+            k.float_state = 2;
+            k.water_y = y;
+        }
     }
     if k.status & 1 == 0 {
         if g.countdown == 0 {
@@ -827,6 +956,7 @@ pub fn kart_update(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
         k.gravity_mod = 0;
         k.float_state = saved_float;
         k.water_y = saved_water & 0xFF;
+    }
     }
 
     // 0x80067834: impact sound draws a random byte.
@@ -1003,7 +1133,15 @@ pub fn kart_update(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
     if k.status & 1 == 0 {
         k.yaw_rate = div(yaw16, dt) as i16;
     } else {
-        unreachable_in_scope!("status 1 (frozen) yaw");
+        // 0x80068324: frozen (status 1): the heading keeps turning at the
+        // yaw rate, scaled by the ground speed.
+        let v = (k.speed_est >> 5).min(0x40);
+        let r = div_pow2((k.yaw_rate as i32).wrapping_mul(v), 6);
+        let mut h = k.heading as u16;
+        for _ in 0..substeps(dt) {
+            h = h.wrapping_add(r as u16);
+        }
+        k.heading = (h & 0xFFF) as i16;
     }
 
     // 0x80068384: body shape interpolation.
@@ -1046,7 +1184,9 @@ pub fn kart_update(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
         }
     }
     if k.status & 0x2000 != 0 {
-        unreachable_in_scope!("status 0x2000 push");
+        // 0x800686F0: drag: a push against the velocity.
+        k.push_x = k.push_x.wrapping_add(div_pow2(k.vx.wrapping_neg(), 4) as i16);
+        k.push_z = k.push_z.wrapping_add(div_pow2(k.vz.wrapping_neg(), 4) as i16);
     }
 
     // 0x80068718: leaving a conveyor: velocity from the position change.
@@ -1057,8 +1197,24 @@ pub fn kart_update(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
     }
 
     // 0x80068790: effect wobble (none on the solo path).
-    if k.status & 0x8000 != 0 || k.status & 0x80 != 0 || k.effect == 0x16 || k.effect == 0x15 {
-        unreachable_in_scope!("effect wobble (status 0x8000/0x80, effect 0x15/0x16)");
+    {
+        // 0x80068790: effect wobble of the body-sway springs.
+        let mut add = None;
+        if k.status & 0x8000 != 0 {
+            let idx = (((k.homing_timer as i32).wrapping_mul(0xC0)) & 0x1FC0) / 2;
+            add = Some(div_pow2(t.sin_raw(idx), 5));
+        } else if k.status & 0x80 != 0 {
+            k.sway[5] = k.sway[5].wrapping_add(0x200);
+        } else if k.effect == 0x16 {
+            let idx = ((k.homing_timer as i32) & 0x3F) * 0x40;
+            add = Some(div_pow2(t.sin_raw(idx), 6));
+        } else if k.effect == 0x15 {
+            k.sway[5] = k.sway[5].wrapping_sub(0x200);
+        }
+        if let Some(a) = add {
+            k.sway[10] = k.sway[10].wrapping_add(a);
+            k.sway[11] = k.sway[11].wrapping_add(a);
+        }
     }
 
     // 0x800688AC: smoothed sway outputs.
@@ -1111,27 +1267,6 @@ pub fn kart_update(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
         if k.warn_timer == 0 {
             k.warn_timer = 0x1E;
         }
-    }
-}
-
-/// FUN_800645F4(kart, slot): L1 / L2. Fires the slot's weapon when it is
-/// charged (0x40); otherwise only a "not ready" sound request.
-fn fire_weapon(k: &mut KartState, g: &mut RaceGlobals, slot: usize) {
-    if k.engine < 0x20 {
-        return;
-    }
-    if k.weapons[4 + slot] != 0x40 {
-        let latch = if slot == 0 { k.latch_l1 } else { k.latch_l2 };
-        if latch == 0 && k.flags & 1 == 0 {
-            g.sound_event = slot as u8 + 1;
-        }
-    } else {
-        unreachable_in_scope!("weapon fired (FUN_80068C6C)");
-    }
-    if slot == 0 {
-        k.latch_l1 = 1;
-    } else {
-        k.latch_l2 = 1;
     }
 }
 

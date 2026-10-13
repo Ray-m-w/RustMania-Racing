@@ -194,6 +194,9 @@ fn start_game_matches_oracle() {
         "copy_button", "aim_x", "aim_y", "aim_z", "aim_dist", "nearest_kart", "race_pos", "shown_pos", "pos_flash", "progress", "course_point",
         "catchup", "blink_timer", "blink", "blink_count", "sway_a", "sway_b", "sway_c", "sway_d", "sway_e", "lean_a", "lean_b", "look_x", "look_y",
         "look_z", "ref_y", "flags", "close_kart", "rumble", "rumble_a", "rumble_b", "event_bits",
+        // Model slot numbers (the game's model table order) and the colour
+        // of the last token an earlier race left in the record.
+        "model_slot", "char_slot", "token_colour", "drv_x", "drv_z",
     ];
     let mut presses = 0;
     let mut go = None;
@@ -260,7 +263,11 @@ fn six_kart_race_load_matches_oracle() {
     // carry a render pass for drawing; the game's look point is still 0).
     for (slot, k) in std::iter::once(&s.kart).chain(s.others.iter().map(|o| &o.kart)).enumerate() {
         let o = KartState::from_record(cap.read(load, KART_ARRAY + (RECORD_SIZE * slot) as u32, RECORD_SIZE).unwrap());
-        let d: Vec<_> = k.diff(&o).into_iter().filter(|d| !d.starts_with("trail")).collect();
+        let d: Vec<_> = k
+            .diff(&o)
+            .into_iter()
+            .filter(|d| !d.starts_with("trail") && !d.starts_with("model_slot") && !d.starts_with("char_slot") && !d.starts_with("token_colour"))
+            .collect();
         assert!(d.is_empty(), "kart {slot} at load: {d:?}");
     }
     let motion = ["x", "y", "z", "pitch", "heading", "roll", "vx", "vy", "vz", "fwd_speed", "side_speed", "lap", "buttons", "race_pos"];
@@ -269,9 +276,8 @@ fn six_kart_race_load_matches_oracle() {
         s.tick_dt(m.u16(0x800B_0CE8), m.i32(0x800B_0AEC)).unwrap();
         assert_eq!((s.countdown(), s.race_clock()), (m.i32(0x800B_0C70), m.i32(0x800B_0A94)), "frame {j}");
         for (slot, _, _, r) in s.kart_records() {
-            let mut o = cap.read(vb, KART_ARRAY + (RECORD_SIZE * slot) as u32, RECORD_SIZE).unwrap().to_vec();
-            let b = u16::from_le_bytes([o[0x44E], o[0x44F]]) & !mr_sim::ai::btn::ITEMS;
-            o[0x44E..0x450].copy_from_slice(&b.to_le_bytes());
+            // Items on (Session 4): the AI's item buttons count too.
+            let o = cap.read(vb, KART_ARRAY + (RECORD_SIZE * slot) as u32, RECORD_SIZE).unwrap().to_vec();
             let bad: Vec<&str> = mr_sim::kart::FIELD_OFFSETS.iter().filter(|&&(n, off, sz)| motion.contains(&n) && r[off..off + sz] != o[off..off + sz]).map(|e| e.0).collect();
             assert!(bad.is_empty(), "frame {j} kart {slot}: {bad:?}");
         }
@@ -300,7 +306,9 @@ fn standalone_six_kart_race_finishes() {
     for (i, x) in r.iter().take(5).enumerate() {
         assert_eq!((x.place as usize, x.finished, x.lap_times.len()), (i + 1, true, 3), "{x:?}");
         assert!(x.slot != 0);
-        assert!(x.lap_times.iter().all(|&l| (11_000..17_000).contains(&l)), "{x:?}");
+        // Items on: turbo and specials make the AI's laps faster and more
+        // spread out (oracle items-on laps ~12,000, sd up to 1,800).
+        assert!(x.lap_times.iter().all(|&l| (8_000..17_000).contains(&l)), "{x:?}");
     }
     assert_eq!((r[5].slot, r[5].finished), (0, false));
     eprintln!("standalone race: {t} ticks, {:?}", r.iter().map(|x| (x.slot, x.race_time)).collect::<Vec<_>>());

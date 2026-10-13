@@ -126,11 +126,8 @@ pub fn kart_ground(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
     let old_contact = k.ground_contact;
     let old_ceiling = k.ceiling_hit;
     k.wall_hit = 0;
-    if k.special != 0 {
-        unreachable_in_scope!("ground contact in special state");
-    }
 
-    // 0x8003E94C: walls along the move prev -> now.
+    // 0x8003E94C: walls along the move prev -> now (not in a special move).
     let q = WallQuery {
         heading: k.heading as i32,
         probe_top: k.probe_top as i32,
@@ -140,7 +137,8 @@ pub fn kart_ground(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
         bounce: k.wall_bounce as i32,
         dt,
     };
-    if let Some(h) = wall_test(t, ter, &q, [k.prev_x, k.prev_y, k.prev_z], [k.x, k.y, k.z]) {
+    let hit = if k.special == 0 { wall_test(t, ter, &q, [k.prev_x, k.prev_y, k.prev_z], [k.x, k.y, k.z]) } else { None };
+    if let Some(h) = hit {
         let mut strength = s16(h.impact) >> 4;
         if strength > 0xFF {
             strength = 0xFF;
@@ -218,6 +216,11 @@ pub fn kart_ground(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
     let face = face.expect("floor face");
     k.floor_face_ptr = w.face_ptr(Some(face));
     k.water_face_ptr = w.face_ptr(gq.water.map(|s| s.face));
+    if k.special != 0 {
+        // 0x8003ED60: a special move keeps its height (the floor only
+        // informs the normals below).
+        k.y = old_y;
+    }
     let fc = &ter.faces[face];
 
     // 0x8003ED78: ease the smoothed normal toward the floor's.
@@ -330,6 +333,22 @@ pub fn kart_ground(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
     // (0x8003F4A4..0x8003F7AC: shadow polygon, render side, not ported.)
 
     let found = gq.found;
+    if k.special != 0 {
+        // 0x8003F7A4: a special move: no sink, no bounce, the body follows
+        // the normal chosen above; the sink offset eases to 0.
+        k.sink_target = 0;
+        k.on_ground = found as u8;
+        k.tilt_nx = n130[0] as i16;
+        k.tilt_ny = n130[1] as i16;
+        k.tilt_nz = n130[2] as i16;
+        k.bounce = 0;
+        k.bounce_vel = 0;
+        for _ in 0..substeps(dt) {
+            let d = k.sink_target as i32 - k.sink as i32;
+            k.sink = (k.sink as i32 + div_pow2(d, 3)) as i16;
+        }
+        return tilt_and_lean(k, g, w, n130);
+    }
     if k.carried != -1 {
         unreachable_in_scope!("carrying");
     }
@@ -406,8 +425,14 @@ pub fn kart_ground(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
         k.vy = 0;
     }
     k.on_ground = found as u8;
+    tilt_and_lean(k, g, w, n130)
+}
 
-    // 0x8003FC1C: target pitch / roll from the normal.
+/// 0x8003FC1C to the end of FUN_8003E91C: pitch and roll toward the
+/// normal, slope steering, suspension input, body lean.
+fn tilt_and_lean(k: &mut KartState, g: &mut RaceGlobals, w: &World, n130: [i32; 3]) {
+    let t = &w.tables;
+    let dt = g.dt;
     let (nx, ny, nz);
     if k.ground_contact == 0 && k.float_state == 0 && k.object_e3 == -1 && k.carried == -1 && k.special == 0 && k.status & 0x400 == 0 {
         nx = k.tilt_nx as i32;

@@ -158,13 +158,13 @@ pub fn teacher_force(cap: &Capture, base: &[u8], w: &World, ticks: &[u32], verbo
             f.entry("jump (SQUARE) [rand]").or_default().add(bits(got, 0x8000) == bits(want, 0x8000), i, slot);
             f.entry("weapons (L1/L2) [rand]").or_default().add(bits(got, 0x500) == bits(want, 0x500), i, slot);
             f.entry("all buttons").or_default().add(got == want, i, slot);
-            f.entry("target +0x3E8").or_default().add(st.target == want_st.target, i, slot);
+            f.entry("target +0x3E8").or_default().add((k.ai_tx, k.ai_ty, k.ai_tz) == (i32::from_le_bytes(rb[0x3E8..0x3EC].try_into().unwrap()), i32::from_le_bytes(rb[0x3EC..0x3F0].try_into().unwrap()), i32::from_le_bytes(rb[0x3F0..0x3F4].try_into().unwrap())), i, slot);
             f.entry("curvature +0x4A0").or_default().add(st.turn == want_st.turn, i, slot);
             f.entry("+0x4CB staleness").or_default().add(k.path_flag_4cb == rb[0x4CB], i, slot);
             if verbose && got != want {
                 rep.lines.push(format!(
                     "tick {i} vb {} kart {slot}: got {got:04X} want {want:04X} target {:?} vs {:?} turn {} vs {} seg {} pt {} spd {}",
-                    ticks[i + 1], st.target, want_st.target, st.turn, want_st.turn, k.path_seg, k.path_pt, k.speed_est
+                    ticks[i + 1], [k.ai_tx, k.ai_ty, k.ai_tz], &rb[0x3E8..0x3F4], st.turn, want_st.turn, k.path_seg, k.path_pt, k.speed_est
                 ));
             }
         }

@@ -153,7 +153,12 @@ pub fn aim_at_course(k: &mut KartState, g: &crate::RaceGlobals, w: &World) {
         return;
     }
     if k.status & 0x20000 != 0 {
-        crate::unreachable_in_scope!("status 0x20000 aim");
+        // 0x80041A90: an effect's own target (+0x300..+0x308).
+        k.aim_dist = 0;
+        k.aim_x = k.target_x >> 5;
+        k.aim_z = k.target_z >> 5;
+        k.aim_y = k.target_yaw >> 5;
+        return;
     }
     if g.race_clock == 0 || (k.player_index as i32) >= g.humans as i32 || k.blink != 1 {
         return;
@@ -266,10 +271,15 @@ pub fn after_kart_loop(k: &mut KartState, rec: &mut [u8], w: &World, drv: &Drive
     }
 
     // ---- FUN_80025D8C ----
+    let mut m0 = crate::body::body_matrix(t, k);
     if k.status & 0x0040_0000 != 0 {
-        crate::unreachable_in_scope!("status 0x400000 body tilt");
+        // 0x80025E34: tilted about x by +0x30C (effect 7).
+        let a = k.eff_30c as i16 as i32;
+        let s = (t.sin_raw(a) as i16 >> 2) as i16;
+        let c = (t.cos_raw(a) as i16 >> 2) as i16;
+        let r = [[0x1000, 0, 0], [0, c, -s], [0, s, c]];
+        m0 = mul_matrix0(&m0, &r);
     }
-    let m0 = crate::body::body_matrix(t, k);
     k.body = m0;
     put_m(rec, 0x18C, &m0);
     let sf = 0x80 - k.stat_d as i32;
@@ -282,6 +292,7 @@ pub fn after_kart_loop(k: &mut KartState, rec: &mut [u8], w: &World, drv: &Drive
     let b = div_pow2((k.lean_b as i32).wrapping_mul(sf16), 7) & 0xFFF;
     let m2 = mul_matrix0(&m0, &rot_lean(t, b, a));
     put_m(rec, 0x1AC, &m2);
+    k.vmat = m2;
     let m3 = mul_matrix0(&m2, &rot_lean(t, k.sway_b as i32 & 0xFFF, k.sway_a as i32 & 0xFFF));
     put_m(rec, 0x1CC, &m3);
     // Driver position (and the previous one).
@@ -297,7 +308,9 @@ pub fn after_kart_loop(k: &mut KartState, rec: &mut [u8], w: &World, drv: &Drive
     p32(rec, 0x330, dx);
     p32(rec, 0x338, dy);
     p32(rec, 0x340, dz);
+    k.drv_x = dx;
     k.ref_y = dy;
+    k.drv_z = dz;
     // Look point: the driver model's part 0 pivot through the driver matrix.
     let pv = drv.part0_pivot;
     let l = mvec(-pv[0], pv[1], -pv[2], &m3);

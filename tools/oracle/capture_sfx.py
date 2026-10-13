@@ -11,7 +11,8 @@ holding capture.OracleLock for the whole run, and additionally:
   pairs while polling -> OUT/clock.json, to map runtime frames and SPU output
   samples onto VBlanks since the restore;
 - at VBlank --wav-at (default 5000) dumps the whole spu_out ring (~95 s) to
-  OUT/spu_out.wav (TCP audio_wav) and records the tap head at that moment.
+  OUT/spu_out.wav (TCP audio_wav), the CD input tap to OUT/cd_in.wav, and
+  records the tap head at that moment.
 Regions: capture.PHYSICS_REGIONS (they hold the game's sound channel table
 0x800D8AB0, libsnd's voice table 0x800BC100 and voice shadow 0x800D8B70) plus
 libsnd's per-voice dirty flags 0x800C1E50.
@@ -87,6 +88,8 @@ def run(route, outdir, wav_at=5000):
                 if wav is None and v1 >= wav_at:
                     p = os.path.abspath(os.path.join(outdir, "spu_out.wav"))
                     w = o.q("audio_wav", tap=0, path=p, start=-1, count=0)
+                    # The CD input (music) on its own, for voices = out - CD.
+                    o.q("audio_wav", tap=1, path=p.replace("spu_out", "cd_in"), start=-1, count=0)
                     st2 = o.q("audio_stats")
                     wav = {"reply": w, "vb": b.vb_since_restore,
                            "head_after": st2["taps"][0]["frames"]}

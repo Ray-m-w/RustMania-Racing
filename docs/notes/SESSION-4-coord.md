@@ -127,3 +127,49 @@ bus.set_volume(Bus::Sfx, 1.0);         // Bus::{Master, Music, Sfx}, linear gain
   FUN_80074A94, FUN_8007916C) are A's to surface as sim events; post the
   event and C (or D in sfx.rs) forwards it to `clip`.
 ### D SFX + engine
+(2026-10-12, D) Sound calls are events in `mr_sim::sound` (committed 071372d).
+`RaceGlobals::sound: SoundState` carries the listener (camera eye) and the
+per-frame call lists; the front end drains them:
+```rust
+for f in session.globals.sound.drain() {   // Vec<SoundFrame { dt, calls }>
+    for c in &f.calls { /* SoundCall::Play {id,pitch,vol_l,vol_r} | Loop {owner,id,pitch,vol,glide} */ }
+}
+```
+The driver that plays them is `mr_audio::driver::Driver` (game sound driver +
+libsnd + `mr_audio::spu::Spu`); mr-bevy/src/sfx.rs (`SfxPlugin`) does that
+and feeds C's `AudioBus::push_sfx` (voice sum, `spu.apply_main = false`).
+Unless drained, the last 256 frames are kept (bounded).
+
+Hooks I placed (one line each, re-read before editing; all in HEAD now):
+- session.rs `frame()`: `crate::sound::begin_frame(g, ks, dt, self.camera.pos);`
+  first line (new call list, listener, and FUN_800306D0's clear of every
+  kart's voice-request bits +0x4DD); `crate::sound::character_voices(ks, g, w);`
+  after the items block, before the record write-back (FUN_8007A7F4).
+- update.rs: engine (`crate::sound::engine(k, g, w)` replaces the engine's
+  `g.rng += 1`: it draws that byte itself), SELECT click `view_toggle`,
+  `not_ready` (plays sound 9 when `g.sound_event != 0`; keep it right before
+  "0x80065E00"), `jump` (end of take-off), `skid` (in the skid branch),
+  `impact` (replaces its `g.rng += 1`), `slide` (after the 0x4B rumble).
+- ground.rs: `wall_hit` after the wall rumble, `splash` (replaces the splash
+  `g.rng += 1`; condition is now `sound_check && float_state != 0`, the
+  function draws only when +0x4DB == 0, as before), `landing`.
+- collide.rs: `kart_land` (after obj_e5 = 1), `kart_bump` (after the rumbles).
+- race.rs frame_clock: `crate::sound::countdown(g);` before `g.countdown -= g.dt`.
+- progress.rs lap_completed: `crate::sound::lap(k, g, w);` after `k.lap += 1`.
+A: please keep these lines when you rework those blocks.
+
+Item sound calls for A to place in the item code (exact game args; use
+`crate::sound::at(g, w, id, pitch, vol, [x, y, z], -1)` for FUN_8007A620 with
+owner -1, `crate::sound::play(g, id, pitch, vol_l, vol_r)` for FUN_8005EECC):
+- FUN_80061FC0 pickup touch: `at(0x1E, 0x1600, 0x60, kart pos)` when +0x4B5 == 0.
+- FUN_80068C6C fire: `at(0x14, 0x1600, 0x80, slot pos)`, `at(weapon sound, 0x1600, 0x60, ...)`.
+- FUN_80069334: `at(0x14, 0x1600, 0x80, pos)`. FUN_80069648 projectiles:
+  0x14 / 0x15 (0x80), 0xB (0xA0), 0x21 (0x80), 10 (0x80), weapon sound (0x80).
+- FUN_8006B828 special: `play(id, 0x1500, 0xA0, 0xA0)`, `play(0x24, 5000, 0x80, 0x80)`.
+- FUN_8006C388 effects: `play(0x57, 0x1400, 0xA0, 0xA0)`, `at(id, pitch, 0xA0, kart)`,
+  `at(0x18, 0x1538, 0x70, kart)`, `play(0x23, 0x157C, 0x80, 0x80)`.
+- FUN_8007BBF0 pickups / tokens: `at(0x16, 0x1600, 0x70, pos)`, `at(0x18, 0x1538, 0x70, pos)`,
+  `play(0x24, 5000, 0x80, 0x80)`. FUN_8008650C: `at(id, 0x157C, 0x40, pos)`.
+- FUN_8006EC4C (race flag 0x40): `at(0xB, 0x1600, 0xA0, ...)`, `at(0x14, 0x1600, 0x80, ...)`.
+Order matters only within a frame (call order = key-on order), so place them
+where the game calls them.

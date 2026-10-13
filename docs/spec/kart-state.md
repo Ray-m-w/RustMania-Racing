@@ -49,6 +49,7 @@ against the oracle over the DOCK lap unless noted. Model: docs/spec/kart-physics
 | 0x014+0x2C*i +0x1E/+0x20/+0x22/+0x26 | i16/i16/i16/u16 | wheels[i].spin/spin_rate/radius/flags | wheel rolling angle, rate (eases to fwd*11/radius), radius, flags (bit0 driven, 0x38 locked, 0xC0 off) [0x80067960] |
 | 0x164/0x166/0x168/0x16A | i16 | body_front/rear/left/right | ground-probe corner offsets (shadow polygon only) [0x8003F540] |
 | 0x170 | u8 | wheel_count | [0x80067960] |
+| 0x171 | u8 | engine_audible | scrape loop (sound 0x1B) and slide sounds only when set [0x80064F28, 0x80067D9C] |
 | 0x173 | u8 | vehicle_class | engine class bits (0x50: skid sound) [0x80066D00] |
 | 0x174 | u8 | chassis_flags | bit1: floats on water (hover/boat) [0x80066014] |
 | 0x175 | u8 | wall_bounce | wall rebound strength (along' = -along*b >> 4) [0x8003D5C0] |
@@ -101,6 +102,9 @@ against the oracle over the DOCK lap unless noted. Model: docs/spec/kart-physics
 | 0x4D0..0x4D5 | u8 x6 | weapons[] | weapon slot types and charge (0x40 = ready) [0x80065954] |
 | 0x4D7 | i8 | player_index | |
 | 0x4DC | i8 | nearest_kart | contact pass [0x800401A8] |
+| 0x4DD | u8 | event_bits | character-voice requests, bits 0..5 (contacts, walls, finish); cleared every frame by FUN_800306D0, played by FUN_8007A7F4 (table 0x800AC232) [docs/spec/audio.md] |
+| 0x4F2 | i8 | camera | the human's camera index; FUN_8007A620 measures sound distances from it [0x8007A698] |
+| 0x4F5 | u8 | (voice timer) | VBlanks until the character may speak again (60) [FUN_8007A7F4]; in mr-sim `RaceGlobals::sound.voice_timer` |
 | 0x4E0 | u8 | ground_contact | ticks on the ground (max 0x40), 0 airborne [0x8003F004] |
 | 0x4E2 | i8 | jump_state | [0x80066380] |
 | 0x4F3 | i8 | surface | TER face kind under the kart [0x8003F428] |

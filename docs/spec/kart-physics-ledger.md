@@ -104,8 +104,22 @@ Paths the solo player does not take on DOCK. Address = the game code skipped.
 | collide.rs | battle-mode damage on contact (modes 2/7, flag 8), challenge tag (0x800B07E6, 0x800B07FE) | other modes |
 
 ## 2. Code not ported (no effect on the kart record the port owns)
-- Sound calls (FUN_8007A620, FUN_8005EECC): skipped; their random-byte draws are
-  kept where the kart update itself draws them.
+- Sound calls (FUN_8007A620, FUN_8005EECC, FUN_8005F168): ported as events
+  (mr_sim::sound, Session 4 track D; docs/spec/audio.md "SFX + engine"): the
+  engine / scrape / slide / impact loops, jump, skid, landing, wall, water,
+  contacts, countdown, lap, SELECT, not-ready, character voices (FUN_8007A7F4,
+  with FUN_800306D0's per-frame clear of +0x4DD). Their random draws are the
+  same as before. Differences: the voice timer +0x4F5 lives in
+  `RaceGlobals::sound` (not the kart record); FUN_8007A620 uses each human
+  kart's own camera (the game: the camera index +0x4F2, the same in a
+  1-player race). Item-code sound calls: track A. The sound driver, libsnd
+  and the SPU are mr-audio (driver.rs, spu.rs): not modelled there: reverb,
+  noise, pitch modulation, volume sweeps (unused by the game), the SPU's
+  Gaussian ROM table (a fitted Gaussian kernel instead), the libsnd lock
+  0x800D1C44 (a VBlank flush skipped while the game is inside SsUtKeyOn),
+  the exact VBlank phase of the game's calls (taken as 2 VBlanks after the
+  frame start, as the oracle shows), the SPU state at a savestate (the
+  verifier seeds libsnd's tables from RAM, voice envelopes approximately).
 - Shadow polygon FUN_8003E59C + FUN_8003E3A0 (writes 0x800C8B38..), particles
   FUN_800326B4 / FUN_800870E8 (random draws kept): render side.
 - The body matrix +0x18C (FUN_80025D8C / FUN_80024594) and wheel matrices

@@ -44,6 +44,50 @@ system registration line; keep your logic in your own file.
 
 ## Posted APIs
 ### A items sim
+(2026-10-12, A, draft: names fixed, fields may grow) Item state lives in
+`mr_sim::items` and rides in `RaceGlobals::items` (so the kart update can
+fire / the race frame can move it); a Session exposes it read-only:
+```rust
+let it: &mr_sim::items::ItemState = session.items();
+// Pickup objects 0x800E1B70 (FUN_8007B448 init, FUN_8007BBF0 per frame),
+// 192 slots: item boxes 0..0x30 (DOCK: 44), challenge objects 0x30..0x40
+// (hidden in a race), turbo tokens 0x40.. (DOCK: 92).
+for p in it.pickups.iter().filter(|p| p.state != 0) {
+    p.kind;            // PickupKind::{Box, Challenge, Token}
+    p.pos();           // [x, y, z] in kart/world units (the table keeps x, z in TER units: pos() shifts them)
+    p.state;           // 1 present, 3 collected (shrinking), 2 gone (respawn timer), 4 growing back
+    p.scale;           // 0..=0x80 draw scale (the game's render byte 0x800C8B61 + 0x30 * (i + 6))
+    p.token_colour;    // tokens: 0..3 (+0x1F), the colour / sparkle set
+}
+// Projectiles 0x800DDC50 (FUN_80068C6C fires, FUN_80069648 moves / hits), 4 slots.
+for pr in it.projectiles.iter().filter(|p| p.active) {
+    pr.pos;            // [x, y, z] world units
+    pr.vel;            // per VBlank
+    pr.flags;          // weapon flags: 0x1D, 0x280, 0x588, 0x78 for weapon types 0..3
+    pr.owner;          // kart slot
+    pr.spin;           // 12-bit draw angle (+0x26 of the slot)
+}
+// What happened this tick (cleared at the start of each Session::tick):
+for e in &it.events { match e {
+    ItemEvent::Pickup { kart, index, kind } => {}
+    ItemEvent::Fired { kart, slot, weapon, projectile } => {}
+    ItemEvent::Hit { victim, shooter, projectile } => {}   // "-1 HIT" popup
+    ItemEvent::Explode { projectile, pos } => {}
+    ItemEvent::Special { kart, kind } => {}                // R2 character special (kind = character's type 0..24)
+    ItemEvent::SpecialMove { kart } => {}                  // full-meter R1 (+0x4D6)
+} }
+```
+Per kart (`KartState`, record offsets): `weapons[0..6]` (+0x4D0 L1 cur/next
+type, +0x4D2 L2 cur/next, +0x4D4/+0x4D5 charge, 0x40 = ready, 0xFF =
+empty), `start_timer` = turbo meter +0x48A (0..=0x1A4 full; alias
+`turbo_meter()`), `boosting` +0x4C4, `special` +0x4D6 (special move state
+1..3), `effect` +0x4F1 (-1 none, else the effect type a special put on this
+kart), `status` +0x354, `homing_timer` +0x468 (effect clock, 0..300 VBlanks).
+B: particle spawns in the item code (FUN_800870E8 / FUN_800326B4 /
+FUN_800861F0 calls) keep their random-byte draws; post the spawner signature
+you want and I will place one-line calls. D: the item sound calls are
+FUN_8007A620 (3D: id, pitch, vol, x, y, z) and FUN_8005EECC (2D); post the
+`sound::` call you want and I place it, or I will emit `ItemEvent::Sound`.
 ### B item HUD + effects
 ### C music + audio output
 (2026-10-12, C) The output bus, in mr-bevy/src/audio.rs (`AudioOutPlugin`,

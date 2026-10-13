@@ -428,7 +428,7 @@ impl Session {
             sound: Default::default(),
             items: Default::default(),
             stack: Default::default(),
-            fx: Some(Box::new(crate::items::Fx { particles: crate::particles::Particles::from_exe(&exe), sparks: Default::default() })),
+            fx: Some(Box::new(crate::items::Fx { particles: crate::particles::Particles::from_exe(&exe), sparks: Default::default(), flats: Default::default() })),
             // DOCK's race setup: no rain (0x800B0B9A = 0, 0x800B07E2 = 0).
             kart_fx_rain: false,
             hz60: crate::globals::Hz60 { on: cfg.logic_hz == 60, ..Default::default() },
@@ -882,15 +882,28 @@ impl Session {
         // 8. After the camera (FUN_8007916C @0x80079B30..): each human's
         //    splash (FUN_800330D4 when +0x4DB, or in water / a special move
         //    under the ground at random: one random byte), the particle and
-        //    spark lists (FUN_8008727C, FUN_800327D0).
-        for k in ks.iter().take(g.humans.max(0) as usize) {
+        //    spark lists (FUN_8008727C, FUN_800327D0). The splash rings and
+        //    the skid quads FUN_80033440 go to the flat list 0x800C84B8,
+        //    moved by FUN_80033B98 (particles.rs `Flats`, drawn by mr-bevy).
+        for (s, k) in ks.iter().enumerate().take(g.humans.max(0) as usize) {
+            let mut splash = k.splash != 0;
             if g.hz60.beat() && k.splash == 0 && (k.float_state != 0 || (k.below_ground != 0 && k.special != 0)) {
+                splash = w.rng_byte(g.rng) < 0x20;
                 g.rng = g.rng.wrapping_add(1);
+            }
+            let rec = if s == 0 { &self.record } else { &self.others[s - 1].record };
+            if let Some(fx) = g.fx.as_mut() {
+                if splash && g.hz60.beat() {
+                    let size = crate::fixed::div_pow2(k.spark_offset as i32 * k.engine as i32, 12);
+                    fx.flats.splash([k.x, k.water_y, k.z], size);
+                }
+                fx.flats.skids(s, rec, g.dt, &w.tables);
             }
         }
         if let Some(fx) = g.fx.as_mut() {
             fx.particles.update(g.dt, &w.tables.sin[..4096]);
             fx.sparks.update(g.dt);
+            fx.flats.update(g.dt);
         }
     }
 
@@ -1001,6 +1014,11 @@ impl Session {
         self.globals.fx.as_ref().map(|f| &f.sparks)
     }
 
+    /// The flat quads (0x800C84B8: splash rings, skid quads).
+    pub fn flats(&self) -> Option<&crate::particles::Flats> {
+        self.globals.fx.as_ref().map(|f| &f.flats)
+    }
+
     /// Analysis: a session holding the race the game has in memory `m`
     /// (an oracle capture's frame): every kart, its AI fields, the race
     /// globals and item state, the camera, the water animation, the BIOS
@@ -1056,7 +1074,7 @@ impl Session {
             rand_state: m.u32(0x8000_9010),
             cfg,
         };
-        s.globals.fx = Some(Box::new(crate::items::Fx { particles: crate::particles::Particles::from_exe(&exe), sparks: Default::default() }));
+        s.globals.fx = Some(Box::new(crate::items::Fx { particles: crate::particles::Particles::from_exe(&exe), sparks: Default::default(), flats: Default::default() }));
         s.load_mem(m);
         Ok(s)
     }
@@ -1078,7 +1096,7 @@ impl Session {
         let types = self.globals.fx.as_ref().map(|f| f.particles.types.clone()).unwrap_or_default();
         self.globals = RaceGlobals::read(m);
         self.globals.stack = stack;
-        self.globals.fx = Some(Box::new(crate::items::Fx { particles: crate::particles::Particles::read(m, types), sparks: crate::particles::Sparks::read(m) }));
+        self.globals.fx = Some(Box::new(crate::items::Fx { particles: crate::particles::Particles::read(m, types), sparks: crate::particles::Sparks::read(m), flats: crate::particles::Flats::read(m) }));
         self.water = WaterAnim::from_bytes(m.slice(crate::water::STATE_ADDR, 0x1C));
         self.camera = CameraState::from_bytes(m.slice(0x800C_4F40, camera::CAMERA_SIZE));
         self.camera_globals = CameraGlobals::from_reader(&|a, l| m.slice(a, l).to_vec());

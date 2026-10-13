@@ -396,6 +396,8 @@ impl ItemState {
 pub struct Fx {
     pub particles: crate::particles::Particles,
     pub sparks: crate::particles::Sparks,
+    /// The flat-quad list 0x800C84B8 (splash rings, skid quads; track F).
+    pub flats: crate::particles::Flats,
 }
 
 /// FUN_800870E8(x, y, z, vx, vy, vz, gravity, angle, spin, kind, r, g, b,

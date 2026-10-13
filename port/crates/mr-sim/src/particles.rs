@@ -471,3 +471,265 @@ impl Sparks {
         m.put_u8(addr::SPARK_NEXT, self.next);
     }
 }
+
+// ---------------------------------------------------------------------------
+// The flat-quad list 0x800C84B8 (Session 5 track F)
+// ---------------------------------------------------------------------------
+
+/// Addresses of the flat-quad list [CODE].
+pub mod flat_addr {
+    pub const LIST: u32 = 0x800C_84B8;
+    pub const NEXT: u32 = 0x800B_07EC;
+}
+pub const N_FLATS: usize = 32;
+pub const FLAT_STRIDE: u32 = 0x34;
+
+/// One quad of the list 0x800C84B8 (0x34 bytes), drawn by FUN_800342B8:
+/// a GT4 at `pos` with four corners (view units, scaled by `scale / 128`,
+/// rotated by the camera only), optionally split 2 x 2 with the texture
+/// mirrored into each quarter (flag 0x80).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Flat {
+    /// +0x00: world position.
+    pub pos: [i32; 3],
+    /// +0x0C..+0x23: corners v0, v1, v2, v3 (the GPU gets v0, v1, v3, v2).
+    pub corners: [[i16; 3]; 4],
+    /// +0x24 u, +0x25 v, +0x26 width, +0x27 height (texels).
+    pub uv: [u8; 4],
+    /// +0x28: tpage ABR bits (0x60 = opaque, 0x20 additive, 0x40 B - F).
+    pub abr: i16,
+    /// +0x2A: VBlanks left (bit 15: dies after this frame's draw; 0 free).
+    pub life: u16,
+    /// +0x2C texture slot, +0x2D CLUT add.
+    pub slot: u8,
+    pub clut: u8,
+    /// +0x2E: scale (0x80 = 1.0); +0x2F flags: 0x80 split 2 x 2, 1 colour
+    /// gradient (far edge black), 2 fade over the last 16 VBlanks.
+    pub scale: u8,
+    pub flags: u8,
+    /// +0x30: scale growth per VBlank (signed).
+    pub grow: i8,
+    /// +0x31..+0x33.
+    pub rgb: [u8; 3],
+}
+
+/// The list, its ring index DAT_800B07EC and the per-wheel skid intensity
+/// bytes FUN_80033440 keeps in the kart record (+0x3F + 0x2C * wheel), held
+/// here per kart slot.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Flats {
+    pub list: [Flat; N_FLATS],
+    pub next: u8,
+    pub skid: [[u8; 8]; 8],
+}
+
+fn i16r(r: &[u8], o: usize) -> i32 {
+    i16::from_le_bytes([r[o], r[o + 1]]) as i32
+}
+fn i32r(r: &[u8], o: usize) -> i32 {
+    i32::from_le_bytes([r[o], r[o + 1], r[o + 2], r[o + 3]])
+}
+/// C `(a + (2^k - 1 if a < 0)) >> k` (division toward zero by 2^k).
+fn dz(a: i32, k: u32) -> i32 {
+    (if a < 0 { a + ((1 << k) - 1) } else { a }) >> k
+}
+
+impl Flats {
+    fn take(&mut self) -> &mut Flat {
+        let i = self.next as usize % N_FLATS;
+        self.next = self.next.wrapping_add(1);
+        if self.next == 0x20 {
+            self.next = 0;
+        }
+        &mut self.list[i]
+    }
+
+    /// FUN_800330D4(x, y, z, 0, size): a splash ring on the water, flat
+    /// (the default matrix 0x800A87B0 is the identity), additive, growing
+    /// 2 per VBlank from 0x40 and fading out over its 32 VBlanks; split
+    /// 2 x 2 with slot 0x15's (0x60, 0xE0) 32 x 32 quarter ring mirrored.
+    pub fn splash(&mut self, pos: [i32; 3], size: i32) {
+        let s = size;
+        let c = |a: i32| (a >> 12) as i16;
+        // a = (0x1000, 0, 0), c = (0, 0, 0x1000): v0 = s(c - a), v1 = s(a + c),
+        // v2 = s(a - c), v3 = -s(a + c)
+        let f = self.take();
+        *f = Flat {
+            pos,
+            corners: [
+                [c(-s * 0x1000), 0, c(s * 0x1000)],
+                [c(s * 0x1000), 0, c(s * 0x1000)],
+                [c(s * 0x1000), 0, c(-s * 0x1000)],
+                [c(-s * 0x1000), 0, c(-s * 0x1000)],
+            ],
+            uv: [0x60, 0xE0, 0x20, 0x20],
+            abr: 0x20,
+            life: 0x20,
+            slot: 0x15,
+            clut: 0xD,
+            scale: 0x40,
+            flags: 0x82,
+            grow: 2,
+            rgb: [0x80; 3],
+        };
+    }
+
+    /// FUN_80033440(kart): per wheel (+0x171 of them) the skid intensity
+    /// (+0x3F) rises 5 per VBlank to 0x55 while sliding on the ground
+    /// (+0x4E0 on the ground and +0x4C9, or a driven wheel with +0x486 /
+    /// +0x4C4 / +0x4B9, or +0x4E1) and falls 4 per VBlank otherwise; with
+    /// some left, a B - F quad from the wheel's last to its new position
+    /// (when it moved at least +0x38 per VBlank), one frame long.
+    pub fn skids(&mut self, slot: usize, r: &[u8], dt: i32, t: &crate::tables::Tables) {
+        let on_ground = r[0x4E0] != 0;
+        let n = (r[0x171] as usize).min(8);
+        for i in 0..n {
+            let b = 0x14 + 0x2C * i;
+            let flags = u16::from_le_bytes([r[b + 0x26], r[b + 0x27]]);
+            let sliding = on_ground
+                && (r[0x4C9] != 0
+                    || (flags & 1 != 0 && (i16r(r, 0x486) != 0 || r[0x4C4] != 0 || r[0x4B9] != 0))
+                    || r[0x4E1] != 0);
+            let k = &mut self.skid[slot.min(7)][i];
+            if !sliding {
+                let v = (*k as i32 - 4 * dt) as u8;
+                *k = if (v as i8) < 0 { 0 } else { v };
+            } else {
+                let v = (*k as i32 + 5 * dt) as u8;
+                *k = if (v as i8) > 0x55 { 0x55 } else { v };
+            }
+            let intensity = *k;
+            if !on_ground || intensity == 0 {
+                continue;
+            }
+            let ddx = (i32r(r, b).wrapping_sub(i32r(r, b + 4))).wrapping_mul(0x800) >> 16;
+            let ddz = (i32r(r, b + 0x10).wrapping_sub(i32r(r, b + 0x14))).wrapping_mul(0x800) >> 16;
+            let len = crate::tables::square_root0(t, ddx * ddx + ddz * ddz);
+            let spd = ((len << 3) / dt.max(1)) as i16 as i32;
+            let min_len = i16r(r, b + 0x24);
+            if spd < min_len {
+                continue;
+            }
+            let mut a = (crate::tables::ratan2(t, ddx, ddz) as u32).wrapping_sub(u16::from_le_bytes([r[0xE], r[0xF]]) as u32);
+            let ai = ((a << 16) as i32) >> 16;
+            if ai > 0x800 {
+                a = a.wrapping_sub(0x1000);
+            } else if ai < -0x800 {
+                a = a.wrapping_add(0x1000);
+            }
+            let ang = (a & 0xFFF) as i32;
+            let s = dz(t.sin_raw(ang), 2);
+            let c = dz(t.cos_raw(ang), 2);
+            let h = min_len / 2;
+            let (ox, oz) = (i16r(r, b + 0x18), i16r(r, b + 0x1C));
+            let q = |v: i32| dz(v, 12);
+            let p0 = (-(ox + q(-h * c)), -(oz + q(-(-h * s))));
+            let p1 = (-(ox + q(h * c)), -(oz + q(-(h * s))));
+            let p2 = (-(ox + q(h * c + -spd * s)), -(oz + q(-(h * s) + -spd * c)));
+            let p3 = (-(ox + q(-h * c + -spd * s)), -(oz + q(h * s + -spd * c)));
+            let m = |o: usize| i16r(r, o);
+            let rot = |p: (i32, i32)| -> [i16; 3] {
+                let (x, z) = (p.0 as i16 as i32, p.1 as i16 as i32);
+                [((x * m(0x18C) + z * m(0x190)) >> 12) as i16, ((x * m(0x192) + z * m(0x196)) >> 12) as i16, ((x * m(0x198) + z * m(0x19C)) >> 12) as i16]
+            };
+            let pos = [i32r(r, 0), i32r(r, 4), i32r(r, 8)];
+            let col = intensity.wrapping_mul(3);
+            let f = self.take();
+            *f = Flat {
+                pos,
+                corners: [rot(p0), rot(p1), rot(p2), rot(p3)],
+                uv: [0xF, 0xF, 2, 2],
+                abr: 0x40,
+                life: 1,
+                slot: 0x14,
+                clut: 0,
+                scale: 0x80,
+                flags: 1,
+                grow: 0,
+                rgb: [col; 3],
+            };
+        }
+    }
+
+    /// FUN_80033B98: one race frame of `dt` VBlanks. A quad whose life runs
+    /// out is still drawn this frame (life = 0x8000) and freed by the next.
+    pub fn update(&mut self, dt: i32) {
+        for f in self.list.iter_mut() {
+            let l = f.life & 0x7FFF;
+            f.life = l;
+            if l != 0 {
+                let n = (l as i32 - dt) as i16;
+                f.life = n as u16;
+                if n < 0 {
+                    f.life = 0x8000;
+                }
+                let s = f.scale as i32 + f.grow as i32 * dt;
+                f.scale = if (s as i16) > 0xFF { 0xFF } else { s as u8 };
+            }
+        }
+    }
+
+    pub fn read(m: &Mem) -> Flats {
+        let mut list = [Flat::default(); N_FLATS];
+        for (i, f) in list.iter_mut().enumerate() {
+            let a = flat_addr::LIST + FLAT_STRIDE * i as u32;
+            let mut corners = [[0i16; 3]; 4];
+            for (k, c) in corners.iter_mut().enumerate() {
+                for (j, v) in c.iter_mut().enumerate() {
+                    *v = m.i16(a + 0xC + 6 * k as u32 + 2 * j as u32);
+                }
+            }
+            *f = Flat {
+                pos: [m.i32(a), m.i32(a + 4), m.i32(a + 8)],
+                corners,
+                uv: [m.u8(a + 0x24), m.u8(a + 0x25), m.u8(a + 0x26), m.u8(a + 0x27)],
+                abr: m.i16(a + 0x28),
+                life: m.u16(a + 0x2A),
+                slot: m.u8(a + 0x2C),
+                clut: m.u8(a + 0x2D),
+                scale: m.u8(a + 0x2E),
+                flags: m.u8(a + 0x2F),
+                grow: m.u8(a + 0x30) as i8,
+                rgb: [m.u8(a + 0x31), m.u8(a + 0x32), m.u8(a + 0x33)],
+            };
+        }
+        Flats { list, next: m.u8(flat_addr::NEXT), skid: [[0; 8]; 8] }
+    }
+}
+
+#[cfg(test)]
+mod flat_tests {
+    use super::*;
+
+    #[test]
+    fn splash_grows_fades_and_dies_after_its_last_draw() {
+        let mut f = Flats::default();
+        f.splash([0, 0, 0], 0xC0);
+        assert_eq!(f.list[0].corners[0], [-0xC0, 0, 0xC0]);
+        assert_eq!(f.next, 1);
+        for _ in 0..15 {
+            f.update(2);
+        }
+        assert_eq!(f.list[0].life, 2);
+        assert_eq!(f.list[0].scale, 0x40 + 2 * 2 * 15);
+        f.update(2);
+        assert_eq!(f.list[0].life, 0);
+        f.update(2);
+        assert_eq!(f.list[0].life, 0);
+        f.splash([0, 0, 0], 1);
+        f.list[1].life = 1;
+        f.update(2);
+        assert_eq!(f.list[1].life, 0x8000, "drawn once more, then freed");
+        f.update(2);
+        assert_eq!(f.list[1].life, 0);
+    }
+
+    #[test]
+    fn ring_wraps_at_32() {
+        let mut f = Flats::default();
+        for _ in 0..33 {
+            f.splash([0, 0, 0], 1);
+        }
+        assert_eq!(f.next, 1);
+    }
+}

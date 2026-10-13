@@ -132,3 +132,52 @@ pub fn draw(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    /// FUN_8007B800's records against an oracle capture of the shadow list
+    /// (tools/oracle/fx_capture.py, Session 5: analysis/s5/fx/race3d);
+    /// skipped when the capture or the disc is absent.
+    #[test]
+    fn pickup_shadow_records_match_the_oracle() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../analysis/s5/fx/race3d");
+        let (Ok(meta), Ok(data)) = (std::fs::read_to_string(format!("{dir}/meta.json")), std::fs::read(format!("{dir}/frames.bin"))) else { return };
+        let Ok(mut disc) = mr_disc::Disc::open_default() else { return };
+        let exe = disc.read("SLUS_012.37").unwrap();
+        let w = mr_sim::world::World::dock(&mut disc).unwrap();
+        let recs = super::build(&w, &exe);
+        // regions from meta.json
+        let i = meta.find("\"regions\"").unwrap();
+        let body = &meta[i..meta[i..].find("]]").unwrap() + i];
+        let nums: Vec<i64> = body.split(|c: char| !c.is_ascii_digit()).filter_map(|t| t.parse().ok()).collect();
+        let regions: Vec<(u32, usize)> = nums.chunks_exact(2).map(|c| (c[0] as u32, c[1] as usize)).collect();
+        let size: usize = regions.iter().map(|r| r.1).sum();
+        let row = &data[100 * size..101 * size];
+        let read = |addr: u32, n: usize| -> Option<Vec<u8>> {
+            let mut o = 0;
+            for &(a, l) in &regions {
+                if addr >= a && addr as usize + n <= a as usize + l {
+                    return Some(row[o + (addr - a) as usize..o + (addr - a) as usize + n].to_vec());
+                }
+                o += l;
+            }
+            None
+        };
+        let (mut ok, mut n) = (0, 0);
+        for ps in &recs {
+            let Some(b) = read(0x800C_8B38 + 0x30 * (6 + ps.pickup as u32), 0x30) else { continue };
+            n += 1;
+            let i32at = |o: usize| i32::from_le_bytes(b[o..o + 4].try_into().unwrap());
+            let i16at = |o: usize| i16::from_le_bytes([b[o], b[o + 1]]);
+            let offs: [[i16; 3]; 4] = std::array::from_fn(|k| std::array::from_fn(|j| i16at(0xC + 6 * k + 2 * j)));
+            let r = &ps.rec;
+            if r.origin == [i32at(0), i32at(4), i32at(8)] && r.offs == offs && b[0x24] == r.uv0[0] && b[0x26] == r.uv0[1] && b[0x28] == r.slot && b[0x2A] == r.count {
+                ok += 1;
+            } else {
+                eprintln!("pickup {}: port {:?}\n  game origin {:?} offs {:?}", ps.pickup, r, [i32at(0), i32at(4), i32at(8)], offs);
+            }
+        }
+        eprintln!("pickup shadow records: {ok} / {n} exact");
+        assert!(n > 0 && ok == n);
+    }
+}

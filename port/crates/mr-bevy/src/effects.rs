@@ -74,6 +74,10 @@ pub struct FxFrame {
     pub streaks: Vec<Streak>,
     /// FUN_800313BC list quads (the status effects' shapes, kartfx.rs).
     pub quads: Vec<crate::kartfx::Quad3>,
+    /// The flat list 0x800C84B8 (splash rings, skid quads; FUN_800342B8).
+    pub flats: Vec<mr_sim::particles::Flat>,
+    /// The eye (world units) the flats are culled against.
+    pub eye: [i32; 3],
     pub manual: bool,
 }
 
@@ -504,8 +508,10 @@ fn capture_source(
     out.billboards.extend(parts.list.iter().filter_map(|p| t.particle(p)));
     let sparks = Sparks::read(&m);
     out.streaks.extend(sparks.list.iter().filter_map(|s| t.spark(s)));
+    out.flats = mr_sim::particles::Flats::read(&m).list.iter().filter(|f| f.life != 0).copied().collect();
     let c = 0x800C_4F40;
     let cam = FxCamera { roll: m.i16(c + 0x54) as i32, yaw: m.i16(c + 0x52) as i32, eye: [m.i32(c + 0x28), m.i32(c + 0x2C), m.i32(c + 0x30)] };
+    out.eye = cam.eye;
     items_from_mem(&t, &m, cam, m.i32(0x800B_0D90), &mut out.billboards);
     let mut h = 0u8;
     for k in 0..6u32 {
@@ -564,6 +570,10 @@ fn session_source(
     if let Some(sparks) = s.sparks() {
         out.streaks.extend(sparks.list.iter().filter_map(|k| t.spark(k)));
     }
+    if let Some(f) = s.flats() {
+        out.flats = f.list.iter().filter(|f| f.life != 0).copied().collect();
+    }
+    out.eye = cam.eye;
     items_from_mem(&t, m, cam, frame, &mut out.billboards);
     let mut h = 0u8;
     for (slot, rec) in &recs {
@@ -593,6 +603,69 @@ fn draw(fx: Res<FxFrame>, t: Option<Res<FxTables>>, mut prims: ResMut<FxPrims>, 
     }
     if let Some(t) = t {
         prims.list.extend(fx.quads.iter().filter_map(|q| crate::kartfx::quad_prim(&t, q, ct.translation, ct.rotation)));
+        for f in &fx.flats {
+            flat_prims(&t, f, fx.eye, &mut prims.list);
+        }
+    }
+}
+
+/// FUN_800342B8 for one entry of the flat list: within 0x40000 of the eye
+/// on every axis; corners * scale / 128 around the position (world
+/// orientation, no rotation of its own); FUN_80033C44's colour (gradient:
+/// the far edge black; fade: * life / 16 over the last 16 VBlanks) and
+/// blend; flag 0x80 splits it 2 x 2 with the texture mirrored per quarter.
+pub fn flat_prims(t: &FxTables, f: &mr_sim::particles::Flat, eye: [i32; 3], out: &mut Vec<FxPrim>) {
+    if f.life == 0 || !(0..3).all(|k| ((f.pos[k].wrapping_sub(eye[k])) as u32).wrapping_add(0x40000) < 0x80001) {
+        return;
+    }
+    let sc = |c: i16| {
+        let v = c as i32 * f.scale as i32;
+        (if v < 0 { v + 0x7F } else { v }) >> 7
+    };
+    let v: [[i32; 3]; 4] = std::array::from_fn(|k| f.corners[k].map(sc));
+    let rgb = if f.flags & 1 == 0 && f.flags & 2 != 0 && (f.life as i16 as i32) < 0x10 {
+        let l = f.life as i16 as i32;
+        f.rgb.map(|c| {
+            let x = (c as u32).wrapping_mul(l as u32);
+            let x = if (x as i32) < 0 { x.wrapping_add(0xF) } else { x };
+            (x >> 4) as u8
+        })
+    } else {
+        f.rgb
+    };
+    let (u, vv) = (f.uv[0], f.uv[1]);
+    let (u1, v1) = (f.uv[2].wrapping_add(u).wrapping_sub(1), f.uv[3].wrapping_add(vv).wrapping_sub(1));
+    let (tp, cl) = t.slot_attr(f.slot as usize, f.clut as u16, f.abr as u16);
+    let blend = if f.abr == 0x60 { Blend::Opaque } else { Blend::Abr(((f.abr >> 5) & 3) as u8) };
+    let w = |p: [i32; 3]| crate::to_bevy(f.pos[0] + p[0] * 32, f.pos[1] + p[1] * 32, f.pos[2] + p[2] * 32);
+    // one GT4 in GPU order (p0, p1, p2, p3) with uvs, the first two vertices
+    // coloured and, with the gradient flag, the last two black
+    let mut quad = |p: [[i32; 3]; 4], uv: [[u8; 2]; 4]| {
+        let far = if f.flags & 1 != 0 { [0u8; 3] } else { rgb };
+        let cols = [rgb, rgb, far, far];
+        let pos: [Vec3; 4] = std::array::from_fn(|k| w(p[k]));
+        out.push(FxPrim {
+            v: std::array::from_fn(|k| FxVert { pos: pos[k], uv: [uv[k][0] as f32, uv[k][1] as f32], rgb: cols[k].map(|c| c as f32 / 128.0) }),
+            page: Some((tp & !0x60, cl)),
+            blend,
+            center: (pos[0] + pos[1] + pos[2] + pos[3]) * 0.25,
+            // lying on the ground / water
+            ground_eps: 0.25 * (pos[0] - pos[3]).length().max((pos[1] - pos[2]).length()),
+            ground_radius: (pos[0] - pos[3]).length().max((pos[1] - pos[2]).length()),
+            depth_pull: 0.0,
+        });
+    };
+    let (a, b, c, d) = ([u, vv], [u1, vv], [u, v1], [u1, v1]);
+    if f.flags & 0x80 == 0 {
+        // corners v0, v1, v2, v3 -> GPU v0, v1, v3, v2
+        quad([v[0], v[1], v[3], v[2]], [a, b, c, d]);
+    } else {
+        let mid = |p: [i32; 3], q: [i32; 3]| [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2, (p[2] + q[2]) / 2];
+        let (m01, m12, m23, m30, cen) = (mid(v[0], v[1]), mid(v[1], v[2]), mid(v[2], v[3]), mid(v[3], v[0]), mid(v[0], v[2]));
+        quad([v[0], m01, m30, cen], [a, b, c, d]);
+        quad([m01, v[1], cen, m12], [b, a, d, c]);
+        quad([cen, m12, m23, v[2]], [d, c, b, a]);
+        quad([m30, cen, v[3], m23], [c, d, a, b]);
     }
 }
 

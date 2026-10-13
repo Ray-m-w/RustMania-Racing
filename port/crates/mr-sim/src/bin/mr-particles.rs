@@ -13,7 +13,7 @@
 //! counted separately: their spawns are the item code's (track A).
 
 use mr_sim::mem::Mem;
-use mr_sim::particles::{Particles, Sparks};
+use mr_sim::particles::{Flats, Particles, Sparks};
 
 struct Cap {
     regions: Vec<(u32, usize)>,
@@ -93,6 +93,10 @@ fn main() {
     let d90 = |m: &Mem| m.i32(0x800B_0D90);
     let (mut frames, mut p_ok, mut p_bad, mut p_new, mut p_live, mut p_spawn_ok) = (0, 0, 0, 0, 0, 0);
     let (mut s_ok, mut s_bad, mut s_new) = (0, 0, 0);
+    // flat quads 0x800C84B8 (captures with that region, Session 5)
+    let has_flats = cap.regions.iter().any(|r| r.0 == mr_sim::particles::flat_addr::LIST);
+    let w = mr_sim::world::World::dock(&mut disc).expect("world");
+    let (mut f_ok, mut f_bad, mut f_live, mut f_skid, mut f_splash) = (0, 0, 0, 0, 0);
     let mut prev: Option<Mem> = None;
     let mut shown = 0;
     for i in 0..cap.vbs.len() {
@@ -173,7 +177,55 @@ fn main() {
                 }
             }
         }
+        if has_flats {
+            // teacher-forced FUN_8007916C tail for the human kart: splash
+            // (when the game spawned one: its random decision is not
+            // replayed), FUN_80033440 skids from this frame's record with
+            // last frame's intensities (+0x3F), then FUN_80033B98
+            let mut fa = Flats::read(pm);
+            let fb = Flats::read(&m);
+            let rp = pm.slice(0x800C_30A8, 0x504).to_vec();
+            let rec = m.slice(0x800C_30A8, 0x504).to_vec();
+            for wh in 0..8 {
+                fa.skid[0][wh] = rp[0x3F + 0x2C * wh.min(5)];
+            }
+            let first = fa.next as usize;
+            let splashed = fb.list[first].abr == 0x20 && fb.list[first].uv[0] == 0x60 && fa.list[first] != fb.list[first];
+            if splashed {
+                let i16r = |o: usize| i16::from_le_bytes([rec[o], rec[o + 1]]) as i32;
+                let i32r = |o: usize| i32::from_le_bytes(rec[o..o + 4].try_into().unwrap());
+                let size = { let v = i16r(0x176) * i16r(0x442); (if v < 0 { v + 0xFFF } else { v }) >> 12 };
+                fa.splash([i32r(0), i32r(0x398), i32r(8)], size);
+                f_splash += 1;
+            }
+            let before = fa.next;
+            fa.skids(0, &rec, dt, &w.tables);
+            f_skid += (fa.next as i32 - before as i32).rem_euclid(32);
+            fa.update(dt);
+            for s in 0..32 {
+                if fb.list[s].life != 0 {
+                    f_live += 1;
+                }
+                if fa.list[s] == fb.list[s] {
+                    f_ok += 1;
+                } else {
+                    f_bad += 1;
+                    if shown < 24 {
+                        shown += 1;
+                        eprintln!("vb {} flat {s} dt {dt}:
+  port {:?}
+  game {:?}", cap.vbs[i], fa.list[s], fb.list[s]);
+                    }
+                }
+            }
+            if fa.next != fb.next {
+                f_bad += 1;
+            }
+        }
         prev = Some(m);
+    }
+    if has_flats {
+        println!("flats:     {f_ok} slot-frames exact, {f_bad} differ, {f_live} live slot-frames, {f_skid} skid quads spawned by the port, {f_splash} splashes taken from the game");
     }
     println!("frames {frames}");
     println!("particles: {p_ok} slot-frames exact, {p_bad} differ, {p_new} spawned this frame ({p_spawn_ok} with the type table's fields), {p_live} live slot-frames");

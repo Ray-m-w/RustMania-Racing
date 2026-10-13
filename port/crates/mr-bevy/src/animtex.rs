@@ -54,6 +54,17 @@ fn setup(mut at: ResMut<AnimTex>) {
     let file = disc.read(&path).expect("read RAW");
     let env = raw::LoadEnv::from_exe(&exe, crate::scene::DOCK).expect("env");
     let dec = raw::decode(&file, &env).expect("decode RAW");
+    // dev: MRM_ANIM_DUMP=PATH writes every strip's frames (VRAM halfwords)
+    // as JSON, to match oracle read_vram dumps (timing checks)
+    if let Ok(path) = std::env::var("MRM_ANIM_DUMP") {
+        let mut j = String::from("{");
+        for (n, a) in dec.anims.iter().enumerate() {
+            let fr: Vec<String> = a.frames.iter().map(|f| format!("{:?}", f)).collect();
+            j += &format!("{}\"{}\": [{}]", if n > 0 { ", " } else { "" }, a.slot, fr.join(", "));
+        }
+        j += "}";
+        let _ = std::fs::write(path, j);
+    }
     for a in &dec.anims {
         if let Some(s) = place(&exe, &dec.slots, a) {
             if std::env::var("MRM_ANIM_DEBUG").is_ok() {
@@ -108,12 +119,18 @@ fn step(
         (Some(c), Some(mut r)) => r.u32_at(c.vb, 0x800B_0D90).map(|v| v as i32),
         _ => None,
     };
+    // The counter steps after the frame's draw (S4 HUD timing): the frame
+    // on screen was textured with the value one race frame (dt) earlier.
+    // Side-by-sides against the oracle (VB 2510, 3010) put the item-box star
+    // within one strip frame with this (two frames ahead without it).
     let f = match (&p.driver, captured) {
-        (_, Some(f)) => f,
-        (crate::Driver::Sim(run), None) => run.session.globals.frame,
+        (_, Some(f)) => f - 2,
+        (crate::Driver::Sim(run), None) => run.session.globals.frame - run.session.globals.dt.max(1) as i32,
         // trace replays: the frame counter advances 2 per tick
-        _ => (p.tick * 2) as i32,
+        _ => (p.tick * 2) as i32 - 2,
     };
+    // dev: MRM_ANIM_OFFSET=n shifts the counter the strips see (timing checks)
+    let f = f - std::env::var("MRM_ANIM_OFFSET").ok().and_then(|v| v.parse::<i32>().ok()).unwrap_or(0);
     for s in at.strips.iter_mut() {
         let Some(k) = frame_for(s.slot, f) else { continue };
         let k = k.min(s.frames.len().saturating_sub(1));

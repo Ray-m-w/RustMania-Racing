@@ -465,8 +465,8 @@ fn capture_source(cap: Option<Res<crate::capture::CaptureReplay>>, rows: Option<
 
 /// A live mr-sim session: its item state, kart records, frame counter and
 /// camera roll written into a scratch game-layout memory, then the same
-/// conversions as for captures. (Particles and sparks join here once the
-/// session carries them: `Session::particles()` / `sparks()`, track A.)
+/// conversions as for captures; particles and sparks straight from
+/// `Session::particles()` / `sparks()` (track A owns them in the race state).
 fn session_source(p: Res<crate::Player>, cap: Option<Res<crate::capture::CaptureReplay>>, t: Option<Res<FxTables>>, mut fx: ResMut<FxFrame>, mut st: Local<(u64, Option<Mem>)>) {
     let Some(t) = t else { return };
     if fx.manual || cap.is_some() {
@@ -488,6 +488,12 @@ fn session_source(p: Res<crate::Player>, cap: Option<Res<crate::capture::Capture
     let frame = s.globals.frame;
     let cam = FxCamera { roll: s.camera.roll as i32 };
     let mut out = FxFrame::default();
+    if let Some(parts) = s.particles() {
+        out.billboards.extend(parts.list.iter().filter_map(|p| t.particle(p)));
+    }
+    if let Some(sparks) = s.sparks() {
+        out.streaks.extend(sparks.list.iter().filter_map(|k| t.spark(k)));
+    }
     items_from_mem(&t, m, cam, frame, &mut out.billboards);
     for rec in &recs {
         kart_effects(&t, rec, cam, frame, &mut out.billboards);

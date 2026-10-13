@@ -90,11 +90,24 @@ pub fn frame_for(slot: u32, f: i32) -> Option<usize> {
     Some(r as usize)
 }
 
-fn step(p: Res<crate::Player>, mut at: ResMut<AnimTex>, tex: Option<ResMut<VramTextures>>, mut images: ResMut<Assets<Image>>) {
+fn step(
+    p: Res<crate::Player>,
+    cap: Option<Res<crate::capture::CaptureReplay>>,
+    rows: Option<ResMut<crate::effects::CapRows>>,
+    mut at: ResMut<AnimTex>,
+    tex: Option<ResMut<VramTextures>>,
+    mut images: ResMut<Assets<Image>>,
+) {
     let Some(mut tex) = tex else { return };
-    let f = match &p.driver {
-        crate::Driver::Sim(run) => run.session.globals.frame,
-        // replays: the frame counter advances 2 per tick
+    // an fx capture replay carries the game's frame counter
+    let captured = match (cap, rows) {
+        (Some(c), Some(mut r)) => r.u32_at(c.vb, 0x800B_0D90).map(|v| v as i32),
+        _ => None,
+    };
+    let f = match (&p.driver, captured) {
+        (_, Some(f)) => f,
+        (crate::Driver::Sim(run), None) => run.session.globals.frame,
+        // trace replays: the frame counter advances 2 per tick
         _ => (p.tick * 2) as i32,
     };
     for s in at.strips.iter_mut() {

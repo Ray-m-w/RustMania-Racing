@@ -393,6 +393,22 @@ impl CapRows {
         let size = regions.iter().map(|r| r.1).sum();
         Some(CapRows { file: std::fs::File::open(format!("{dir}/frames.bin")).ok()?, regions, vbs, size })
     }
+    /// One 32-bit word of the row at `vb`.
+    pub(crate) fn u32_at(&mut self, vb: i64, addr: u32) -> Option<u32> {
+        let i = self.vbs.iter().position(|&v| v == vb)?;
+        let mut o = 0;
+        for &(a, n) in &self.regions {
+            if addr >= a && addr + 4 <= a + n as u32 {
+                let mut b = [0u8; 4];
+                self.file.seek(SeekFrom::Start((i * self.size + o + (addr - a) as usize) as u64)).ok()?;
+                self.file.read_exact(&mut b).ok()?;
+                return Some(u32::from_le_bytes(b));
+            }
+            o += n;
+        }
+        None
+    }
+
     pub(crate) fn mem(&mut self, vb: i64) -> Option<Mem> {
         let i = self.vbs.iter().position(|&v| v == vb)?;
         let mut b = vec![0u8; self.size];
@@ -558,11 +574,18 @@ fn draw(
         // depth buffer, pull camera-facing sprites toward the eye by their
         // radius (at most half the distance) instead (render ledger).
         let mut c = crate::to_bevy(b.pos[0], b.pos[1], b.pos[2]);
+        // (moving along the eye ray keeps the projected centre; the size is
+        // scaled by the same ratio so the sprite keeps its on-screen size)
+        let (mut hw, mut hh) = (hw, hh);
         if !b.flat {
             let to_eye = ct.translation - c;
             let d = to_eye.length();
             if d > 1e-3 {
-                c += to_eye / d * hw.abs().max(hh.abs()).min(d * 0.5);
+                let pull = hw.abs().max(hh.abs()).min(d * 0.5);
+                c += to_eye / d * pull;
+                let k = (d - pull) / d;
+                hw *= k;
+                hh *= k;
             }
         }
         let (s, co) = ((b.angle as f32) * std::f32::consts::TAU / 4096.0).sin_cos();

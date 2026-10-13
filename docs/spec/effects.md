@@ -118,13 +118,36 @@ FUN_80040428, FUN_80069648, FUN_8007F03C. [CODE: callers]
 - **Projectiles** (FUN_80030D78): 4 x 0x48 at 0x800DDC50, drawn while
   +0x2E: flags 0x40 a wobbling star (0x90 x 0xC0, uv (0x40, 0x82) 0x27 x
   0x3D, slot 0x14 clut 9, standing on the point), flags 1 uv (0x40, 0x56)
-  0x29 square slot 0x15 clut 5 (0xC0), 0x400 a 3D model (FUN_80030AD8, not
-  drawn yet), else uv (0xC0, 0xC0) 0x13 x 0x37 slot 0x15 clut 0xF (0x64 x
-  0x118); angle +0x3A. [CODE]
-- Not drawn yet: kart status effects FUN_80037B80 (+0x599 cases), the
-  special-move glow (+0x4D6, two sparkles per kart in FUN_8007E21C), the
-  kart flames FUN_8007D660 (+0x4B4 > 0xF), FUN_800342B8, the course
-  ambient list 0x800D75D0 (DAT_800B0ACA, off on DOCK).
+  0x29 square slot 0x15 clut 5 (0xC0), flags 0x400 FUN_80030AD8(x, y, z,
+  vx, vz, slot): one of the 16 view frames 0x800A8848 (u, v, uw; vh 0x1F;
+  slot 0x14 clut 7; 0xC0 square) picked by ((ratan2(vx, vz) - camera yaw
+  +0x52, wrapped) + 0x92) / 0x125 and wobbling with the slot's phase, else
+  uv (0xC0, 0xC0) 0x13 x 0x37 slot 0x15 clut 0xF (0x64 x 0x118); angle
+  +0x3A. Weapon types 0..3 fire flags 0x1D, 0x280, 0x588, 0x78 (track A).
+  [CODE 80030d78, 80030ad8]
+- **Kart effects** (mr-bevy `kart_effects`, from each kart record): the
+  special-move glow (+0x4D6: two additive sparkles spinning both ways,
+  size (0x1000 - +0x442) * 384 / 240 >> 12, FUN_8007E21C) and the status
+  effects of FUN_80037B80 by +0x4F1 that it draws inline (cases 4, 0xF,
+  0x10, 0x13, 0x14, 0x17: billboards above the kart from the effect's
+  record fields +0x300..+0x340, wobbling with the kart's phase +0x4D7).
+  [CODE 8007e21c, 80037b80]
+- Not drawn yet: FUN_80037B80's function cases (0 FUN_80036A34, 0xB
+  FUN_800365C0, 0xC FUN_800376A4, 0xE FUN_80037018, 0x15 FUN_80037364),
+  the exhaust flames FUN_8007D660 (+0x4B4 > 0xF; vehicle exhaust points,
+  colour table 0x800AC5E4, frame bytes DAT_800B07B4..07B7), the 3D
+  explosion shapes of FUN_800342B8 (list 0x800C84B8; the white core of an
+  explosion), the pickup shadows, the course ambient list 0x800D75D0
+  (DAT_800B0ACA, off on DOCK).
+
+Sources in mr-bevy: `--replay-capture DIR` of an fx capture (everything
+read from the captured RAM at the replayed VBlank, the HUD too), or the live
+session: `Session::particles()` / `sparks()` (track A owns them in the race
+state and spawns them from the item code) and `Session::items()` written
+into a scratch game-layout memory with the kart records, so both sources
+share one conversion. Screenshots against the oracle:
+`analysis/fx/shots/sbs_fx.png` (VB 2350, 2510, 2760, 3010, 3650, 4420;
+oracle left, Bevy right, `tools/oracle/fx_shots.py` + `fx_sbs.py`).
 
 ## Animated textures (RAW type 0x22): FUN_8007A9DC -> FUN_800311AC
 

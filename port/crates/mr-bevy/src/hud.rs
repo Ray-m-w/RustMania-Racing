@@ -82,6 +82,10 @@ struct HudRes {
     mats: HashMap<MatKey, Handle<StandardMaterial>>,
     pool: Vec<(Entity, Handle<Mesh>)>,
     last: Option<Vec<Prim>>,
+    /// Game pixels the view is wider than 512 (widescreen), split evenly
+    /// left and right; the layout was last drawn for `last_extra`.
+    extra: f32,
+    last_extra: f32,
 }
 
 /// (texpage without abr, clut, textured, semi, abr)
@@ -101,7 +105,7 @@ impl Plugin for HudPlugin {
             .init_resource::<HudInput>()
             .init_resource::<ItemHudInput>()
             .add_systems(Startup, setup.after(crate::scene::setup))
-            .add_systems(Update, (state_from_player, items_from_player, draw.after(state_from_player).after(items_from_player)));
+            .add_systems(Update, (state_from_player, items_from_player, fit_hud, draw.after(state_from_player).after(items_from_player).after(fit_hud)));
     }
 }
 
@@ -116,7 +120,7 @@ fn setup(mut commands: Commands) {
     let env = mr_assets::raw::LoadEnv::from_exe(&exe, crate::scene::DOCK).expect("env");
     let dec = mr_assets::raw::decode(&file, &env).expect("decode RAW");
     let slots = hud::slot_attrs(&dec.slots);
-    commands.insert_resource(HudRes { tables, items, slots, mats: HashMap::new(), pool: Vec::new(), last: None });
+    commands.insert_resource(HudRes { tables, items, slots, mats: HashMap::new(), pool: Vec::new(), last: None, extra: 0.0, last_extra: 0.0 });
     commands.spawn((
         Camera3d::default(),
         Camera { order: 10, clear_color: ClearColorConfig::None, ..default() },
@@ -127,10 +131,135 @@ fn setup(mut commands: Commands) {
             ..OrthographicProjection::default_3d()
         }),
         Tonemapping::None,
+        crate::settings::Settings::global().msaa(),
         Transform::from_xyz(0.0, 0.0, 50.0),
         RenderLayers::layer(HUD_LAYER),
         HudCamera,
     ));
+}
+
+/// Widescreen: the HUD view is 240 game lines high and as wide as the
+/// viewport's aspect allows (a 4:3 view = 512 game pixels, the PS1's
+/// non-square pixels); the extra width goes half to each side and `draw`
+/// pins every HUD element to its left / centre / right third (as the recomp
+/// package's auto_ui_squash does: game.toml [widescreen]).
+fn fit_hud(mut res: Option<ResMut<HudRes>>, mut cam: Query<(&Camera, &mut Projection), With<HudCamera>>) {
+    let Some(res) = res.as_mut() else { return };
+    let Ok((c, mut proj)) = cam.single_mut() else { return };
+    let Some(size) = c.logical_viewport_size() else { return };
+    if size.y <= 0.0 {
+        return;
+    }
+    let width = (SCREEN_W * (size.x / size.y) / (4.0 / 3.0)).max(SCREEN_W);
+    let extra = ((width - SCREEN_W) * 4.0).round() / 4.0;
+    if (res.extra - extra).abs() > 0.01 {
+        res.extra = extra;
+    }
+    if let Projection::Orthographic(o) = &mut *proj {
+        let want = ScalingMode::Fixed { width: SCREEN_W + extra, height: SCREEN_H };
+        if !matches!(o.scaling_mode, ScalingMode::Fixed { width, .. } if (width - (SCREEN_W + extra)).abs() < 0.01) {
+            o.scaling_mode = want;
+        }
+    }
+}
+
+/// Screen-space box (x0, y0, x1, y1) of a primitive, game pixels.
+fn prim_box(p: &Prim) -> [f32; 4] {
+    let pts: Vec<[f32; 2]> = match *p {
+        Prim::Sprt(s) => vec![[s.x as f32, s.y as f32], [(s.x + s.w) as f32, (s.y + s.h) as f32]],
+        Prim::Ft4(q) => q.v.iter().map(|v| [v[0] as f32, v[1] as f32]).collect(),
+        Prim::F3 { v, .. } => v.iter().map(|v| [v[0] as f32, v[1] as f32]).collect(),
+        Prim::Line { v, .. } => v.iter().map(|v| [v[0] as f32, v[1] as f32]).collect(),
+    };
+    let mut b = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
+    for q in pts {
+        b = [b[0].min(q[0]), b[1].min(q[1]), b[2].max(q[0]), b[3].max(q[1])];
+    }
+    b
+}
+
+/// Horizontal shift per primitive for a view `extra` game pixels wider than
+/// 512: primitives are grouped into elements (boxes closer than 6 pixels
+/// join, transitively: a word, the minimap with its markers, a slot with its
+/// icon, the results panel), and each element whose box lies in the left
+/// 30% of the screen moves left by extra/2, in the right 30% right by
+/// extra/2; anything else (place, arrow, timer, banners, countdown, results)
+/// stays centred.
+pub fn anchor_shifts(prims: &[Prim], extra: f32) -> Vec<f32> {
+    let n = prims.len();
+    if extra <= 0.0 || n == 0 {
+        return vec![0.0; n];
+    }
+    let boxes: Vec<[f32; 4]> = prims.iter().map(prim_box).collect();
+    let mut parent: Vec<usize> = (0..n).collect();
+    fn find(p: &mut [usize], i: usize) -> usize {
+        let mut r = i;
+        while p[r] != r {
+            r = p[r];
+        }
+        let mut i = i;
+        while p[i] != r {
+            let nx = p[i];
+            p[i] = r;
+            i = nx;
+        }
+        r
+    }
+    const GAP: f32 = 6.0;
+    for i in 0..n {
+        for j in i + 1..n {
+            let (a, b) = (boxes[i], boxes[j]);
+            if a[0] - GAP <= b[2] && b[0] - GAP <= a[2] && a[1] - GAP <= b[3] && b[1] - GAP <= a[3] {
+                let (ri, rj) = (find(&mut parent, i), find(&mut parent, j));
+                if ri != rj {
+                    parent[ri] = rj;
+                }
+            }
+        }
+    }
+    let mut groups: HashMap<usize, [f32; 4]> = HashMap::new();
+    for i in 0..n {
+        let r = find(&mut parent, i);
+        let b = boxes[i];
+        let g = groups.entry(r).or_insert(b);
+        *g = [g[0].min(b[0]), g[1].min(b[1]), g[2].max(b[2]), g[3].max(b[3])];
+    }
+    (0..n)
+        .map(|i| {
+            let g = groups[&find(&mut parent, i)];
+            if g[2] <= SCREEN_W * 0.3 {
+                -extra / 2.0
+            } else if g[0] >= SCREEN_W * 0.7 {
+                extra / 2.0
+            } else {
+                0.0
+            }
+        })
+        .collect()
+}
+
+/// Pull a sprite's UVs a quarter texel toward its middle. With MSAA the
+/// fragment shader runs at the pixel centre even when only an edge sample
+/// is covered, so UVs extrapolate up to half a pixel past the quad's edge
+/// and point sampling picks the next texel row of the page (thin lines over
+/// the item slots and the meter at 1080p). A quarter texel is below a pixel
+/// at any HUD scale above 2x.
+fn inset_uvs(uv: &mut [[f32; 2]]) {
+    const D: f32 = 0.25 / 256.0;
+    for axis in 0..2 {
+        let lo = uv.iter().map(|t| t[axis]).fold(f32::MAX, f32::min);
+        let hi = uv.iter().map(|t| t[axis]).fold(f32::MIN, f32::max);
+        if hi - lo <= 2.0 * D {
+            continue;
+        }
+        for t in uv.iter_mut() {
+            if t[axis] <= lo {
+                t[axis] += D;
+            } else if t[axis] >= hi {
+                t[axis] -= D;
+            }
+        }
+    }
 }
 
 /// Default HUD state: the player's kart record + HudGlobals.
@@ -414,20 +543,27 @@ fn draw(
         (Some(st), None) => res.tables.layout(&st).into_iter().map(Prim::Sprt).collect(),
         _ => Vec::new(),
     };
-    if res.last.as_ref() == Some(&prims) {
+    if res.last.as_ref() == Some(&prims) && res.last_extra == res.extra {
         return;
     }
     let n = prims.len();
+    let shifts = anchor_shifts(&prims, res.extra);
     for (i, p) in prims.iter().enumerate() {
         let z = (n - i) as f32 * 0.01;
-        let (key, pos, uv, c) = geometry(p, &res.slots, z);
+        let (key, mut pos, mut uv, c) = geometry(p, &res.slots, z);
+        for q in pos.iter_mut() {
+            q[0] += shifts[i];
+        }
+        if key.2 {
+            inset_uvs(&mut uv);
+        }
         let mat = match res.mats.get(&key) {
             Some(m) => m.clone(),
             None => {
                 let (tp, cl, textured, semi, abr) = key;
                 let m = mats.add(StandardMaterial {
                     base_color: Color::WHITE,
-                    base_color_texture: textured.then(|| tex.get(&mut images, tp, cl)),
+                    base_color_texture: textured.then(|| tex.get_nearest(&mut images, tp, cl)),
                     unlit: true,
                     cull_mode: None,
                     alpha_mode: match (semi, abr) {
@@ -481,4 +617,5 @@ fn draw(
         }
     }
     res.last = Some(prims);
+    res.last_extra = res.extra;
 }

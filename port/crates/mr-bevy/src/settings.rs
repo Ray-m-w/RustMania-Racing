@@ -32,11 +32,14 @@ pub struct Opt {
 /// Every option. Tracks append rows here (one line each).
 pub const KNOWN: &[Opt] = &[
     // --- E view ---
+    Opt { key: "faithful_view", default: "false", allowed: "true|false", help: "preset: every view option at the game's look (faithful draw distance, 4:3, nearest, faithful lighting; window 1280x960 unless resolution is set): for side-by-sides with the oracle" },
     Opt { key: "faithful_draw_distance", default: "false", allowed: "true|false", help: "the game's per-frame object selection (visibility stream, cull radius, layer-1 far stand-ins); false = the whole course every frame" },
     Opt { key: "aspect", default: "native", allowed: "native|4:3", help: "native = the window's aspect (horizontal FOV widened, vertical FOV kept, HUD pinned to its edges); 4:3 = the game's view, pillarboxed" },
     Opt { key: "msaa", default: "4", allowed: "off|1|2|4|8", help: "multisample anti-aliasing samples (off = 1)" },
     Opt { key: "texture_filter", default: "smooth", allowed: "nearest|smooth", help: "nearest = PS1 point sampling; smooth = bilinear + mipmaps (cut-out edges bled, no fringes)" },
     Opt { key: "lighting", default: "faithful", allowed: "faithful|enhanced", help: "faithful = the game's baked vertex colours only; enhanced = prototype atmospheric depth over them (owner decides)" },
+    Opt { key: "resolution", default: "1600x900", allowed: "", help: "window size WxH in logical pixels" },
+    Opt { key: "fullscreen", default: "false", allowed: "true|false", help: "borderless fullscreen on the current monitor" },
     // --- F effects --- (append below)
     // --- G 60 Hz --- (append below)
 ];
@@ -48,6 +51,8 @@ pub struct Settings {
     pub values: BTreeMap<String, String>,
     /// Where the file was read from (None = no file).
     pub file: Option<std::path::PathBuf>,
+    /// Keys a file or the command line set (not defaults).
+    pub explicit: std::collections::BTreeSet<String>,
 }
 
 static GLOBAL: OnceLock<Settings> = OnceLock::new();
@@ -73,7 +78,7 @@ pub enum Lighting {
 impl Default for Settings {
     fn default() -> Self {
         let values = KNOWN.iter().map(|o| (o.key.to_string(), o.default.to_string())).collect();
-        Settings { values, file: None }
+        Settings { values, file: None, explicit: Default::default() }
     }
 }
 
@@ -195,6 +200,7 @@ impl Settings {
             Some(_) => {}
             None => eprintln!("settings: unknown key {key} (kept)"),
         }
+        self.explicit.insert(key.clone());
         self.values.insert(key, value);
         Ok(())
     }
@@ -217,11 +223,19 @@ impl Settings {
     }
 
     // --- typed getters, E view ---
+    /// The `faithful_view` preset.
+    pub fn faithful_view(&self) -> bool {
+        self.bool("faithful_view", false)
+    }
+
     pub fn faithful_draw_distance(&self) -> bool {
-        self.bool("faithful_draw_distance", false)
+        self.faithful_view() || self.bool("faithful_draw_distance", false)
     }
 
     pub fn aspect(&self) -> Aspect {
+        if self.faithful_view() {
+            return Aspect::FourThree;
+        }
         match self.get("aspect") {
             Some("4:3") => Aspect::FourThree,
             _ => Aspect::Native,
@@ -248,6 +262,9 @@ impl Settings {
     }
 
     pub fn texture_filter(&self) -> TexFilter {
+        if self.faithful_view() {
+            return TexFilter::Nearest;
+        }
         match self.get("texture_filter") {
             Some("nearest") => TexFilter::Nearest,
             _ => TexFilter::Smooth,
@@ -255,10 +272,29 @@ impl Settings {
     }
 
     pub fn lighting(&self) -> Lighting {
+        if self.faithful_view() {
+            return Lighting::Faithful;
+        }
         match self.get("lighting") {
             Some("enhanced") => Lighting::Enhanced,
             _ => Lighting::Faithful,
         }
+    }
+
+    /// Window size (logical pixels) from `resolution` = "WxH".
+    pub fn resolution(&self) -> (u32, u32) {
+        if self.faithful_view() && !self.explicit.contains("resolution") {
+            return (1280, 960);
+        }
+        self.get("resolution")
+            .and_then(|r| r.split_once(['x', 'X']))
+            .and_then(|(w, h)| Some((w.trim().parse().ok()?, h.trim().parse().ok()?)))
+            .filter(|&(w, h): &(u32, u32)| w >= 64 && h >= 64)
+            .unwrap_or((1600, 900))
+    }
+
+    pub fn fullscreen(&self) -> bool {
+        self.bool("fullscreen", false)
     }
 
     /// The file form of these settings (known keys with their help as
@@ -275,6 +311,13 @@ impl Settings {
         }
         s
     }
+}
+
+/// The value after a command-line flag (`--flag VALUE`), for one-off tool flags
+/// that are not settings (paths, debug switches).
+pub fn arg_value(flag: &str) -> Option<String> {
+    let a: Vec<String> = std::env::args().collect();
+    a.iter().position(|x| x == flag).and_then(|i| a.get(i + 1)).cloned()
 }
 
 fn parse_bool(v: &str) -> Option<bool> {
@@ -320,5 +363,9 @@ mod tests {
             t.set(&k, &v).unwrap();
         }
         assert_eq!(t.values, s.values);
+        let mut f = Settings::default();
+        f.apply_args(&args(&["--faithful-view"]));
+        assert!(f.faithful_draw_distance());
+        assert_eq!((f.aspect(), f.texture_filter(), f.resolution()), (Aspect::FourThree, TexFilter::Nearest, (1280, 960)));
     }
 }

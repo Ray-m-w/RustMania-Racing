@@ -24,7 +24,7 @@ pub struct FarCamera;
 /// Make the chase camera draw over a far pass: spawn the far camera as its
 /// child (same projection, order -1, FAR_LAYER only) and set the main
 /// camera to keep the colour buffer. Runs once (called from select_objects).
-pub fn setup_far_pass(commands: &mut Commands, main: Entity, cam: &mut Camera, proj: &Projection) {
+pub fn setup_far_pass(commands: &mut Commands, main: Entity, cam: &mut Camera, proj: &Projection, msaa: Msaa) {
     cam.order = 1;
     cam.clear_color = ClearColorConfig::None;
     commands.entity(main).with_children(|c| {
@@ -35,6 +35,8 @@ pub fn setup_far_pass(commands: &mut Commands, main: Entity, cam: &mut Camera, p
             bevy::core_pipeline::tonemapping::Tonemapping::None,
             Transform::default(),
             RenderLayers::layer(FAR_LAYER),
+            // same sample count as the main camera: they share the target
+            msaa,
             FarCamera,
         ));
     });
@@ -135,6 +137,10 @@ pub fn setup(
     let mut cache = psxmesh::MatCache::default();
     let mut ground_cache = psxmesh::MatCache(Default::default(), -2000.0);
     let mut far_cache = psxmesh::MatCache(Default::default(), 0.0);
+    let info = classify_layers(&dat, &sin, &dslots);
+    if let Some(path) = crate::settings::arg_value("--layer-report") {
+        let _ = std::fs::write(&path, layer_report(&dat, &sin, &dslots, &info));
+    }
     for (i, o) in dat.objects.iter().enumerate() {
         let mut polys = object_polys(&dat, o, &sin, &dslots);
         if textured_only {
@@ -195,7 +201,7 @@ pub fn setup(
         commands.insert_resource(crate::kartshadow::ShadowState::new(SinTable(sin.0.clone()), slot));
     }
 
-    commands.insert_resource(crate::TrackVis { dat, zone: 0 });
+    commands.insert_resource(crate::TrackVis { dat, zone: 0, info });
 
     // Sky dome (DOCK.AXE): gouraud quads drawn around the eye with zero
     // translation (FUN_80034AE4), i.e. directions only. Rendered as a big
@@ -216,6 +222,23 @@ pub fn setup(
                 semi: false,
             })
             .collect();
+        // Horizon colour for the enhanced look's haze (lighting.rs): the
+        // dome's vertices within ~10 degrees of the horizon.
+        let (mut acc, mut n) = (Vec3::ZERO, 0.0);
+        for q in axe.drawn_quads() {
+            for (p, c) in q.iter() {
+                let d = Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32).normalize_or_zero();
+                if d.y.abs() < 0.17 {
+                    let l = Color::srgb_u8(c[0], c[1], c[2]).to_linear();
+                    acc += Vec3::new(l.red, l.green, l.blue);
+                    n += 1.0;
+                }
+            }
+        }
+        if n > 0.0 {
+            let a = acc / n;
+            commands.insert_resource(crate::lighting::SkyHorizon(Color::linear_rgb(a.x, a.y, a.z)));
+        }
         let sky = |p: [i32; 3]| Vec3::new(p[0] as f32, -(p[1] as f32), -(p[2] as f32)) / 1000.0;
         commands.spawn((Transform::default(), Visibility::default(), crate::Sky)).with_children(|c| {
             // The sky sits in one ordering-table slot behind everything: draw
@@ -382,6 +405,7 @@ pub fn banner_polys(b: &dat::Banners, i: usize, sin: &SinTable, phase: (u16, u16
 /// is within 0x2000 DAT units of the eye on every axis (FUN_800351e8).
 pub fn update_banners(
     p: Res<crate::Player>,
+    settings: Res<crate::settings::Settings>,
     mut st: ResMut<BannerState>,
     mut tex: ResMut<VramTextures>,
     mut images: ResMut<Assets<Image>>,
@@ -406,8 +430,9 @@ pub fn update_banners(
         }
     }
     let eye = p.pose.cam.map(|(e, _)| [e[0] / 32, e[1] / 32, e[2] / 32]);
+    let full = !settings.faithful_draw_distance();
     for (b, mut v) in q.iter_mut() {
-        let show = eye.is_some_and(|e| st.banners.visible(b.0, e));
+        let show = full || eye.is_some_and(|e| st.banners.visible(b.0, e));
         let want = if show { Visibility::Inherited } else { Visibility::Hidden };
         if *v != want {
             *v = want;
@@ -423,4 +448,132 @@ impl Plugin for ObjectsPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Update, (update_banners.before(crate::shot), crate::kartshadow::update_shadows.before(crate::shot)));
     }
+}
+
+// ---------------------------------------------------------------------------
+// Draw distance (Session 5): which objects the full-course view draws
+// ---------------------------------------------------------------------------
+
+/// Per-object facts the full draw-distance mode needs, from the data alone.
+pub struct LayerInfo {
+    /// Layer-1 objects that are real backdrop: most of their surface lies
+    /// away from every layer-0 surface (not a coarse copy of near scenery).
+    pub backdrop: Vec<bool>,
+    /// Fraction of each layer-1 object's area within `COVER_R` DAT units of a
+    /// layer-0 surface (layer-0 objects: 1.0).
+    pub coverage: Vec<f32>,
+    /// The visibility stream sets this object's bit at some node of some
+    /// zone (or the track has no zone).
+    pub ever_visible: Vec<bool>,
+}
+
+/// Sample spacing and the "same place" radius, DAT layer-0 units (world >> 5).
+pub const COVER_STEP: f32 = 96.0;
+pub const COVER_R: f32 = 192.0;
+/// A layer-1 object is kept as backdrop when less than this fraction of its
+/// area has layer-0 scenery nearby.
+pub const BACKDROP_MAX_COVER: f32 = 0.5;
+
+/// Area-weighted sample points of a polygon list (DAT units), each with its weight.
+fn surface_samples(polys: &[PsxPoly], step: f32, out: &mut Vec<(Vec3, f32)>) {
+    for p in polys {
+        let v: Vec<Vec3> = p.pos.iter().map(|q| Vec3::new(q[0] as f32, q[1] as f32, q[2] as f32)).collect();
+        let tris: &[[usize; 3]] = if v.len() == 4 { &[[0, 1, 2], [1, 3, 2]] } else { &[[0, 1, 2]] };
+        for t in tris {
+            let (a, b, c) = (v[t[0]], v[t[1]], v[t[2]]);
+            let area = 0.5 * (b - a).cross(c - a).length();
+            let len = (b - a).length().max((c - a).length()).max((c - b).length());
+            let n = ((len / step).ceil() as usize).clamp(1, 64);
+            let w = area / (n * n) as f32;
+            for i in 0..n {
+                for j in 0..n - i {
+                    // centre of sub-triangle (i, j) of an n x n split
+                    let (s, r) = ((i as f32 + 1.0 / 3.0) / n as f32, (j as f32 + 1.0 / 3.0) / n as f32);
+                    out.push((a + (b - a) * s + (c - a) * r, w));
+                }
+            }
+        }
+    }
+}
+
+/// Drawn in the full draw-distance mode: every layer-0 object the game can
+/// show (its visibility bit is set at some node, kind != 5), except the
+/// special-slot objects (the item code moves those at run time; they sit
+/// parked off the course otherwise), plus the layer-1 objects that are real
+/// backdrop. Layer-1 stand-ins of layer-0 scenery are dropped.
+pub fn full_view_object(dat: &Dat, info: &LayerInfo, i: usize) -> bool {
+    if dat.special.iter().any(|s| *s == Some(i)) {
+        return false;
+    }
+    if i >= dat.layer0_count {
+        return info.backdrop[i];
+    }
+    info.ever_visible[i] && dat.objects[i].loaded_flags() != 5
+}
+
+pub fn classify_layers(dat: &Dat, sin: &SinTable, slots: &[Option<dat::TexSlot>; 32]) -> LayerInfo {
+    use std::collections::HashSet;
+    let n = dat.objects.len();
+    let cell = |p: Vec3| ((p.x / COVER_R).floor() as i32, (p.y / COVER_R).floor() as i32, (p.z / COVER_R).floor() as i32);
+    let mut grid: HashSet<(i32, i32, i32)> = HashSet::new();
+    let mut pts = Vec::new();
+    for o in &dat.objects[..dat.layer0_count] {
+        pts.clear();
+        surface_samples(&object_polys(dat, o, sin, slots), COVER_STEP, &mut pts);
+        grid.extend(pts.iter().map(|(p, _)| cell(*p)));
+    }
+    let mut coverage = vec![1.0f32; n];
+    let mut backdrop = vec![false; n];
+    for i in dat.layer0_count..n {
+        pts.clear();
+        surface_samples(&object_polys(dat, &dat.objects[i], sin, slots), COVER_STEP, &mut pts);
+        let (mut near, mut all) = (0.0f32, 0.0f32);
+        for (p, w) in &pts {
+            let (cx, cy, cz) = cell(*p);
+            // any layer-0 sample in the 3x3x3 block: within ~COVER_R..2*COVER_R
+            let hit = (-1..=1).any(|dx| (-1..=1).any(|dy| (-1..=1).any(|dz| grid.contains(&(cx + dx, cy + dy, cz + dz)))));
+            all += w;
+            if hit {
+                near += w;
+            }
+        }
+        coverage[i] = if all > 0.0 { near / all } else { 1.0 };
+        backdrop[i] = coverage[i] < BACKDROP_MAX_COVER;
+    }
+    let mut ever_visible = vec![dat.vis.is_empty(); n];
+    for z in &dat.vis {
+        for node in 0..=z.separators().len() {
+            let m = z.mask_at(node);
+            for (i, e) in ever_visible.iter_mut().enumerate() {
+                let (byte, bit) = if i < dat.layer0_count { (i / 8, i % 8) } else { (255 - (i - dat.layer0_count) / 8, (i - dat.layer0_count) % 8) };
+                if m.get(byte).is_some_and(|b| b & (0x80 >> bit) != 0) {
+                    *e = true;
+                }
+            }
+        }
+    }
+    LayerInfo { backdrop, coverage, ever_visible }
+}
+
+/// Text table of the layer classification (`--layer-report PATH`).
+pub fn layer_report(dat: &Dat, sin: &SinTable, slots: &[Option<dat::TexSlot>; 32], info: &LayerInfo) -> String {
+    let mut s = String::from("# object layer flags textured/polys centre(layer units) radius coverage backdrop ever_visible
+");
+    for (i, o) in dat.objects.iter().enumerate() {
+        let polys = object_polys(dat, o, sin, slots);
+        let tex = polys.iter().filter(|p| p.tex.is_some()).count();
+        s += &format!(
+            "{i} {} {:#04x} {tex}/{} {:?} {} {:.2} {} {}
+",
+            if i < dat.layer0_count { 0 } else { 1 },
+            o.loaded_flags(),
+            polys.len(),
+            o.centre,
+            o.radius,
+            info.coverage[i],
+            info.backdrop[i],
+            info.ever_visible[i]
+        );
+    }
+    s
 }

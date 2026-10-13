@@ -1,6 +1,7 @@
 //! PS1 polygons -> Bevy meshes, keeping the GPU's look:
 //! - one mesh per (texpage, CLUT) pair, textured from the decoded VRAM through
-//!   `VramTextures` (nearest sampling, texel 0x0000 transparent -> alpha mask);
+//!   `VramTextures` (nearest or smoothed per settings, texel 0x0000
+//!   transparent -> alpha mask / alpha to coverage: `cutout_mode`);
 //! - no lighting: colours are the game's per-vertex RGB (unlit material);
 //! - texture modulation as the GPU does it: texel * rgb / 128, so 128 is
 //!   neutral and up to 2x brightens. Modulation happens in the game's (gamma)
@@ -25,6 +26,18 @@ pub struct PsxPoly {
     /// Some((tpage, clut)) when textured.
     pub tex: Option<(u16, u16)>,
     pub semi: bool,
+}
+
+/// Alpha mode of opaque textured polygons (colour-0 texels cut out): a hard
+/// 0.5 threshold with point sampling (the PS1's binary transparency); with
+/// smoothed textures, alpha to coverage (MSAA samples follow the filtered
+/// alpha: soft, fringe-free cut-out edges; Bevy falls back to the threshold
+/// when MSAA is off).
+pub fn cutout_mode() -> AlphaMode {
+    match crate::settings::Settings::global().texture_filter() {
+        crate::settings::TexFilter::Smooth => AlphaMode::AlphaToCoverage,
+        crate::settings::TexFilter::Nearest => AlphaMode::Mask(0.5),
+    }
 }
 
 fn srgb_to_linear(c: f32) -> f32 {
@@ -112,7 +125,7 @@ pub fn build_cached(
             };
             if let Some((tp, cl)) = key.0 {
                 m.base_color_texture = Some(textures.get(images, tp, cl));
-                m.alpha_mode = if key.1 { AlphaMode::Blend } else { AlphaMode::Mask(0.5) };
+                m.alpha_mode = if key.1 { AlphaMode::Blend } else { cutout_mode() };
                 if key.1 {
                     m.base_color = Color::srgba(1.0, 1.0, 1.0, 0.5);
                 }

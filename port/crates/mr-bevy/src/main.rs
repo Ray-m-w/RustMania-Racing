@@ -25,6 +25,7 @@ mod capture;
 mod psxmesh;
 mod scene;
 pub mod settings;
+mod lighting;
 mod kartshadow;
 mod vramtex;
 
@@ -139,23 +140,37 @@ pub struct TrackObject(pub usize);
 pub struct TrackVis {
     pub dat: mr_assets::dat::Dat,
     pub zone: usize,
+    /// Layer-1 backdrop vs stand-in, objects the stream ever shows (scene::classify_layers).
+    pub info: scene::LayerInfo,
 }
 
 fn select_objects(
     p: Res<Player>,
+    settings: Res<settings::Settings>,
     mut vis: ResMut<TrackVis>,
     mut q: Query<(&TrackObject, &mut Visibility)>,
-    mut cams: Query<(Entity, &mut Camera, &Projection), With<ChaseCamera>>,
+    mut cams: Query<(Entity, &mut Camera, &Projection, &Msaa), With<ChaseCamera>>,
     mut commands: Commands,
     mut far_done: Local<bool>,
+    mut full_done: Local<bool>,
 ) {
     // Painter's order of the game's ordering table: far pass (sky + DAT
     // layer 1) first, then everything else over it (scene::setup_far_pass).
     if !*far_done {
-        if let Ok((e, mut cam, proj)) = cams.single_mut() {
-            scene::setup_far_pass(&mut commands, e, &mut cam, proj);
+        if let Ok((e, mut cam, proj, msaa)) = cams.single_mut() {
+            scene::setup_far_pass(&mut commands, e, &mut cam, proj, *msaa);
             *far_done = true;
         }
+    }
+    // Full draw distance (default): the whole course every frame, set once.
+    if !settings.faithful_draw_distance() {
+        if !*full_done {
+            for (o, mut v) in q.iter_mut() {
+                *v = if scene::full_view_object(&vis.dat, &vis.info, o.0) { Visibility::Inherited } else { Visibility::Hidden };
+            }
+            *full_done = true;
+        }
+        return;
     }
     let Some((eye_w, cm)) = p.pose.cam else { return };
     if !p.is_changed() {
@@ -384,12 +399,18 @@ fn main() {
     if let Some(d) = &capture_dir {
         app.insert_resource(capture::CaptureReplay::open(d).expect("open --replay-capture DIR (meta.json, frames.bin)"));
     }
-    app.insert_resource(settings::Settings::global().clone());
+    let st = settings::Settings::global();
+    app.insert_resource(st.clone());
     app
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Muppet RaceMania (Rust)".into(),
-                resolution: (1280u32, 960u32).into(),
+                resolution: st.resolution().into(),
+                mode: if st.fullscreen() {
+                    bevy::window::WindowMode::BorderlessFullscreen(bevy::window::MonitorSelection::Current)
+                } else {
+                    bevy::window::WindowMode::Windowed
+                },
                 ..default()
             }),
             ..default()
@@ -404,6 +425,7 @@ fn main() {
         .insert_resource(shot_plan())
         .add_plugins(fps::plugin)
         .add_plugins(hud::HudPlugin)
+        .add_plugins(lighting::plugin)
         .add_plugins(animtex::AnimTexPlugin)
         .add_plugins(effects::EffectsPlugin)
         .add_plugins(karts::KartsPlugin)
@@ -411,11 +433,12 @@ fn main() {
         .add_plugins(sfx::SfxPlugin)
         .add_systems(FixedUpdate, capture::tick.after(sim_tick).before(karts::feed_player))
         .add_systems(Last, write_outputs)
+        .add_systems(PostUpdate, fit_viewports.before(bevy::camera::CameraUpdateSystems))
         .add_systems(Update, (place_player, ghost::place, follow_camera, title, follow_sky.after(follow_camera), select_objects, shot.after(follow_sky).after(select_objects)))
         .run();
 }
 
-fn setup_camera(mut c: Commands) {
+fn setup_camera(mut c: Commands, settings: Res<settings::Settings>) {
     // No tonemapping: PS1 colours go to the screen as the game wrote them.
     // The game's projection: H = 160 over a 240-line screen (SetGeomScreen
     // at 0x8004311C) = 2*atan(120/160) = 73.74 deg vertical [camera.md].
@@ -428,12 +451,57 @@ fn setup_camera(mut c: Commands) {
             ..default()
         }),
         Tonemapping::None,
+        settings.msaa(),
         Transform::from_xyz(0.0, 3.0, 8.0),
         ChaseCamera,
     ));
     c.spawn((DirectionalLight { illuminance: 8000.0, ..default() },
              Transform::from_xyz(1.0, 3.0, 2.0).looking_at(Vec3::ZERO, Vec3::Y)));
     c.insert_resource(GlobalAmbientLight { brightness: 1500.0, ..default() });
+}
+
+/// The 3D view's rectangle in the window (physical pixels): the whole window
+/// when it is 4:3 or wider and `aspect = native`; otherwise the largest
+/// centred 4:3 rectangle (pillarbox / letterbox).
+pub fn view_rect(win: UVec2, aspect: settings::Aspect) -> (UVec2, UVec2) {
+    let (w, h) = (win.x.max(1), win.y.max(1));
+    let wide = w * 3 >= h * 4;
+    if aspect == settings::Aspect::Native && wide {
+        return (UVec2::ZERO, UVec2::new(w, h));
+    }
+    let (vw, vh) = if wide { ((h * 4 + 1) / 3, h) } else { (w, (w * 3 + 2) / 4) };
+    (UVec2::new((w - vw) / 2, (h - vh) / 2), UVec2::new(vw, vh))
+}
+
+/// Keep every camera (3D, far pass, HUD) on `view_rect`; the projections
+/// follow the viewport's aspect (vertical FOV fixed: wider windows see more
+/// to the sides, as in the game's 90-degree horizontal view at 4:3).
+fn fit_viewports(
+    settings: Res<settings::Settings>,
+    win: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    mut cams: Query<&mut Camera, Or<(With<ChaseCamera>, With<scene::FarCamera>, With<hud::HudCamera>)>>,
+) {
+    let Ok(w) = win.single() else { return };
+    let size = w.physical_size();
+    if size.x == 0 || size.y == 0 {
+        return;
+    }
+    let (pos, sz) = view_rect(size, settings.aspect());
+    let want = if pos == UVec2::ZERO && sz == size {
+        None
+    } else {
+        Some(bevy::camera::Viewport { physical_position: pos, physical_size: sz, ..default() })
+    };
+    for mut c in cams.iter_mut() {
+        let same = match (&c.viewport, &want) {
+            (None, None) => true,
+            (Some(a), Some(b)) => a.physical_position == b.physical_position && a.physical_size == b.physical_size,
+            _ => false,
+        };
+        if !same {
+            c.viewport = want.clone();
+        }
+    }
 }
 
 fn sim_tick(mut p: ResMut<Player>, keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, mut hud_g: ResMut<hud::HudGlobals>, mut feed: ResMut<karts::KartFeed>) {

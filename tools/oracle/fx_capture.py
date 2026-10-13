@@ -41,6 +41,9 @@ FX_REGIONS = [
     (0x800D8F90, 0x10),              # race leader
     (0x1F800380, 0x40),              # scratchpad camera translation used by the billboards
     (0x80009010, 0x4),               # BIOS rand seed
+    (0x800E0C20, 0xF00),             # sprite particles: 64 x 0x3C (FUN_800870E8 / FUN_8008727C)
+    (0x800D73D0, 0x200),             # their side table: 64 x 8
+    (0x800DF688, 0x700),             # billboard batch (FUN_80030474 / FUN_80011E3C)
 ]
 
 

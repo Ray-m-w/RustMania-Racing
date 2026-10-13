@@ -32,6 +32,7 @@ pub mod ground;
 pub mod kart;
 pub mod mem;
 pub mod oracle;
+pub mod particles;
 pub mod progress;
 pub mod race;
 pub mod render;

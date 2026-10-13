@@ -35,16 +35,50 @@ impl VramTextures {
                 data.extend_from_slice(&vram::rgba(t));
             }
         }
+        // Kept in the main world too: animated textures (animtex.rs) rewrite
+        // texels in place.
         let mut img = Image::new(
             Extent3d { width: 256, height: 256, depth_or_array_layers: 1 },
             TextureDimension::D2,
             data,
             TextureFormat::Rgba8UnormSrgb,
-            RenderAssetUsages::RENDER_WORLD,
+            RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,
         );
         img.sampler = ImageSampler::nearest();
         let h = images.add(img);
         self.cache.insert((tpage, clut), h.clone());
         h
+    }
+
+    /// Write a w*h block of VRAM halfwords at (x, y) (LoadImage) and redraw
+    /// the texels of every cached page image that samples it.
+    pub fn write_rect(&mut self, images: &mut Assets<Image>, x: usize, y: usize, w: usize, h: usize, data: &[u16]) {
+        self.vram.load_image(x, y, w, h, data);
+        for (&(tp, cl), handle) in self.cache.iter() {
+            let (px, py, depth) = vram::tpage(tp);
+            let per = match depth {
+                vram::Depth::B4 => 4,
+                vram::Depth::B8 => 2,
+                vram::Depth::B15 => 1,
+            };
+            let pw = 256 / per;
+            if x + w <= px || x >= px + pw || y + h <= py || y >= py + 256 {
+                continue;
+            }
+            let (cx, cy) = vram::clut(cl);
+            let u0 = (x.max(px) - px) * per;
+            let u1 = ((x + w).min(px + pw) - px) * per;
+            let v0 = y.max(py) - py;
+            let v1 = (y + h).min(py + 256) - py;
+            let Some(mut img) = images.get_mut(handle) else { continue };
+            let Some(d) = img.data.as_mut() else { continue };
+            for v in v0..v1 {
+                for u in u0..u1 {
+                    let t = self.vram.texel(depth, px, py, cx, cy, u as u8, v as u8);
+                    let o = (v * 256 + u) * 4;
+                    d[o..o + 4].copy_from_slice(&vram::rgba(t));
+                }
+            }
+        }
     }
 }

@@ -1,14 +1,22 @@
-//! Race HUD overlay: the game's own sprites (mr_assets::hud) drawn by an
-//! orthographic camera over the 3D view in the game's 512x240 screen space,
-//! stretched to the window like the PS1 display. Unlit textured quads from
-//! the decoded VRAM (vramtex), nearest sampling, texel 0 transparent; no
-//! bevy_text / bevy_ui.
+//! Race HUD overlay: the game's own sprites (mr_assets::hud and
+//! mr_assets::hud_items) drawn by an orthographic camera over the 3D view in
+//! the game's 512x240 screen space, stretched to the window like the PS1
+//! display. Unlit textured quads from the decoded VRAM (vramtex), nearest
+//! sampling, texel 0 transparent; flat triangles and lines for the minimap
+//! markers and the direction arrow; no bevy_text / bevy_ui.
 //!
 //! Input: `HudInput`, a `HudState` the rest of the app fills each frame. By
 //! default `state_from_player` derives it from the player's kart record
 //! (replay sidecar or mr-sim) plus `HudGlobals` (countdown, laps, race clock
 //! - the race-flow code sets these; without them the HUD shows the race
-//! with the kart's own race time +0x358).
+//! with the kart's own race time +0x358). With a live mr-sim session the
+//! item HUD (weapon slots, turbo meter, arrow, banners, minimap; docs/spec/
+//! hud.md "Item HUD") comes from the session in `items_from_player`.
+//!
+//! Drawing: a pool of quad entities, one per primitive, whose meshes are
+//! rewritten in place when the layout changes (the item HUD animates every
+//! frame). The GPU draws the game's last-added primitive first, so earlier
+//! primitives get a nearer z.
 
 use std::collections::HashMap;
 
@@ -16,7 +24,8 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{OrthographicProjection, ScalingMode};
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::prelude::*;
-use mr_assets::hud::{self, HudState, HudTables, Sprite};
+use mr_assets::hud::{self, HudState, HudTables};
+use mr_assets::hud_items::{self, HudPulse, ItemHud, ItemTables, MapKart, Prim};
 
 use crate::vramtex::VramTextures;
 
@@ -57,14 +66,26 @@ pub struct HudInput {
     pub manual: bool,
 }
 
+/// The item HUD's state this frame (None = minimal HUD only). Filled from a
+/// live mr-sim session by `items_from_player` unless `manual`.
+#[derive(Resource, Clone, Debug, Default)]
+pub struct ItemHudInput {
+    pub state: Option<ItemHud>,
+    pub manual: bool,
+}
+
 #[derive(Resource)]
 struct HudRes {
     tables: HudTables,
+    items: ItemTables,
     slots: [(u16, u16); 32],
-    mats: HashMap<(u16, u16, [u8; 3], bool, bool, u8), Handle<StandardMaterial>>,
-    meshes: HashMap<(i32, i32, u8, u8, i32, i32), Handle<Mesh>>,
-    last: Option<Vec<Sprite>>,
+    mats: HashMap<MatKey, Handle<StandardMaterial>>,
+    pool: Vec<(Entity, Handle<Mesh>)>,
+    last: Option<Vec<Prim>>,
 }
+
+/// (texpage without abr, clut, textured, semi, abr)
+type MatKey = (u16, u16, bool, bool, u8);
 
 #[derive(Component)]
 pub struct HudCamera;
@@ -78,8 +99,9 @@ impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<HudGlobals>()
             .init_resource::<HudInput>()
+            .init_resource::<ItemHudInput>()
             .add_systems(Startup, setup.after(crate::scene::setup))
-            .add_systems(Update, (state_from_player, draw.after(state_from_player)));
+            .add_systems(Update, (state_from_player, items_from_player, draw.after(state_from_player).after(items_from_player)));
     }
 }
 
@@ -87,13 +109,14 @@ fn setup(mut commands: Commands) {
     let mut disc = mr_disc::Disc::open_default().expect("open the disc");
     let exe = disc.read("SLUS_012.37").expect("read the executable");
     let tables = HudTables::from_exe(&exe).expect("HUD tables in the exe");
+    let items = ItemTables::from_exe(&exe).expect("item HUD tables in the exe");
     // Slot table from the course RAW (the font page 0xF and slot 5 come with it).
     let path = mr_assets::raw::course_raw_path(&exe, crate::scene::DOCK).expect("course");
     let file = disc.read(&path).expect("read RAW");
     let env = mr_assets::raw::LoadEnv::from_exe(&exe, crate::scene::DOCK).expect("env");
     let dec = mr_assets::raw::decode(&file, &env).expect("decode RAW");
     let slots = hud::slot_attrs(&dec.slots);
-    commands.insert_resource(HudRes { tables, slots, mats: HashMap::new(), meshes: HashMap::new(), last: None });
+    commands.insert_resource(HudRes { tables, items, slots, mats: HashMap::new(), pool: Vec::new(), last: None });
     commands.spawn((
         Camera3d::default(),
         Camera { order: 10, clear_color: ClearColorConfig::None, ..default() },
@@ -138,6 +161,107 @@ fn state_from_player(p: Res<crate::Player>, g: Res<HudGlobals>, mut input: ResMu
     }
 }
 
+/// The item HUD state from a live mr-sim session: the player's record,
+/// every kart (minimap), the camera matrix (arrow), the frame counter and
+/// race clock, and the HUD pulse (DAT_800B0E10, stepped here once per sim
+/// frame the way FUN_8005C2EC does). Replays have no session: no item HUD.
+fn items_from_player(p: Res<crate::Player>, mut input: ResMut<ItemHudInput>, mut pulse: Local<(HudPulse, i32)>) {
+    if input.manual {
+        return;
+    }
+    let crate::Driver::Sim(run) = &p.driver else {
+        input.state = replay_items(&p, &mut *pulse);
+        return;
+    };
+    let s = &run.session;
+    let g = &s.globals;
+    if g.frame != pulse.1 {
+        if g.frame < pulse.1 {
+            pulse.0 = HudPulse::default();
+        }
+        pulse.0.step(g.frame, g.dt.max(1));
+        pulse.1 = g.frame;
+    }
+    let karts = s
+        .kart_records()
+        .map(|(_, _, _, r)| MapKart {
+            x: i32::from_le_bytes([r[0], r[1], r[2], r[3]]),
+            z: i32::from_le_bytes([r[8], r[9], r[10], r[11]]),
+            heading: i16::from_le_bytes([r[0xE], r[0xF]]),
+            flags: r[0x496],
+            character: r[0x4B2],
+        })
+        .collect();
+    let mut cam = [[0i16; 3]; 3];
+    for (r, row) in s.camera.matrix.iter().enumerate() {
+        for (c, v) in row.iter().enumerate() {
+            cam[r][c] = *v as i16;
+        }
+    }
+    input.state = Some(ItemHud {
+        frame: g.frame,
+        pulse: pulse.0,
+        race_time: g.race_clock,
+        countdown: g.countdown,
+        mode: g.mode as u8,
+        course: crate::scene::DOCK as u8,
+        e38: g.cup as i16,
+        special: special_globals(s),
+        cam,
+        kart: s.record().to_vec(),
+        karts,
+        players: g.humans.max(1) as usize,
+    });
+}
+
+/// A replayed oracle trace with its kart sidecar: the item HUD from the
+/// player's record alone (frame counter = 2 per tick from the replay start,
+/// the trace's camera; the minimap shows the player only).
+fn replay_items(p: &crate::Player, pulse: &mut (HudPulse, i32)) -> Option<ItemHud> {
+    let rec = p.kart.as_ref()?;
+    let frame = (p.tick * 2) as i32;
+    if frame != pulse.1 {
+        if frame < pulse.1 {
+            pulse.0 = HudPulse::default();
+        }
+        pulse.0.step(frame, 2);
+        pulse.1 = frame;
+    }
+    let mut cam = [[0i16; 3]; 3];
+    if let Some((_, m)) = p.pose.cam {
+        for (k, v) in m.iter().enumerate() {
+            cam[k / 3][k % 3] = *v as i16;
+        }
+    }
+    let r = &rec[..];
+    Some(ItemHud {
+        frame,
+        pulse: pulse.0,
+        race_time: hud::race_clock_from_kart(r),
+        countdown: 0,
+        mode: 1,
+        course: crate::scene::DOCK as u8,
+        e38: 4,
+        special: (-1, 0, 0),
+        cam,
+        kart: rec.clone(),
+        karts: vec![MapKart {
+            x: i32::from_le_bytes([r[0], r[1], r[2], r[3]]),
+            z: i32::from_le_bytes([r[8], r[9], r[10], r[11]]),
+            heading: i16::from_le_bytes([r[0xE], r[0xF]]),
+            flags: r[0x496],
+            character: r[0x4B2],
+        }],
+        players: 1,
+    })
+}
+
+/// DAT_800B07F4 / DAT_800B07F6 / DAT_800B0E95 (the global special-move
+/// announcement). Not exposed by the session yet (track A's items): none.
+fn special_globals(_s: &mr_sim::session::Session) -> (i16, i16, i8) {
+    (-1, 0, 0)
+}
+
 /// The results panel's inputs from a live session once the player has
 /// finished (else None): the player's record, the winner's lap times
 /// (place 1 = DAT_800D8F94's kart), the frame counter 0x800B0D90 the
@@ -169,73 +293,147 @@ pub fn results_from_session(s: &mr_sim::session::Session) -> Option<hud::Results
     Some(r)
 }
 
+/// Screen (game pixels, y down) -> HUD camera space.
+fn sp(x: f32, y: f32, z: f32) -> [f32; 3] {
+    [x - SCREEN_W / 2.0, SCREEN_H / 2.0 - y, z]
+}
+
+/// One primitive as (material key, positions, uvs, colours); quads as two
+/// triangles (v0 v1 v2, v1 v3 v2), lines as a 1-pixel-wide quad.
+fn geometry(p: &Prim, slots: &[(u16, u16); 32], z: f32) -> (MatKey, Vec<[f32; 3]>, Vec<[f32; 2]>, [f32; 4]) {
+    // The GPU modulates in its own (gamma) space: texel * c / 128. The
+    // textures are sRGB, so in linear space the factor is (c / 128)^2.2.
+    let col = |rgb: [u8; 3], raw: bool, semi: bool, abr: u8| {
+        let k = |c: u8| if raw { 1.0 } else { (c as f32 / 128.0).powf(2.2) };
+        // abr 3 (B + F/4): additive at a quarter; abr 0: 50% blend
+        let q = if semi && abr == 3 { 0.25 } else { 1.0 };
+        [k(rgb[0]) * q, k(rgb[1]) * q, k(rgb[2]) * q, if semi && abr == 0 { 0.5 } else { 1.0 }]
+    };
+    // flat colours are the game's 8-bit (sRGB) values
+    let flat = |rgb: [u8; 3]| {
+        let c = Color::srgb_u8(rgb[0], rgb[1], rgb[2]).to_linear();
+        [c.red, c.green, c.blue, 1.0]
+    };
+    let uvf = |u: u8, v: u8| [u as f32 / 256.0, v as f32 / 256.0];
+    match *p {
+        Prim::Sprt(s) => {
+            let (tp, cl) = s.attrs(slots);
+            let (x0, y0, x1, y1) = (s.x as f32, s.y as f32, (s.x + s.w) as f32, (s.y + s.h) as f32);
+            let (u0, v0) = (s.u as f32 / 256.0, s.v as f32 / 256.0);
+            let (u1, v1) = (u0 + s.uw as f32 / 256.0, v0 + s.vh as f32 / 256.0);
+            let pos = vec![sp(x0, y0, z), sp(x1, y0, z), sp(x0, y1, z), sp(x1, y0, z), sp(x1, y1, z), sp(x0, y1, z)];
+            let uv = vec![[u0, v0], [u1, v0], [u0, v1], [u1, v0], [u1, v1], [u0, v1]];
+            ((tp & !0x60, cl, true, s.semi, s.abr), pos, uv, col(s.rgb, s.raw, s.semi, s.abr))
+        }
+        Prim::Ft4(q) => {
+            let (tp, cl) = slots[q.slot as usize & 31];
+            let cl = cl.wrapping_add(q.clut_off);
+            let v = |i: usize| sp(q.v[i][0] as f32, q.v[i][1] as f32, z);
+            // texel centres: the GPU samples u..u+uw-1; a mirrored quad
+            // (u1 < u0) runs right to left
+            let t = |i: usize| uvf(q.uv[i][0], q.uv[i][1]);
+            let pos = vec![v(0), v(1), v(2), v(1), v(3), v(2)];
+            let uv = vec![t(0), t(1), t(2), t(1), t(3), t(2)];
+            ((tp & !0x60, cl, true, q.semi, q.abr), pos, uv, col(q.rgb, false, q.semi, q.abr))
+        }
+        Prim::F3 { v, rgb } => {
+            let p = |i: usize| sp(v[i][0] as f32, v[i][1] as f32, z);
+            ((0, 0, false, false, 0), vec![p(0), p(1), p(2)], vec![[0.0, 0.0]; 3], flat(rgb))
+        }
+        Prim::Line { v, rgb } => {
+            let (a, b) = (Vec2::new(v[0][0] as f32 + 0.5, v[0][1] as f32 + 0.5), Vec2::new(v[1][0] as f32 + 0.5, v[1][1] as f32 + 0.5));
+            let d = (b - a).normalize_or_zero();
+            let n = Vec2::new(-d.y, d.x) * 0.5;
+            let c = [a + n, a - n, b + n, b - n];
+            let p = |i: usize| sp(c[i].x, c[i].y, z);
+            ((0, 0, false, false, 0), vec![p(0), p(1), p(2), p(1), p(3), p(2)], vec![[0.0, 0.0]; 6], flat(rgb))
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw(
     mut commands: Commands,
     input: Res<HudInput>,
+    items: Res<ItemHudInput>,
     res: Option<ResMut<HudRes>>,
     tex: Option<ResMut<VramTextures>>,
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut mats: ResMut<Assets<StandardMaterial>>,
-    old: Query<Entity, With<HudQuad>>,
+    mut vis: Query<(&mut Visibility, &mut MeshMaterial3d<StandardMaterial>), With<HudQuad>>,
 ) {
     let (Some(mut res), Some(mut tex)) = (res, tex) else { return };
-    let sprites = input.state.map(|s| res.tables.layout(&s)).unwrap_or_default();
-    if res.last.as_ref() == Some(&sprites) {
+    let prims: Vec<Prim> = match (input.state, items.state.as_ref()) {
+        (Some(st), Some(it)) => hud_items::race_hud(&res.tables, &res.items, &st, it),
+        (Some(st), None) => res.tables.layout(&st).into_iter().map(Prim::Sprt).collect(),
+        _ => Vec::new(),
+    };
+    if res.last.as_ref() == Some(&prims) {
         return;
     }
-    for e in old.iter() {
-        commands.entity(e).despawn();
-    }
-    let n = sprites.len();
-    for (i, s) in sprites.iter().enumerate() {
-        let (tp, cl) = s.attrs(&res.slots);
-        // texture: the 256x256 texel space of the page through the CLUT
-        let page = tex.get(&mut images, tp & !0x60, cl);
-        let mkey = (tp & !0x60, cl, s.rgb, s.raw, s.semi, s.abr);
-        let mat = res
-            .mats
-            .entry(mkey)
-            .or_insert_with(|| {
-                let k = |c: u8| if s.raw { 1.0 } else { c as f32 / 128.0 };
-                let a = if s.semi && s.abr == 0 { 0.5 } else { 1.0 };
-                mats.add(StandardMaterial {
-                    base_color: Color::linear_rgba(k(s.rgb[0]), k(s.rgb[1]), k(s.rgb[2]), a),
-                    base_color_texture: Some(page),
+    let n = prims.len();
+    for (i, p) in prims.iter().enumerate() {
+        let z = (n - i) as f32 * 0.01;
+        let (key, pos, uv, c) = geometry(p, &res.slots, z);
+        let mat = match res.mats.get(&key) {
+            Some(m) => m.clone(),
+            None => {
+                let (tp, cl, textured, semi, abr) = key;
+                let m = mats.add(StandardMaterial {
+                    base_color: Color::WHITE,
+                    base_color_texture: textured.then(|| tex.get(&mut images, tp, cl)),
                     unlit: true,
                     cull_mode: None,
-                    alpha_mode: if s.semi && s.abr == 0 { AlphaMode::Blend } else if s.semi && s.abr == 1 { AlphaMode::Add } else { AlphaMode::Mask(0.5) },
+                    alpha_mode: match (semi, abr) {
+                        (true, 0) => AlphaMode::Blend,
+                        // B + F and B + F/4 additive; B - F approximated by a
+                        // 50% blend (render ledger)
+                        (true, 1) | (true, 3) => AlphaMode::Add,
+                        (true, _) => AlphaMode::Blend,
+                        _ => AlphaMode::Mask(0.5),
+                    },
                     ..default()
-                })
-            })
-            .clone();
-        let qkey = (s.w, s.h, s.u, s.v, s.uw, s.vh);
-        let mesh = res
-            .meshes
-            .entry(qkey)
-            .or_insert_with(|| {
-                let (u0, v0) = (s.u as f32 / 256.0, s.v as f32 / 256.0);
-                let (u1, v1) = (u0 + s.uw as f32 / 256.0, v0 + s.vh as f32 / 256.0);
-                let (w, h) = (s.w as f32, s.h as f32);
-                let mut m = Mesh::new(bevy::mesh::PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default());
-                m.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0, 0.0, 0.0], [w, 0.0, 0.0], [0.0, -h, 0.0], [w, -h, 0.0]]);
-                m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 0.0, 1.0]; 4]);
-                m.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![[u0, v0], [u1, v0], [u0, v1], [u1, v1]]);
-                m.insert_indices(bevy::mesh::Indices::U16(vec![0, 2, 1, 1, 2, 3]));
-                meshes.add(m)
-            })
-            .clone();
-        // The GPU draws the last-added primitive first (ordering-table
-        // prepend), so earlier sprites sit in front: nearer z.
-        let z = (n - i) as f32 * 0.01;
-        commands.spawn((
-            Mesh3d(mesh),
-            MeshMaterial3d(mat),
-            Transform::from_xyz(s.x as f32 - SCREEN_W / 2.0, SCREEN_H / 2.0 - s.y as f32, z),
-            RenderLayers::layer(HUD_LAYER),
-            HudQuad,
-        ));
+                });
+                res.mats.insert(key, m.clone());
+                m
+            }
+        };
+        let colours = vec![c; pos.len()];
+        let normals = vec![[0.0, 0.0, 1.0]; pos.len()];
+        if i >= res.pool.len() {
+            let mut m = Mesh::new(bevy::mesh::PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default());
+            m.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
+            m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+            m.insert_attribute(Mesh::ATTRIBUTE_UV_0, uv);
+            m.insert_attribute(Mesh::ATTRIBUTE_COLOR, colours);
+            let h = meshes.add(m);
+            let e = commands.spawn((Mesh3d(h.clone()), MeshMaterial3d(mat), Transform::IDENTITY, Visibility::Inherited, RenderLayers::layer(HUD_LAYER), HudQuad)).id();
+            res.pool.push((e, h));
+        } else {
+            let (e, h) = res.pool[i].clone();
+            if let Some(mut m) = meshes.get_mut(&h) {
+                m.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
+                m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+                m.insert_attribute(Mesh::ATTRIBUTE_UV_0, uv);
+                m.insert_attribute(Mesh::ATTRIBUTE_COLOR, colours);
+            }
+            if let Ok((mut v, mut mm)) = vis.get_mut(e) {
+                if *v != Visibility::Inherited {
+                    *v = Visibility::Inherited;
+                }
+                if mm.0 != mat {
+                    mm.0 = mat;
+                }
+            }
+        }
     }
-    res.last = Some(sprites);
+    for &(e, _) in res.pool.iter().skip(n) {
+        if let Ok((mut v, _)) = vis.get_mut(e) {
+            if *v != Visibility::Hidden {
+                *v = Visibility::Hidden;
+            }
+        }
+    }
+    res.last = Some(prims);
 }

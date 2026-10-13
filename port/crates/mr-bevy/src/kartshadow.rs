@@ -214,32 +214,53 @@ pub fn update_shadows(
         // Display interpolation like the kart model: lerp the corners from
         // the previous tick's record.
         let prev = prev.and_then(|k| shadow_record(k, &st.sin)).unwrap_or(rec);
-        let corners = |r: &ShadowRec| -> [Vec3; 4] {
-            r.draw_offsets().map(|o| {
-                crate::to_bevy(r.origin[0] + o[0] * 32, r.origin[1] + o[1] * 32, r.origin[2] + o[2] * 32)
-            })
-        };
+        let corners = record_corners;
         let (c0, c1) = (corners(&prev), corners(&rec));
         let pos: [Vec3; 4] = std::array::from_fn(|i| c0[i].lerp(c1[i], a));
-        // View depth of the origin, world >> 5 (FUN_8002ADA8's local_70).
-        let d = [rec.origin[0] - eye[0], rec.origin[1] - eye[1], rec.origin[2] - eye[2]];
-        let z = ((cm[6] as i64 * d[0] as i64 + cm[7] as i64 * d[1] as i64 + cm[8] as i64 * d[2] as i64) >> 17) as i32;
-        let colour = rec.colour(z);
-        if colour == 0 {
-            continue;
+        let Some((prim, z, colour)) = shadow_prim(&rec, pos, eye, cm, &st.slot) else { continue };
+        prims.list.push(prim);
+        if std::env::var("MRM_SHADOW_DEBUG").is_ok() {
+            eprintln!("shadow tick {} rec {:?} z {} colour {}", p.tick, rec, z, colour);
         }
-        let tp = st.slot.tpage.wrapping_add(rec.tpage_add);
-        let cl = st.slot.clut.wrapping_add(rec.clut_add());
-        let uv = rec.uvs();
-        let rgb = [colour as f32 / 128.0; 3];
-        // corners A, B, C, D -> GPU order A, B, D, C
-        let ord = [0usize, 1, 3, 2];
-        // texel units (the interpolated coordinate is floored, so the
-        // GPU's u..u+31 covers texels u..u+30 as on the PS1)
-        let tuv = |i: usize| [uv[i][0] as f32, uv[i][1] as f32];
-        let center = (pos[0] + pos[1] + pos[2] + pos[3]) * 0.25;
-        let ext = pos.iter().map(|q| (*q - center).length()).fold(0.0f32, f32::max);
-        prims.list.push(FxPrim {
+    }
+}
+
+/// The corners of a record as drawn (Bevy world).
+pub fn record_corners(r: &ShadowRec) -> [Vec3; 4] {
+    r.draw_offsets().map(|o| crate::to_bevy(r.origin[0] + o[0] * 32, r.origin[1] + o[1] * 32, r.origin[2] + o[2] * 32))
+}
+
+/// FUN_8002ADA8 for one record at corners `pos` (Bevy world, A, B, C, D):
+/// the effects-pass primitive, the origin's view depth and the colour; None
+/// when faded out or back-facing (RotAverageNclip4 > 0 required).
+pub fn shadow_prim(rec: &ShadowRec, pos: [Vec3; 4], eye: [i32; 3], cm: [i32; 9], slot: &TexSlot) -> Option<(FxPrim, i32, u8)> {
+    // View depth of the origin, world >> 5 (FUN_8002ADA8's local_70).
+    let d = [rec.origin[0] - eye[0], rec.origin[1] - eye[1], rec.origin[2] - eye[2]];
+    let z = ((cm[6] as i64 * d[0] as i64 + cm[7] as i64 * d[1] as i64 + cm[8] as i64 * d[2] as i64) >> 17) as i32;
+    let colour = rec.colour(z);
+    if colour == 0 || rec.count == 0 || rec.scale == 0 {
+        return None;
+    }
+    // corners A, B, C, D -> GPU order A, B, D, C
+    let ord = [0usize, 1, 3, 2];
+    // back faces (seen from below the ground) are not drawn: the GPU-order
+    // triangle A, B, D must wind clockwise on the (y-down) screen
+    let e = crate::to_bevy(eye[0], eye[1], eye[2]);
+    let (a, b, c) = (pos[ord[0]], pos[ord[1]], pos[ord[2]]);
+    if (b - a).cross(c - a).dot(e - a) > 0.0 {
+        return None;
+    }
+    let tp = slot.tpage.wrapping_add(rec.tpage_add);
+    let cl = slot.clut.wrapping_add(rec.clut_add());
+    let uv = rec.uvs();
+    let rgb = [colour as f32 / 128.0; 3];
+    // texel units (the interpolated coordinate is floored, so the GPU's
+    // u..u+31 covers texels u..u+30 as on the PS1)
+    let tuv = |i: usize| [uv[i][0] as f32, uv[i][1] as f32];
+    let center = (pos[0] + pos[1] + pos[2] + pos[3]) * 0.25;
+    let ext = pos.iter().map(|q| (*q - center).length()).fold(0.0f32, f32::max);
+    Some((
+        FxPrim {
             v: std::array::from_fn(|j| FxVert { pos: pos[ord[j]], uv: tuv(ord[j]), rgb }),
             page: Some((tp & !0x60, cl)),
             blend: Blend::Abr(((tp >> 5) & 3) as u8),
@@ -247,9 +268,8 @@ pub fn update_shadows(
             ground_eps: 0.5 * ext,
             ground_radius: 2.0 * ext,
             depth_pull: 0.0,
-        });
-        if std::env::var("MRM_SHADOW_DEBUG").is_ok() {
-            eprintln!("shadow tick {} rec {:?} z {} colour {}", p.tick, rec, z, colour);
-        }
-    }
+        },
+        z,
+        colour,
+    ))
 }

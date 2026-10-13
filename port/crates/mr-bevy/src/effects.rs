@@ -462,7 +462,9 @@ impl Plugin for EffectsPlugin {
             .init_resource::<KartLodHidden>()
             .add_systems(Startup, setup.after(crate::scene::setup))
             .add_systems(Update, (capture_source, session_source, draw.after(capture_source).after(session_source)))
-            .add_systems(Update, fx_shots.after(capture_source));
+            .add_systems(Update, fx_shots.after(capture_source))
+            .add_systems(Startup, crate::pickupshadow::setup)
+            .add_systems(Update, crate::pickupshadow::draw.after(crate::kartshadow::update_shadows));
     }
 }
 

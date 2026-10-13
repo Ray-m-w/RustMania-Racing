@@ -72,6 +72,8 @@ pub struct Streak {
 pub struct FxFrame {
     pub billboards: Vec<Billboard>,
     pub streaks: Vec<Streak>,
+    /// FUN_800313BC list quads (the status effects' shapes, kartfx.rs).
+    pub quads: Vec<crate::kartfx::Quad3>,
     pub manual: bool,
 }
 
@@ -94,6 +96,7 @@ pub struct FxTables {
     pub types: Vec<[u8; 4]>,
     /// 0x800A8848: 16 view frames (u, v, uw) of the type-2 weapon.
     pub anim: Vec<[i16; 3]>,
+    pub kart: crate::kartfx::KartFxTables,
 }
 
 fn exe_off(a: u32) -> usize {
@@ -128,10 +131,10 @@ impl FxTables {
         let types = Particles::from_exe(exe).types;
         let a = exe_off(0x800A_8848);
         let anim = (0..16).map(|k| std::array::from_fn(|j| i16::from_le_bytes([exe[a + 6 * k + 2 * j], exe[a + 6 * k + 2 * j + 1]]))).collect();
-        FxTables { defs, slots, tokens, sin, types, anim }
+        FxTables { defs, slots, tokens, sin, types, anim, kart: crate::kartfx::KartFxTables::load(exe) }
     }
 
-    fn slot_attr(&self, slot: usize, clut_off: u16, abr: u16) -> (u16, u16) {
+    pub(crate) fn slot_attr(&self, slot: usize, clut_off: u16, abr: u16) -> (u16, u16) {
         match self.slots.get(slot).and_then(|s| *s) {
             Some(s) => ((s.tpage.unwrap_or(0) & !0x60) | (abr & 0x60), s.clut.wrapping_add(clut_off)),
             None => (0, 0),
@@ -191,6 +194,27 @@ pub struct FxCamera {
     pub roll: i32,
     /// +0x52: yaw (the type-2 projectile picks its view frame with it).
     pub yaw: i32,
+    /// +0x28: the eye, world units (kart LOD, list-quad cull).
+    pub eye: [i32; 3],
+}
+
+/// Karts drawn as the game's far impostor instead of their model this frame
+/// (bit = slot), with `faithful_draw_distance`: kart LOD +0x4B4 >= 0x10
+/// (karts.rs hides those models).
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
+pub struct KartLodHidden(pub u8);
+
+/// Everything drawn from one kart record: the special glow and the inline
+/// status billboards (kart_effects), the status shapes (FUN_80037B80's
+/// function cases) and, with the game's LOD, the far impostor.
+fn kart_all(t: &FxTables, rec: &[u8], cam: FxCamera, frame: i32, faithful_lod: bool, out: &mut FxFrame) -> bool {
+    kart_effects(t, rec, cam, frame, &mut out.billboards);
+    crate::kartfx::status_quads(&t.kart, rec, cam.eye, &mut out.quads);
+    if faithful_lod && crate::kartfx::lod(rec, cam.eye) >= 0x10 {
+        crate::kartfx::impostor(t, &t.kart, rec, cam.yaw, &mut out.billboards);
+        return true;
+    }
+    false
 }
 
 /// Pickups and projectiles from game memory (the oracle capture source;
@@ -435,6 +459,7 @@ impl Plugin for EffectsPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(crate::psxfx::PsxFxPlugin)
             .init_resource::<FxFrame>()
+            .init_resource::<KartLodHidden>()
             .add_systems(Startup, setup.after(crate::scene::setup))
             .add_systems(Update, (capture_source, session_source, draw.after(capture_source).after(session_source)))
             .add_systems(Update, fx_shots.after(capture_source));
@@ -457,7 +482,15 @@ fn setup(mut commands: Commands) {
     }
 }
 
-fn capture_source(cap: Option<Res<crate::capture::CaptureReplay>>, rows: Option<ResMut<CapRows>>, t: Option<Res<FxTables>>, mut fx: ResMut<FxFrame>, mut last: Local<i64>) {
+fn capture_source(
+    cap: Option<Res<crate::capture::CaptureReplay>>,
+    rows: Option<ResMut<CapRows>>,
+    t: Option<Res<FxTables>>,
+    settings: Res<crate::settings::Settings>,
+    mut fx: ResMut<FxFrame>,
+    mut hidden: ResMut<KartLodHidden>,
+    mut last: Local<i64>,
+) {
     let (Some(cap), Some(mut rows), Some(t)) = (cap, rows, t) else { return };
     if fx.manual || cap.vb == *last {
         return;
@@ -469,10 +502,17 @@ fn capture_source(cap: Option<Res<crate::capture::CaptureReplay>>, rows: Option<
     out.billboards.extend(parts.list.iter().filter_map(|p| t.particle(p)));
     let sparks = Sparks::read(&m);
     out.streaks.extend(sparks.list.iter().filter_map(|s| t.spark(s)));
-    let cam = FxCamera { roll: m.i16(0x800C_4F40 + 0x54) as i32, yaw: m.i16(0x800C_4F40 + 0x52) as i32 };
+    let c = 0x800C_4F40;
+    let cam = FxCamera { roll: m.i16(c + 0x54) as i32, yaw: m.i16(c + 0x52) as i32, eye: [m.i32(c + 0x28), m.i32(c + 0x2C), m.i32(c + 0x30)] };
     items_from_mem(&t, &m, cam, m.i32(0x800B_0D90), &mut out.billboards);
+    let mut h = 0u8;
     for k in 0..6u32 {
-        kart_effects(&t, m.slice(0x800C_30A8 + 0x504 * k, 0x504), cam, m.i32(0x800B_0D90), &mut out.billboards);
+        if kart_all(&t, m.slice(0x800C_30A8 + 0x504 * k, 0x504), cam, m.i32(0x800B_0D90), settings.faithful_draw_distance(), &mut out) {
+            h |= 1 << k;
+        }
+    }
+    if hidden.0 != h {
+        hidden.0 = h;
     }
     if std::env::var("MRM_FX_DEBUG").is_ok() {
         for b in &out.billboards {
@@ -486,7 +526,16 @@ fn capture_source(cap: Option<Res<crate::capture::CaptureReplay>>, rows: Option<
 /// camera roll written into a scratch game-layout memory, then the same
 /// conversions as for captures; particles and sparks straight from
 /// `Session::particles()` / `sparks()` (track A owns them in the race state).
-fn session_source(p: Res<crate::Player>, cap: Option<Res<crate::capture::CaptureReplay>>, t: Option<Res<FxTables>>, mut fx: ResMut<FxFrame>, mut st: Local<(u64, Option<Mem>)>) {
+#[allow(clippy::too_many_arguments)]
+fn session_source(
+    p: Res<crate::Player>,
+    cap: Option<Res<crate::capture::CaptureReplay>>,
+    t: Option<Res<FxTables>>,
+    settings: Res<crate::settings::Settings>,
+    mut fx: ResMut<FxFrame>,
+    mut hidden: ResMut<KartLodHidden>,
+    mut st: Local<(u64, Option<Mem>)>,
+) {
     let Some(t) = t else { return };
     if fx.manual || cap.is_some() {
         return;
@@ -502,10 +551,10 @@ fn session_source(p: Res<crate::Player>, cap: Option<Res<crate::capture::Capture
     let mut recs = Vec::new();
     for (slot, _, _, rec) in s.kart_records() {
         m.write(0x800C_30A8 + 0x504 * slot as u32, rec);
-        recs.push(rec.to_vec());
+        recs.push((slot, rec.to_vec()));
     }
     let frame = s.globals.frame;
-    let cam = FxCamera { roll: s.camera.roll as i32, yaw: s.camera.yaw as i32 };
+    let cam = FxCamera { roll: s.camera.roll as i32, yaw: s.camera.yaw as i32, eye: s.camera.pos };
     let mut out = FxFrame::default();
     if let Some(parts) = s.particles() {
         out.billboards.extend(parts.list.iter().filter_map(|p| t.particle(p)));
@@ -514,8 +563,14 @@ fn session_source(p: Res<crate::Player>, cap: Option<Res<crate::capture::Capture
         out.streaks.extend(sparks.list.iter().filter_map(|k| t.spark(k)));
     }
     items_from_mem(&t, m, cam, frame, &mut out.billboards);
-    for rec in &recs {
-        kart_effects(&t, rec, cam, frame, &mut out.billboards);
+    let mut h = 0u8;
+    for (slot, rec) in &recs {
+        if kart_all(&t, rec, cam, frame, settings.faithful_draw_distance(), &mut out) {
+            h |= 1 << slot;
+        }
+    }
+    if hidden.0 != h {
+        hidden.0 = h;
     }
     *fx = out;
 }
@@ -524,7 +579,7 @@ const S: f32 = 1.0 / crate::UNITS;
 
 /// Billboards and streaks -> PS1 primitives for the effects pass (psxfx.rs:
 /// blending in the game's colour space, depth-tested against the scene).
-fn draw(fx: Res<FxFrame>, mut prims: ResMut<FxPrims>, cam: Query<&Transform, With<crate::ChaseCamera>>) {
+fn draw(fx: Res<FxFrame>, t: Option<Res<FxTables>>, mut prims: ResMut<FxPrims>, cam: Query<&Transform, With<crate::ChaseCamera>>) {
     let Ok(ct) = cam.single() else { return };
     let right = ct.rotation * Vec3::X;
     let up = ct.rotation * Vec3::Y;
@@ -533,6 +588,9 @@ fn draw(fx: Res<FxFrame>, mut prims: ResMut<FxPrims>, cam: Query<&Transform, Wit
     }
     for s in &fx.streaks {
         prims.list.push(streak_prim(s, ct.translation));
+    }
+    if let Some(t) = t {
+        prims.list.extend(fx.quads.iter().filter_map(|q| crate::kartfx::quad_prim(&t, q, ct.translation, ct.rotation)));
     }
 }
 
@@ -569,6 +627,7 @@ pub fn billboard_prim(b: &Billboard, right: Vec3, up: Vec3) -> FxPrim {
         // ground-flat sprites lie on the ground: let the ground under them
         // (within half their size) not hide them
         ground_eps: if b.flat { 0.5 * hw.abs().max(hh.abs()) } else { 0.0 },
+        ground_radius: 2.0 * hw.abs().max(hh.abs()),
         // OT index = OTZ * 4 + bias * 4 with OTZ = view z / 4 (ZSF4 0x100,
         // the PSYQ default [INFER]): bias b moves the sprite -4b view units
         depth_pull: (-(b.bias as f32) * 4.0 * 32.0 * S).max(0.0),
@@ -592,6 +651,7 @@ pub fn streak_prim(s: &Streak, eye: Vec3) -> FxPrim {
         blend: Blend::Abr(1),
         center: (a + b) * 0.5,
         ground_eps: 0.0,
+        ground_radius: (b - a).length(),
         depth_pull: 0.0,
     }
 }

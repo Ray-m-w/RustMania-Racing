@@ -16,6 +16,7 @@ mod sfx;
 mod animtex;
 mod effects;
 mod psxfx;
+mod kartfx;
 mod ghost;
 mod hud;
 mod fps;

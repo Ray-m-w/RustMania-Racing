@@ -245,6 +245,7 @@ pub fn update_shadows(
             blend: Blend::Abr(((tp >> 5) & 3) as u8),
             center,
             ground_eps: 0.5 * ext,
+            ground_radius: 2.0 * ext,
             depth_pull: 0.0,
         });
         if std::env::var("MRM_SHADOW_DEBUG").is_ok() {

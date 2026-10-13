@@ -21,9 +21,9 @@
 //!
 //! Occlusion (Session 5, "sprite depth"): every fragment is depth-tested
 //! against the scene's depth buffer, except where the occluder is an
-//! upward-facing surface below the sprite's centre (the game draws its
-//! "ground" list under everything else in the ordering table, so a sprite
-//! sitting in or on the ground is never cut by it). See psxfx.wgsl.
+//! upward-facing surface below the sprite's centre and near it (the game
+//! draws its "ground" list under everything else in the ordering table, so
+//! a sprite sitting in or on the ground is never cut by it). See psxfx.wgsl.
 //!
 //! Sources push `FxPrim`s into `FxPrims` during Update (effects.rs,
 //! kartshadow.rs); `build_frame` (PostUpdate) sorts and packs them for the
@@ -81,6 +81,9 @@ pub struct FxPrim {
     /// Upward-facing occluders below `center.y + ground_eps` do not hide the
     /// primitive; negative = plain depth test.
     pub ground_eps: f32,
+    /// ... and only within this distance of `center` (Bevy units): the
+    /// surface the primitive sits on, not terrain far in front of it.
+    pub ground_radius: f32,
     /// Pulled toward the eye by this much (Bevy units) for the occlusion
     /// test only: the ordering-table bias some sprites carry (FUN_80011E3C
     /// sorts at OTZ * 4 + bias * 4).
@@ -325,7 +328,7 @@ fn build_frame(
                 f.verts.extend_from_slice(&[v.uv[0], v.uv[1], flags as f32, scale]);
                 f.verts.extend_from_slice(&[v.rgb[0], v.rgb[1], v.rgb[2], alpha]);
                 f.verts.extend_from_slice(&[p.center.x, p.center.y, p.center.z, p.ground_eps]);
-                f.verts.extend_from_slice(&[p.depth_pull, 0.0, 0.0, 0.0]);
+                f.verts.extend_from_slice(&[p.depth_pull, p.ground_radius, 0.0, 0.0]);
             }
             let pg = Some(page.unwrap_or(white));
             match f.draws.last_mut() {

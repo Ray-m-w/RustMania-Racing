@@ -7,9 +7,9 @@
 //
 // Occlusion: the sprite is tested against the scene's depth (reverse-Z) in
 // the fragment shader. An occluder that is an upward-facing surface below the
-// sprite's centre (+ eps) does not hide it: the game draws its "ground" list
-// under the sprites (ordering table), so sprites sitting in or on the ground
-// stay whole.
+// sprite's centre (+ eps) and within `radius` of it does not hide it: the
+// game draws its "ground" list under the sprites (ordering table), so sprites
+// sitting in or on the ground stay whole; terrain further away still hides.
 
 struct FxView {
     clip_from_world: mat4x4<f32>,
@@ -38,7 +38,8 @@ struct VIn {
     // centre (world), ground eps (< 0: no ground exemption)
     @location(3) ctr: vec4<f32>,
     // x: depth pull toward the eye for the occlusion test (the ordering
-    // table's per-sprite bias), world units
+    // table's per-sprite bias); y: the ground exemption's radius around the
+    // centre (Bevy units)
     @location(4) extra: vec4<f32>,
 };
 
@@ -51,6 +52,7 @@ struct VOut {
     @location(4) @interpolate(flat) ctr: vec4<f32>,
     // view depth of the fragment minus the pull
     @location(5) vdepth: f32,
+    @location(6) @interpolate(flat) radius: f32,
 };
 
 @vertex
@@ -63,6 +65,7 @@ fn vs(v: VIn) -> VOut {
     o.scale = v.uvf.w;
     o.ctr = v.ctr;
     o.vdepth = o.clip.w - v.extra.x;
+    o.radius = v.extra.y;
     return o;
 }
 
@@ -94,7 +97,7 @@ fn fs(in: VOut) -> @location(0) vec4<f32> {
             var exempt = false;
             if (in.ctr.w >= 0.0) {
                 let ps = world_at(fp, ds);
-                if (ps.y <= in.ctr.y + in.ctr.w) {
+                if (ps.y <= in.ctr.y + in.ctr.w && distance(ps, in.ctr.xyz) <= in.radius) {
                     let px = world_at(fp + vec2<i32>(1, 0), scene_depth(fp + vec2<i32>(1, 0)));
                     let py = world_at(fp + vec2<i32>(0, 1), scene_depth(fp + vec2<i32>(0, 1)));
                     let n = cross(px - ps, py - ps);

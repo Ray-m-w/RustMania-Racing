@@ -220,8 +220,11 @@ pub fn place_rigs(
     mut parts: Query<(&RigPart, &mut Transform, &mut Visibility)>,
     necks: Query<&RigNeck>,
     mut meshes: ResMut<Assets<Mesh>>,
+    lod: Option<Res<crate::effects::KartLodHidden>>,
 ) {
     let a = time.overstep_fraction();
+    // the game's far-kart impostor replaces the model (effects / kartfx.rs)
+    let lod_hidden = lod.map(|l| l.0).unwrap_or(0);
     let mut xs: HashMap<u8, (Vec<kartmodel::PartXform>, Vec<kartmodel::PartXform>, &RigTemplate)> = HashMap::new();
     for k in &feed.now {
         let Some(t) = lib.templates.get(&(k.character, k.vehicle)) else { continue };
@@ -245,7 +248,7 @@ pub fn place_rigs(
         let (t0, t1) = (kartmodel::to_transform(&b0), kartmodel::to_transform(&b1));
         tr.translation = t0.translation.lerp(t1.translation, a);
         tr.rotation = t0.rotation.slerp(t1.rotation, a);
-        let want = if b1.visible { Visibility::Inherited } else { Visibility::Hidden };
+        let want = if b1.visible && lod_hidden & (1 << rp.slot) == 0 { Visibility::Inherited } else { Visibility::Hidden };
         if *vis != want {
             *vis = want;
         }

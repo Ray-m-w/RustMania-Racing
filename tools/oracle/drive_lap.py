@@ -85,7 +85,7 @@ def main():
             struct.pack_into("<IIBBBB", b.m, O_STEPS + 12 * n, at, cmd, 0x80, 0x80, 0x80, 0x80)
             b.put_u32(O_RLEN, n + 1)
             cur = cmd
-            if n + 1 >= 255:
+            if n + 1 >= 8190:
                 print("route full at vb", vb)
                 break
     names = {0: ""}

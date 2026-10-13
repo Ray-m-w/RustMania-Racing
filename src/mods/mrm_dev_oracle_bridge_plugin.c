@@ -4,7 +4,7 @@
  * mrm.dev.oracle-bridge is enabled (mods/state.toml beside the exe); release
  * packaging excludes it (tools/build.ps1).
  *
- * One named shared-memory block, "Local\mrm_oracle_bridge_v2":
+ * One named shared-memory block, "Local\mrm_oracle_bridge_v3":
  *   - a copy of main RAM + scratchpad taken in the restore callback;
  *   - capture: every VBlank, the RAM regions listed in the header are copied
  *     into a ring slot stamped with the VBlank count since the last savestate
@@ -20,16 +20,17 @@
 #include <string.h>
 #include <windows.h>
 
-#define BRIDGE_NAME "Local\\mrm_oracle_bridge_v2"
+#define BRIDGE_NAME "Local\\mrm_oracle_bridge_v3"
 #define BRIDGE_MAGIC 0x424D524Du /* 'MRMB' */
-#define BRIDGE_VERSION 2u
+#define BRIDGE_VERSION 3u
 #define HEADER_SIZE 4096u
 #define RAMSNAP_SIZE (0x200000u + 0x400u) /* main RAM + scratchpad */
 #define NSLOTS 4096u
 #define SLOT_SIZE 32768u
 #define SLOT_HDR 24u
 #define MAX_REGIONS 32u
-#define MAX_STEPS 256u
+#define MAX_STEPS 8192u
+#define STEPS_SIZE (MAX_STEPS * 12u) /* step table after the header */
 
 #pragma pack(push, 1)
 typedef struct {
@@ -55,25 +56,27 @@ typedef struct {
     uint32_t source_calls;                      /* 312 */
     uint32_t ramsnap_gen;                       /* 316: restore_gen of the RAM snapshot */
     uint8_t reserved[512 - 320];
-    BridgeStep steps[MAX_STEPS];                /* 512..3584 */
+    uint8_t reserved2[HEADER_SIZE - 512];
 } BridgeHeader;
 #pragma pack(pop)
 
 static BridgeHeader* g_hdr;
 static uint8_t* g_slots;
 static uint8_t* g_ramsnap;
+static BridgeStep* g_steps;
 
 static void bridge_open(void) {
     HANDLE h;
     void* p;
     if (g_hdr) return;
     h = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0,
-                           HEADER_SIZE + RAMSNAP_SIZE + NSLOTS * SLOT_SIZE, BRIDGE_NAME);
+                           HEADER_SIZE + STEPS_SIZE + RAMSNAP_SIZE + NSLOTS * SLOT_SIZE, BRIDGE_NAME);
     if (!h) return;
     p = MapViewOfFile(h, FILE_MAP_ALL_ACCESS, 0, 0, 0);
     if (!p) return;
     g_hdr = (BridgeHeader*)p;
-    g_ramsnap = (uint8_t*)p + HEADER_SIZE;
+    g_steps = (BridgeStep*)((uint8_t*)p + HEADER_SIZE);
+    g_ramsnap = (uint8_t*)p + HEADER_SIZE + STEPS_SIZE;
     g_slots = g_ramsnap + RAMSNAP_SIZE;
     if (g_hdr->magic != BRIDGE_MAGIC || g_hdr->version != BRIDGE_VERSION) {
         memset(g_hdr, 0, HEADER_SIZE);
@@ -163,7 +166,7 @@ static int bridge_transform(const PSXModPadFrame* frame, PSXModPadOutput* out) {
     }
     n = g_hdr->route_len < MAX_STEPS ? g_hdr->route_len : MAX_STEPS;
     for (i = 0; i < n; i++) {
-        if (g_hdr->steps[i].vb_start <= vb) cur = &g_hdr->steps[i];
+        if (g_steps[i].vb_start <= vb) cur = &g_steps[i];
         else break;
     }
     out->buttons = 0xFFFFu;

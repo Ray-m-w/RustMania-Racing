@@ -114,9 +114,24 @@ def run(route, outdir, slot=None, regions=REGIONS, settle=0.3):
         return _run(route, outdir, slot, regions, settle)
 
 
+def warm_up(o, b, slot=2):
+    """The first savestate load after the game starts can deliver one stray
+    pad frame (seen twice as START at VBlanks 4-5, pausing the race; never on
+    later loads). Do a throwaway load first."""
+    if b.restore_gen != 0:
+        return
+    b.arm_route([(0, 0, 0x80, 0x80, 0x80, 0x80)], end_vb=200)
+    g = b.restore_gen
+    o.load_state(slot)
+    b.wait_restore(g)
+    while b.vb_since_restore < 180:
+        time.sleep(0.02)
+
+
 def _run(route, outdir, slot=None, regions=REGIONS, settle=0.3):
     o = Oracle()
     b = Bridge()
+    warm_up(o, b, slot if slot is not None else route.get("slot", 2))
     b.set_regions(regions)
     steps = []
     for st in route["steps"]:

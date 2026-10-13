@@ -71,3 +71,13 @@ CLI: `cargo run --bin mr-compare -- REF CAND --window 300 --pos-tol T --deg-tol 
 - This save accelerates with CROSS, not TRIANGLE (Triangle on the grid spins
   the kart). CLAUDE.md and mrm_modern_controls_plugin.c assume Triangle.
 - lap1: the player never comes within 10.7k units of an AI kart (no contact).
+
+## 7. Session 3 additions
+- Bridge v3: input step table moved after the header, 8,192 steps (multi-lap
+  routes). Layout in tools/oracle/bridge.py.
+- `capture.OracleLock`: one savestate-driven run at a time (parallel agents).
+- `capture.warm_up`: the FIRST savestate load after the game starts can carry
+  one stray pad frame (START at VBlanks 4-5, pausing the race; seen twice,
+  never on later loads; likely the controller presentation switching on that
+  load). The harness now does a throwaway load first. Verified from a fresh
+  launch: lap1 replays identical to the reference trace.

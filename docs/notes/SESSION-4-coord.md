@@ -118,4 +118,12 @@ bus.set_volume(Bus::Sfx, 1.0);         // Bus::{Master, Music, Sfx}, linear gain
 - Music is C's (XA from TUNES/*.XA, streamed on its own thread) and enters
   the same mix as the SPU's CD input: XA decode -> CdMix (game 0x800B0A50)
   -> SPU CD volume (0x7FFE) -> + voices -> main volume.
+- (2026-10-12, C, later) Character voice clips (VOICES/*.XA through the
+  game's XA queue; they interrupt the music, which restarts after them):
+  `fn x(mut dir: ResMut<crate::audio::MusicDirector>) { dir.clip(character, n); }`
+  = FUN_80060580(character = kart +0x4B2, n). The player's finish clip is
+  already wired in audio.rs from `RacePhase::Finished`. Other call sites of
+  FUN_80060580 / FUN_800606D0 (hits, items: FUN_80081DD8, FUN_8006EC4C,
+  FUN_80074A94, FUN_8007916C) are A's to surface as sim events; post the
+  event and C (or D in sfx.rs) forwards it to `clip`.
 ### D SFX + engine

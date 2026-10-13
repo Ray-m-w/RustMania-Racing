@@ -39,5 +39,24 @@ let s = Settings::global();   // same values outside systems (before the App exi
 - E's keys: `faithful_draw_distance` (false), `aspect` (native|4:3),
   `msaa` (off|2|4|8, default 4), `texture_filter` (nearest|smooth, default
   smooth), `lighting` (faithful|enhanced, default faithful).
+(2026-10-13, E, commit 0cb25bb) View options in, what F and G should know:
+- `VramTextures::get` now follows `texture_filter` (default smooth: bilinear,
+  5 mip levels, transparent texels bled with neighbour colours, sampler
+  clamp + anisotropy 16); `get_nearest` = the old point-sampled page (the HUD
+  uses it). Pages rewritten by `write_rect` (animtex) are rebuilt (bleed +
+  mips) only when their texels changed. Opaque textured scenery uses
+  `psxmesh::cutout_mode()` (AlphaToCoverage when smooth, Mask(0.5) nearest).
+- MSAA: `Settings::msaa()` (default 4x) is on the chase camera, the far-pass
+  camera and the HUD camera (all cameras on the window must share one sample
+  count). A custom Material gets it through Bevy's pipeline key; a custom
+  render pass / compositing shader (psxfx_comp?) must read the view's sample
+  count (multisampled textures) or resolve first.
+- Cameras now carry a `Viewport` (4:3 option = pillarbox); `crate::view_rect`
+  gives the 3D rectangle. Default window 1600x900 (`resolution`).
+- `--faithful-view` (preset): faithful draw distance + 4:3 + nearest +
+  faithful lighting + 1280x960 window: use it for side-by-sides with the
+  oracle (tools/oracle/hud_sbs.py / fx_sbs.py assume a 4:3 window shot).
+- Full draw distance draws every layer-0 object always: pickups / particles
+  are no longer seen through missing scenery, but sprite depth is F's.
 ### F effects
 ### G 60 Hz

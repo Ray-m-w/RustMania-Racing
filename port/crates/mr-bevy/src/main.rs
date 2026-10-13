@@ -13,7 +13,6 @@
 
 mod audio;
 mod sfx;
-mod animtex;
 mod ghost;
 mod hud;
 mod fps;
@@ -401,7 +400,6 @@ fn main() {
         .insert_resource(shot_plan())
         .add_plugins(fps::plugin)
         .add_plugins(hud::HudPlugin)
-        .add_plugins(animtex::AnimTexPlugin)
         .add_plugins(karts::KartsPlugin)
         .add_plugins(audio::AudioOutPlugin)
         .add_plugins(sfx::SfxPlugin)

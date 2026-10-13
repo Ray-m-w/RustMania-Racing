@@ -6,9 +6,9 @@
 //!       Teacher-forced race frames: each tick the Session is loaded with the
 //!       game's state at V(k) (`Session::load_mem`) and runs one frame with
 //!       the player's pad and dt; the result is compared with V(k+1): every
-//!       kart's owned fields, the pickups, the projectiles. The random bytes
-//!       FUN_8007F03C draws (kart particles, not ported) are searched: the
-//!       skip 0..=D before the item code that reproduces the item tables.
+//!       kart's owned fields, the pickups, the projectiles. Written before
+//!       FUN_8007F03C was ported: its random bytes are searched (a pointer
+//!       step 0..=D in its place that reproduces the item tables).
 //!   mr-items free CAPTURE [--ticks N] [--verbose]
 //!       Free run of the player and the item state: the player kart, the
 //!       pickups and the projectiles carry over from the port's own previous
@@ -16,6 +16,17 @@
 //!       seed are loaded from the oracle each frame (inputs, as in Session
 //!       3), the FUN_8007F03C skip from the teacher-forced pass. Nothing is
 //!       injected: hits on the player come from the port's projectiles.
+//!   mr-items freeall CAPTURE [--own-rng]
+//!       Every kart free from tick 1 (the port's own state carried over).
+//!       Without --own-rng the frame-start random pointer, the rand() seed
+//!       and the searched FUN_8007F03C step come from the oracle; with it
+//!       nothing does (FUN_8007F03C runs), and the random pointer, the seed,
+//!       the particle / spark ring indices and particle slot 0 are compared
+//!       too.
+//!   mr-items rows CAPTURE --out CSV          the oracle's per-kart rows
+//!   mr-items race CAPTURE --seed S --out CSV a port race from the start
+//!       (S != 0: another rand() seed and random pointer); rows for
+//!       tools/oracle/item_stats.py.
 
 use std::collections::BTreeMap;
 
@@ -366,12 +377,29 @@ fn oracle_rows(run: &Run, cap: &Capture, base: &[u8], n: usize, path: &str) {
     println!("{} ticks -> {path}", n + 1);
 }
 
-/// A port race from the capture's first tick: every kart in the port (the
-/// AI with items), the player on the capture's pad; `seed` != 0 replaces
-/// the BIOS rand() seed (another race from the same start).
+/// A port race: every kart in the port (the AI with items), the player on
+/// the capture's pad; `seed` != 0 replaces the BIOS rand() seed and the
+/// random pointer (another race from the same start). It starts at tick 1,
+/// the first normal race frame (`--from0`: at the restore frame tick 0, as
+/// before 2026-10-13: the port does not run that frame as the game does,
+/// its race clock ends 10 VBlanks ahead and the karts differ from tick 3
+/// even with the capture's own seed); with seed 0 the race is the
+/// capture's own (`freeall --own-rng`: exact).
 fn port_race(run: &Run, cap: &Capture, base: &[u8], s: &mut Session, n: usize, seed: u32, path: &str) {
-    let m0 = cap.mem_at(run.ticks[0], Some(base));
-    s.load_mem(&m0);
+    let from0 = std::env::args().any(|a| a == "--from0");
+    let start = if from0 { 0 } else { 1 };
+    let nk = 1 + s.others.len();
+    let mut out = String::from(ROW_HEADER);
+    out.push('\n');
+    let mut ev = vec![[0usize; 5]; nk];
+    for t in 0..start {
+        s.load_mem(&cap.mem_at(run.ticks[t], Some(base)));
+        let it = s.items();
+        for (slot, k) in std::iter::once(&s.kart).chain(s.others.iter().map(|o| &o.kart)).enumerate() {
+            row(&mut out, t, slot, k, (it.special, it.special_owner, s.globals.race_clock), ev[slot]);
+        }
+    }
+    s.load_mem(&cap.mem_at(run.ticks[start], Some(base)));
     if seed != 0 {
         let mut x = seed.wrapping_mul(0x9E37_79B9) ^ 0x5bd1_e995;
         for _ in 0..3 {
@@ -381,57 +409,11 @@ fn port_race(run: &Run, cap: &Capture, base: &[u8], s: &mut Session, n: usize, s
         s.rand_state = x;
         s.globals.rng = 0x8001_F94C + (x >> 8) % 0x5DB;
     }
-    let nk = 1 + s.others.len();
-    let mut out = String::from(ROW_HEADER);
-    out.push_str("\n");
-    let mut ev = vec![[0usize; 5]; nk];
     let it = s.items();
     for (slot, k) in std::iter::once(&s.kart).chain(s.others.iter().map(|o| &o.kart)).enumerate() {
-        row(&mut out, 0, slot, k, (it.special, it.special_owner, s.globals.race_clock), ev[slot]);
+        row(&mut out, start, slot, k, (it.special, it.special_owner, s.globals.race_clock), ev[slot]);
     }
-    // Experiment (--rng-mimic): extra random-pointer bytes per frame drawn
-    // from the game's measured excess over the port (s_1: frame-end
-    // pointer, game - port), standing in for unported consumers.
-    let mimic = std::env::args().any(|a| a == "--rng-mimic");
-    let table: [(u32, u32); 14] = [(0, 1318), (1, 1316), (2, 209), (3, 242), (4, 410), (5, 166), (6, 204), (7, 225), (8, 134), (9, 113), (10, 94), (12, 84), (14, 70), (17, 30)];
-    let total: u32 = table.iter().map(|t| t.1).sum();
-    let mut lcg: u32 = seed.wrapping_mul(747796405).wrapping_add(2891336453);
-    // Experiment (--streams CAPTURE): each frame starts from that other
-    // oracle race's random pointer and rand() seed (the game's own random
-    // streams, all its consumers included).
-    let streams: Option<(Capture, Vec<u8>)> = std::env::args()
-        .position(|a| a == "--streams")
-        .and_then(|i| std::env::args().nth(i + 1))
-        .map(|d| {
-            let c = Capture::open(&d).expect("open --streams capture");
-            let b = c.ram0.clone().expect("ram0");
-            (c, b)
-        });
-    let sticks: Vec<u32> = streams.as_ref().map(|(c, b)| {
-        let w = oracle::dock_world(b);
-        Run::new(c, b, &w).ticks
-    }).unwrap_or_default();
-    for i in 0..n {
-        if let Some((c, b)) = &streams {
-            if i < sticks.len() {
-                let m = c.mem_at(sticks[i], Some(b));
-                s.globals.rng = m.u32(0x800B_0BCC);
-                s.rand_state = m.u32(0x8000_9010);
-            }
-        }
-        if mimic {
-            lcg = lcg.wrapping_mul(1664525).wrapping_add(1013904223);
-            let mut r = (lcg >> 8) % total;
-            let mut d = 0;
-            for &(v, c) in &table {
-                if r < c {
-                    d = v;
-                    break;
-                }
-                r -= c;
-            }
-            s.rng_skip_items = Some(d);
-        }
+    for i in start..n {
         let mb = cap.mem_at(run.ticks[i + 1], Some(base));
         let buttons = mb.u16(0x800B_0CE8);
         let dt = mb.i32(0x800B_0AEC);
@@ -468,8 +450,11 @@ fn port_race(run: &Run, cap: &Capture, base: &[u8], s: &mut Session, n: usize, s
 /// kart's fields differ from the game's.
 fn freeall(run: &Run, cap: &Capture, base: &[u8], s: &mut Session, n: usize, skip_max: u32) {
     let nk = 1 + s.others.len();
+    // --own-rng: nothing from the oracle after tick 1 (the random pointer,
+    // the rand() seed and FUN_8007F03C all the port's own).
+    let own = std::env::args().any(|a| a == "--own-rng");
     let mut skip_at: BTreeMap<usize, u32> = BTreeMap::new();
-    for i in 0..n {
+    for i in 0..if own { 0 } else { n } {
         let ma = cap.mem_at(run.ticks[i], Some(base));
         let mb = cap.mem_at(run.ticks[i + 1], Some(base));
         let want = ItemState::read(&mb);
@@ -489,16 +474,68 @@ fn freeall(run: &Run, cap: &Capture, base: &[u8], s: &mut Session, n: usize, ski
     s.load_mem(&m0);
     let mut first: Vec<Option<(usize, Vec<String>)>> = vec![None; nk];
     let mut gfirst: Option<usize> = None;
+    let mut stream_first: Vec<(&str, usize)> = Vec::new();
+    let (mut particles_live, mut particles_seen) = (0usize, 0usize);
     for i in 1..n {
         let ma = cap.mem_at(run.ticks[i], Some(base));
         let mb = cap.mem_at(run.ticks[i + 1], Some(base));
-        s.globals.rng = ma.u32(0x800B_0BCC);
-        s.rand_state = ma.u32(0x8000_9010);
-        s.rng_skip_items = Some(*skip_at.get(&i).unwrap_or(&0));
+        if !own {
+            s.globals.rng = ma.u32(0x800B_0BCC);
+            s.rand_state = ma.u32(0x8000_9010);
+            s.rng_skip_items = Some(*skip_at.get(&i).unwrap_or(&0));
+        }
         let buttons = mb.u16(0x800B_0CE8);
         if let Err(e) = s.tick_dt(buttons, mb.i32(0x800B_0AEC)) {
             println!("STOPPED at tick {i}: {e}");
             break;
+        }
+        if own {
+            // The random streams and the particle lists against the game at
+            // the frame end: the pointer, the seed, the ring indices 0x800B0C60 / 0x800B07EB and the
+            // captured particle slot 0 (0x800E0C20, 0x3C bytes + its side
+            // entry 0x800D73D0).
+            let mut mine = mb.clone();
+            if let Some(fx) = s.globals.fx.as_ref() {
+                fx.particles.write(&mut mine);
+                fx.sparks.write(&mut mine);
+            }
+            let want = ItemState::read(&mb);
+            let checks: [(&str, bool); 7] = [
+                ("pickups", s.items().pickups == want.pickups),
+                ("projectiles", s.items().projectiles == want.projectiles),
+                ("random pointer", s.globals.rng == mb.u32(0x800B_0BCC)),
+                ("rand seed", s.rand_state == mb.u32(0x8000_9010)),
+                ("particle ring", mine.u8(0x800B_0C60) == mb.u8(0x800B_0C60)),
+                ("spark ring", mine.u8(0x800B_07EB) == mb.u8(0x800B_07EB)),
+                // +0x32 bit 0x200 is the drawer's (FUN_80010E90 clears it
+                // off screen), not the sim's.
+                ("particle 0", {
+                    let mut p = mine.slice(0x800E_0C20, 0x3C).to_vec();
+                    let mut q = mb.slice(0x800E_0C20, 0x3C).to_vec();
+                    p[0x33] &= !2;
+                    q[0x33] &= !2;
+                    p == q && mine.slice(0x800D_73D0, 8) == mb.slice(0x800D_73D0, 8)
+                }),
+            ];
+            for (name, ok) in checks {
+                if !ok && !stream_first.iter().any(|(n2, _)| *n2 == name) {
+                    stream_first.push((name, i + 1));
+                    println!("{name}: first difference at tick {}", i + 1);
+                    if name == "particle 0" {
+                        println!("  port {:02X?} {:02X?}
+  game {:02X?} {:02X?}", mine.slice(0x800E_0C20, 0x3C), mine.slice(0x800D_73D0, 8), mb.slice(0x800E_0C20, 0x3C), mb.slice(0x800D_73D0, 8));
+                    }
+                    if name == "spark ring" {
+                        println!("  port {} game {}", mine.u8(0x800B_07EB), mb.u8(0x800B_07EB));
+                    }
+                }
+            }
+            for k in 0..64 {
+                let a = 0x800E_0C20 + 0x3C * k;
+                let live = mine.i16(a + 0x24) > 0;
+                particles_live += live as usize;
+                particles_seen += (k == 0) as usize;
+            }
         }
         let ours = records(s);
         for k in 0..nk {
@@ -527,5 +564,11 @@ fn freeall(run: &Run, cap: &Capture, base: &[u8], s: &mut Session, n: usize, ski
             Some((t, d)) => println!("kart {k}: first difference at tick {t}: {:?}", d.iter().take(6).collect::<Vec<_>>()),
             None => println!("kart {k}: exact on every tick"),
         }
+    }
+    if own {
+        if stream_first.is_empty() {
+            println!("random pointer, rand seed, particle / spark rings, particle 0: exact on every tick");
+        }
+        println!("port particles alive per tick (mean): {:.1}", particles_live as f64 / particles_seen.max(1) as f64);
     }
 }

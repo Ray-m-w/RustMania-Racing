@@ -348,8 +348,20 @@ fn pair(a: &mut KartState, b: &mut KartState, g: &mut RaceGlobals, w: &World, r:
         }
     }
     if (a.player_index as i32) < g.humans as i32 || (b.player_index as i32) < g.humans as i32 {
-        // Contact sparks: three particles, three random bytes each.
-        g.rng = g.rng.wrapping_add(9);
+        // 0x800415A8: contact sparks (FUN_800326B4 x3, three random bytes
+        // each) midway between the two karts' contact points: each kart's
+        // +0x176 radius along its heading + the side angle, at its ride
+        // height.
+        let ua = (a.heading as i32 + sa as i16 as i32) & 0xFFF;
+        let ub = (b.heading as i32 + sb as i16 as i32) & 0xFFF;
+        let (ra, rb) = (a.spark_offset as i32, b.spark_offset as i32);
+        let px = (a.x.wrapping_add(ra * t.sin_raw(ua) >> 9).wrapping_add(b.x).wrapping_add(rb * t.sin_raw(ub) >> 9)) / 2;
+        let py = (a.y.wrapping_add((a.ride_height as i32) << 5).wrapping_add(b.y).wrapping_add((b.ride_height as i32) << 5)) / 2;
+        let pz = (a.z.wrapping_add(ra * t.cos_raw(ua) >> 9).wrapping_add(b.z).wrapping_add(rb * t.cos_raw(ub) >> 9)) / 2;
+        for _ in 0..3 {
+            let v = [0, 1, 2].map(|_| (crate::update::rng_next(g, w) as i8 as i32) << 1);
+            crate::items::spark(g, [px, py, pz], v, 0x18, 0x10, [0xFF, 0x7F, 0]);
+        }
     }
     if g.challenge != 0 || r.tagged != -1 {
         crate::unreachable_in_scope!("challenge tag on kart contact");

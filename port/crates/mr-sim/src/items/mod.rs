@@ -15,6 +15,7 @@
 //! are not ported, their random draws are). Model and addresses:
 //! docs/spec/items.md.
 
+pub mod kart_fx;
 pub mod pickups;
 pub mod specials;
 pub mod weapons;
@@ -448,13 +449,16 @@ impl Cameras {
 
 /// The item code of the race frame after the kart loop and the render pass
 /// (FUN_8007916C @0x80079A8C): FUN_8006C388 (effects of a character
-/// special), FUN_8007F03C (`skip`: its random draws, analysis only),
+/// special), FUN_8007F03C (kart particles, kart_fx.rs, from `recs` = the
+/// karts' records; `skip` Some: a fixed pointer step instead, analysis),
 /// FUN_8007A9DC (two blink timers), FUN_8007BBF0 (pickups), FUN_80069648
 /// (projectiles). `items` false: Session 3's items-off race (only the blink
 /// timers run).
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub fn after_kart_loop(
     karts: &mut [crate::kart::KartState],
+    recs: &mut [&mut Vec<u8>],
     g: &mut crate::globals::RaceGlobals,
     w: &crate::world::World,
     cams: &Cameras,
@@ -465,8 +469,19 @@ pub fn after_kart_loop(
     if items {
         specials::effects_frame(karts, g, w, cams, rand);
     }
-    if let Some(d) = skip {
-        g.rng = g.rng.wrapping_add(d);
+    match skip {
+        // Analysis: the searched pointer step in place of FUN_8007F03C.
+        Some(d) => g.rng = g.rng.wrapping_add(d),
+        None if items => {
+            // FUN_8007F03C reads the live records: write the karts back
+            // after the effects.
+            for (k, rec) in karts.iter().zip(recs.iter_mut()) {
+                k.to_record(rec);
+            }
+            let rs: Vec<&[u8]> = recs.iter().map(|r| r.as_slice()).collect();
+            kart_fx::frame(&rs, g, w, cams);
+        }
+        None => {}
     }
     blink_timers(g, w);
     if items {

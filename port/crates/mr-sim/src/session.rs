@@ -171,9 +171,8 @@ pub struct Session {
     /// The first race frame after the race load runs with the countdown
     /// held at 480 (oracle: kart updated once, countdown unchanged).
     pub load_frame: bool,
-    /// Analysis only: random bytes drawn between the effect driver and the
-    /// pickups by code the port does not run (FUN_8007F03C's kart
-    /// particles), for the next tick.
+    /// Analysis only: for the next tick, step the random pointer by this
+    /// many bytes in place of FUN_8007F03C (kart particles); None runs it.
     pub rng_skip_items: Option<u32>,
     /// The first tick after the race load: the camera's change to the intro
     /// mode takes its side bit from the next rand() without drawing it
@@ -364,6 +363,8 @@ impl Session {
             items: Default::default(),
             stack: Default::default(),
             fx: Some(Box::new(crate::items::Fx { particles: crate::particles::Particles::from_exe(&exe), sparks: Default::default() })),
+            // DOCK's race setup: no rain (0x800B0B9A = 0, 0x800B07E2 = 0).
+            kart_fx_rain: false,
         };
         // FUN_8008C4AC: the first human's grid slot (*rng++ % karts), the
         // other karts on the following slots; with no opponents the
@@ -674,15 +675,16 @@ impl Session {
         }
         self.pick = (self.pick + 1) % n;
         // 5b. After the kart loop (FUN_8007916C @0x80079A8C..): effects
-        //     FUN_8006C388, FUN_8007F03C (no objects on DOCK; its kart
-        //     particles are render side), FUN_8007A9DC, pickups FUN_8007BBF0,
+        //     FUN_8006C388, FUN_8007F03C (kart particles, items/kart_fx.rs),
+        //     FUN_8007A9DC, pickups FUN_8007BBF0,
         //     projectiles FUN_80069648 (items.rs).
         {
             let cams = crate::items::Cameras { pos: [self.camera.pos_div32, [0; 3]], n: g.humans.clamp(0, 2) as usize };
             let seed = &mut self.rand_state;
             let mut rand = || bios_rand(seed);
             let skip = self.rng_skip_items.take();
-            crate::items::after_kart_loop(ks, g, w, &cams, self.cfg.items, skip, &mut rand);
+            let mut recs: Vec<&mut Vec<u8>> = std::iter::once(&mut self.record).chain(self.others.iter_mut().map(|o| &mut o.record)).collect();
+            crate::items::after_kart_loop(ks, &mut recs, g, w, &cams, self.cfg.items, skip, &mut rand);
         }
         crate::sound::character_voices(ks, g, w);
         for (s, k) in ks.iter().enumerate() {

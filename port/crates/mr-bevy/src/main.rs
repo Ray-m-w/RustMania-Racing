@@ -458,12 +458,12 @@ fn main() {
         .add_plugins(sfx::SfxPlugin)
         .add_systems(FixedUpdate, capture::tick.after(sim_tick).before(karts::feed_player))
         .add_systems(Last, write_outputs)
-        .add_systems(PostUpdate, fit_viewports.before(bevy::camera::CameraUpdateSystems))
+        .add_systems(PostUpdate, (fit_viewports, fit_bars).before(bevy::camera::CameraUpdateSystems))
         .add_systems(Update, (place_player, ghost::place, follow_camera, title, follow_sky.after(follow_camera), select_objects, shot.after(follow_sky).after(select_objects)))
         .run();
 }
 
-fn setup_camera(mut c: Commands, settings: Res<settings::Settings>) {
+fn setup_camera(mut c: Commands, settings: Res<settings::Settings>, mut meshes: ResMut<Assets<Mesh>>, mut mats: ResMut<Assets<StandardMaterial>>) {
     // No tonemapping: PS1 colours go to the screen as the game wrote them.
     // The game's projection: H = 160 over a 240-line screen (SetGeomScreen
     // at 0x8004311C) = 2*atan(120/160) = 73.74 deg vertical [camera.md].
@@ -480,6 +480,28 @@ fn setup_camera(mut c: Commands, settings: Res<settings::Settings>) {
         Transform::from_xyz(0.0, 3.0, 8.0),
         ChaseCamera,
     ));
+    // Pillarbox / letterbox bars (aspect = 4:3 on a wide window): black, as
+    // the 3D cameras' clear (the game's colour) fills the whole target.
+    c.spawn((
+        Camera3d::default(),
+        Camera { order: 20, clear_color: ClearColorConfig::None, ..default() },
+        Projection::Orthographic(OrthographicProjection {
+            scaling_mode: bevy::camera::ScalingMode::Fixed { width: 1.0, height: 1.0 },
+            near: -10.0,
+            far: 10.0,
+            ..OrthographicProjection::default_3d()
+        }),
+        Tonemapping::None,
+        settings.msaa(),
+        Transform::IDENTITY,
+        bevy::camera::visibility::RenderLayers::layer(BAR_LAYER),
+        BarCamera,
+    ));
+    let quad = meshes.add(Mesh::from(Rectangle::new(1.0, 1.0)));
+    let black = mats.add(StandardMaterial { base_color: Color::BLACK, unlit: true, ..default() });
+    for _ in 0..4 {
+        c.spawn((Mesh3d(quad.clone()), MeshMaterial3d(black.clone()), Transform::IDENTITY, Visibility::Hidden, bevy::camera::visibility::RenderLayers::layer(BAR_LAYER), Bar));
+    }
     c.spawn((DirectionalLight { illuminance: 8000.0, ..default() },
              Transform::from_xyz(1.0, 3.0, 2.0).looking_at(Vec3::ZERO, Vec3::Y)));
     c.insert_resource(GlobalAmbientLight { brightness: 1500.0, ..default() });
@@ -525,6 +547,58 @@ fn fit_viewports(
         };
         if !same {
             c.viewport = want.clone();
+        }
+    }
+}
+
+/// Render layer of the pillarbox bars (drawn last, over the whole window).
+const BAR_LAYER: usize = 5;
+
+#[derive(Component)]
+struct BarCamera;
+
+#[derive(Component)]
+struct Bar;
+
+/// Cover the window outside `view_rect` with the four black bars (in
+/// physical pixels: the bar camera's view is the window, y up, origin at the
+/// centre); hidden when the 3D view fills the window.
+fn fit_bars(
+    settings: Res<settings::Settings>,
+    win: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    mut cam: Query<&mut Projection, With<BarCamera>>,
+    mut bars: Query<(&mut Transform, &mut Visibility), With<Bar>>,
+) {
+    let Ok(w) = win.single() else { return };
+    let size = w.physical_size();
+    if size.x == 0 || size.y == 0 {
+        return;
+    }
+    let (pos, sz) = view_rect(size, settings.aspect());
+    let (ww, wh) = (size.x as f32, size.y as f32);
+    if let Ok(mut proj) = cam.single_mut() {
+        if let Projection::Orthographic(o) = &mut *proj {
+            if !matches!(o.scaling_mode, bevy::camera::ScalingMode::Fixed { width, height } if width == ww && height == wh) {
+                o.scaling_mode = bevy::camera::ScalingMode::Fixed { width: ww, height: wh };
+            }
+        }
+    }
+    // (x0, y0, x1, y1) window pixels, y down: left, right, top, bottom
+    let (x0, y0) = (pos.x as f32, pos.y as f32);
+    let (x1, y1) = (x0 + sz.x as f32, y0 + sz.y as f32);
+    let rects = [[0.0, 0.0, x0, wh], [x1, 0.0, ww, wh], [x0, 0.0, x1, y0], [x0, y1, x1, wh]];
+    for ((mut t, mut v), r) in bars.iter_mut().zip(rects) {
+        let (bw, bh) = (r[2] - r[0], r[3] - r[1]);
+        let show = bw > 0.0 && bh > 0.0;
+        let want_v = if show { Visibility::Inherited } else { Visibility::Hidden };
+        if *v != want_v {
+            *v = want_v;
+        }
+        if show {
+            let want = Transform::from_xyz((r[0] + r[2]) * 0.5 - ww * 0.5, wh * 0.5 - (r[1] + r[3]) * 0.5, 0.0).with_scale(Vec3::new(bw, bh, 1.0));
+            if *t != want {
+                *t = want;
+            }
         }
     }
 }

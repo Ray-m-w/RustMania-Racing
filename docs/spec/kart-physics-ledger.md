@@ -510,9 +510,9 @@ and changes with these, by design):
 Known differences (not one-for-one):
 - Course-load rand() draws (token colours, turntable phase / spin, the
   FUN_80084490 switch's render phases) come from the seeds before the
-  session's race-load seed; the game's course load is earlier (menus), so
-  turntable spin directions differ from any given oracle race unless set from
-  RAM (mr-course-check does).
+  session's race-load seed unless `SessionConfig::course_load_seed` names
+  the game's (track S: the course load runs when the course menu opens,
+  menu frames earlier; mr-course-check finds the seed per capture).
 - Lifts and breakables change the TER in place; the session keeps the TER in
   step with its state (`Session::sync_ter`, also after `restore` /
   `load_mem`). A projectile's breakable hit is applied to the TER after the
@@ -595,3 +595,26 @@ and teacher forced exact (projectile, random pointer, karts) to frame 303,
 where a new AI projectile's launch y differs (the --dir session's AI
 look_* fields, +0x324.., are not rebuilt by load_mem [INFER]; not a
 course capture issue). The ceiling path is from the code only.
+### Course-load draws [CODE][ORACLE]
+The course (TER, DAT, tokens, turntables) is loaded when the course menu
+opens: O's ram0 (the course menu) already holds the course, the token
+colours and the turntable spins; the menu frames after it keep drawing
+rand() (1-2 per VBlank) and the race load comes later. The course load's
+rand() draws, in order: FUN_8007B448 one per turbo token (colour = rand()
+>> 13), FUN_80084490 two per turntable (phase = rand() / 8, spin = rand()
+< 0x4000 ? 5 : -5, x3 on 0x1A / 0x1B), then its per-course switch.
+`mr-course-check --course-load` rewinds the BIOS rand() from each
+capture's menu state and finds the one run of those draws that gives all
+of the menu state's token colours and turntable spins (38..118 tokens: 76+
+bits each; a unique hit within 4 M calls on all 17 courses): 120..286
+calls before the menu state (BASE 156, BOG 274, CAPE 252, DISCO 278,
+GALLERY 156, GHOST 153, GLACIER 263, GRAVE 217, HAPPY 175, ISLAND 161,
+LONDON 286, NEW_YORK 231, OVAL 141, PARK 186, RALLY 151, ROCK 146,
+SPEEDWAY 120). The session draws them itself from
+`SessionConfig::course_load_seed` (None: just before the race-load seed, as
+before); mr-course-check sets it from that search and no longer copies the
+colours or spins from RAM (MR_CLRAM=1: the old copy). Still from RAM, as
+state that runs on through the menus: the turntable phases (render side)
+and the pickups' grow / bob animation (FUN_8007BBF0: scale, scale rate, vy;
+a fresh course load starts them at 0, which SPEEDWAY's free run showed
+matters). All 18 free runs unchanged with the model (17 exact to the end).

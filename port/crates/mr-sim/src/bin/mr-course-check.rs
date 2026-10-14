@@ -53,14 +53,29 @@ pub fn session_at_load(disc: &mut mr_disc::Disc, info: &CourseInfo, cap: &Captur
     // The path / progress round robin 0x800C3058[karts] keeps counting
     // between races.
     cfg.round_robin_start = pre.u8(0x800C_3058 + info.karts as u32);
+    // The course load (token colours, turntable spins) ran before the
+    // capture, from a seed some menu frames before the race load's: the
+    // session draws them itself from that seed (track S), found from the
+    // menu state (`--course-load`); MR_CLRAM copies them from RAM instead.
+    let use_model = std::env::var("MR_CLRAM").is_err();
+    if use_model {
+        let probe = Session::with_config(disc, cfg.clone()).expect("session");
+        let m0 = cap.mem_at(cap.vbs[0], None);
+        if let Some(&j) = course_load_search(&probe.world, info, &m0, 1).first() {
+            cfg.course_load_seed = Some(mr_sim::session::bios_rand_rewind(m0.u32(0x8000_9010), j as u32));
+        }
+    }
     let mut s = Session::with_config(disc, cfg).expect("session");
     let m = cap.mem_at(load, None);
     s.water = mr_sim::water::WaterAnim::from_bytes(cap.read(load, 0x800A_FEF0, 0x20).unwrap());
     // Course-load state the session derives from seeds before the race
     // load: the game drew it at its own course load, before the capture.
     let o = mr_sim::objects::ObjectState::read(&m);
+    // The phases (render side) run on through the menus: from RAM.
     s.globals.objects.turntable_phase = o.turntable_phase;
-    s.globals.objects.turntable_spin = o.turntable_spin;
+    if !use_model {
+        s.globals.objects.turntable_spin = o.turntable_spin;
+    }
     // Particles, sparks, flat quads and projectiles left in RAM by the
     // menus run on into the race (the race load does not clear them).
     if std::env::var("MR_NOFX").is_err() {
@@ -77,8 +92,23 @@ pub fn session_at_load(disc: &mut mr_disc::Disc, info: &CourseInfo, cap: &Captur
     }
     // The pickups' colours / timers come from the course load (before the
     // capture).
+    // The pickups' animation (grow, bob: FUN_8007BBF0) runs on through
+    // the menus after the course load: from RAM; their colours are the
+    // session's own course-load draws (model) unless MR_CLRAM.
     if std::env::var("MR_NOPICK").is_err() {
-        s.globals.items.pickups = mr_sim::items::ItemState::read(&m).pickups;
+        let ram = mr_sim::items::ItemState::read(&m).pickups;
+        let own = s.globals.items.pickups.clone();
+        s.globals.items.pickups = ram;
+        if use_model {
+            let n_tok = s.globals.items.tokens as usize;
+            let first = mr_sim::items::FIRST_TOKEN;
+            for (i, (p, o)) in s.globals.items.pickups.iter_mut().zip(own.iter()).enumerate().skip(first).take(n_tok) {
+                if p.colour != o.colour {
+                    println!("      course-load model: pickup {i} colour {} vs RAM {}", o.colour, p.colour);
+                }
+                p.colour = o.colour;
+            }
+        }
     }
     // The lifts run on between races too (and have moved the TER).
     let po = mr_sim::objects::ObjectState::read(&pre);
@@ -113,12 +143,14 @@ fn main() {
     let mut names = Vec::new();
     let mut show_fields = false;
     let mut dir_mode: Option<String> = None;
+    let mut course_load_mode = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--frames" => nframes = it.next().and_then(|x| x.parse().ok()).unwrap(),
             "--fields" => show_fields = true,
             "--dir" => dir_mode = it.next().cloned(),
+            "--course-load" => course_load_mode = true,
             _ => names.push(a.to_ascii_uppercase()),
         }
     }
@@ -132,6 +164,10 @@ fn main() {
     }
     let mut disc = mr_disc::Disc::open_default().expect("disc");
     let exe = mr_sim::tables::ExeImage::parse(&disc.read("SLUS_012.37").unwrap()).unwrap();
+    if course_load_mode {
+        course_load(&mut disc, &exe, &dir, &names);
+        return;
+    }
     if let Some(d) = dir_mode {
         // A capture that starts mid-race (a grid savestate, maybe poked:
         // tools/oracle/capture_poked.py): the session loads the oracle's
@@ -419,4 +455,77 @@ fn same_particle(a: &mr_sim::particles::Particle, b: &mr_sim::particles::Particl
 
 fn same_particles(a: &mr_sim::particles::Particles, b: &mr_sim::particles::Particles) -> bool {
     a.next == b.next && a.list.iter().zip(b.list.iter()).all(|(x, y)| same_particle(x, y))
+}
+
+/// `--course-load`: where the course load's rand() draws sit in the BIOS
+/// stream before the capture's first state (the course menu, ram0). The
+/// course load (before the capture) draws, in order: FUN_8007B448 one per
+/// turbo token (colour = rand() >> 13), FUN_80084490 two per turntable
+/// (phase rand() / 8, spin rand() < 0x4000 ? 5 : -5, x3 on 0x1A / 0x1B) and
+/// its per-course switch. Search the seeds before the menu's for the run
+/// that gives the token colours and turntable spins the menu state holds.
+fn course_load(disc: &mut mr_disc::Disc, exe: &mr_sim::tables::ExeImage, dir: &std::path::Path, names: &[String]) {
+    let mut list: Vec<String> = names.to_vec();
+    if list.is_empty() {
+        let mut v: Vec<String> = std::fs::read_dir(dir).map(|r| r.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().to_string()).collect()).unwrap_or_default();
+        v.sort();
+        list = v;
+    }
+    for name in list {
+        let Some(info) = CourseInfo::find(exe, &name) else { continue };
+        let Ok(cap) = Capture::open(dir.join(&name)) else { continue };
+        let vb0 = cap.vbs[0];
+        let m = cap.mem_at(vb0, None);
+        let s = Session::with_config(disc, SessionConfig::course(&info)).expect("session");
+        let w = &s.world;
+        let n_tok = w.pickups.tokens.as_ref().map(|l| l.points.len()).filter(|&n| n != 0 && n <= 0x80).unwrap_or(0);
+        let n_turn = w.course.objects.turntables.len();
+        if n_tok + n_turn == 0 {
+            println!("## {name}: no course-load draws (no tokens, no turntables)");
+            continue;
+        }
+        let hits = course_load_search(w, &info, &m, 4);
+        println!("## {name} (course {}): {n_tok} tokens, {n_turn} turntables; course-load start {:?} rand() calls before the menu state (VB {vb0}){}", info.id, hits, if hits.len() == 1 { "" } else { "  <- not unique" });
+    }
+}
+
+/// The course load's start as rand() calls before the state `m` (a menu or
+/// race-load state): the runs of the course-load draws (token colours, then
+/// turntable phase / spin) that give `m`'s colours and spins; at most
+/// `max` of them, nearest first.
+fn course_load_search(w: &mr_sim::world::World, info: &CourseInfo, m: &mr_sim::mem::Mem, max: usize) -> Vec<usize> {
+    const BACK: usize = 4_000_000;
+    let n_tok = w.pickups.tokens.as_ref().map(|l| l.points.len()).filter(|&n| n != 0 && n <= 0x80).unwrap_or(0);
+    let n_turn = w.course.objects.turntables.len();
+    if n_tok + n_turn == 0 {
+        return Vec::new();
+    }
+    let ram = mr_sim::items::ItemState::read(m);
+    let colours: Vec<u8> = (0..n_tok).map(|i| ram.pickups[mr_sim::items::FIRST_TOKEN + i].colour).collect();
+    let spins = mr_sim::objects::ObjectState::read(m).turntable_spin;
+    let mut hits = Vec::new();
+    let mut back = m.u32(0x8000_9010);
+    for j in 0..BACK {
+        if j >= n_tok + 2 * n_turn {
+            let mut seed = back;
+            let mut rand = || mr_sim::session::bios_rand(&mut seed);
+            if (0..n_tok).all(|i| (rand() >> 13) as u8 == colours[i]) {
+                let sp: Vec<i16> = (0..n_turn)
+                    .map(|_| {
+                        rand();
+                        let v: i16 = if rand() < 0x4000 { 5 } else { -5 };
+                        if (0x1A..=0x1B).contains(&info.id) { v * 3 } else { v }
+                    })
+                    .collect();
+                if sp == spins {
+                    hits.push(j);
+                    if hits.len() >= max {
+                        break;
+                    }
+                }
+            }
+        }
+        back = mr_sim::session::bios_rand_rewind(back, 1);
+    }
+    hits
 }

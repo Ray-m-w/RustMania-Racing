@@ -113,7 +113,9 @@ detail; `--dir DIR NAME` for a capture that starts mid-race, e.g. a poked
 grid state from tools/oracle/capture_poked.py). The session starts from the
 oracle's BIOS seed and random pointer at the first mode-1 VBlank, plus the state the course load / menus leave that a
 race load does not reset (water animation, blink timers, weather drops, lift
-positions, turntable spins, pickup colours, the round-robin counter
+positions, the turntable phases and pickup animation (the token colours and
+turntable spins are the session's own course-load draws from the seed
+`--course-load` finds, kart-physics-ledger.md track S), the round-robin counter
 0x800C3058, the projectile ring slot 0x800B07E0, the camera position,
 particles / projectiles in flight).
 

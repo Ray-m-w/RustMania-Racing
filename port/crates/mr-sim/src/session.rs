@@ -102,6 +102,13 @@ pub struct SessionConfig {
     /// course 0x1F, 0x80073E44 and siblings): damage from hits and
     /// contacts, a kart with 1000 is knocked out.
     pub race_flags: u16,
+    /// The BIOS rand() seed at the course load (FUN_8007B448: one rand()
+    /// per turbo token, the colour; FUN_80084490: two per turntable, phase
+    /// and spin, then its per-course switch). In the game the course load
+    /// runs when the course menu opens, menu frames before the race load;
+    /// None: the seeds just before `rand_seed` (a race straight after the
+    /// course load). mr-course-check finds it per capture (`--course-load`).
+    pub course_load_seed: Option<u32>,
 }
 
 /// The opponents of the oracle's slot-2 DOCK race (analysis/ai/*): Clifford
@@ -136,6 +143,7 @@ impl SessionConfig {
             logic_hz: 30,
             faces: None,
             race_flags: 0,
+            course_load_seed: None,
         }
     }
 
@@ -611,7 +619,7 @@ impl Session {
             let n_tok = s.world.pickups.tokens.as_ref().map(|l| l.points.len().min(0x80)).unwrap_or(0) as u32;
             let n_turn = s.world.course.objects.turntables.len() as u32;
             let n = n_tok + 2 * n_turn + crate::objects::course_load_switch_rands(s.world.info.id);
-            let mut seed = bios_rand_rewind(cfg.rand_seed, n);
+            let mut seed = cfg.course_load_seed.unwrap_or_else(|| bios_rand_rewind(cfg.rand_seed, n));
             let mut rand = || bios_rand(&mut seed);
             if cfg.items {
                 crate::items::pickups::init(&mut s.globals.items, &s.world.pickups, false, &mut rand);

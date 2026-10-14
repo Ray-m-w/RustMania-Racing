@@ -14,10 +14,7 @@ use mr_sim::oracle::{self, Capture};
 use mr_sim::session::Session;
 use mr_sim::world::{HeapLayout, World};
 
-/// The BIOS rand() seed at the oracle's title load (VB 369..405 after BACK
-/// TO MAIN MENU from slot 1; analysis/s6/title/seed) and the random pointer
-/// the race loader resets (RNG_START).
-const ORACLE_SEED: u32 = 0xF831_0C8E;
+use mr_sim::title::ORACLE_SEED;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -50,6 +47,30 @@ fn main() {
         }
         return;
     }
+    // `--fresh-diff DIR VB`: the fresh title session's records and globals
+    // right after the load against the oracle's at VB (title_check.py
+    // capture of the load: 407 = after the race loader, before frame 1).
+    if let Some(dir) = opt("--fresh-diff") {
+        let vb: u32 = args.iter().position(|a| a == "--fresh-diff").and_then(|i| args.get(i + 2)).and_then(|v| v.parse().ok()).unwrap_or(407);
+        let cap = Capture::open(&dir).expect("open capture");
+        let mut disc = mr_disc::Disc::open_default().expect("open the disc");
+        let s = Session::with_config(&mut disc, mr_sim::session::SessionConfig::title(ORACLE_SEED, mr_sim::session::RNG_START, 30)).expect("title session");
+        for (slot, rec) in std::iter::once(&s.record).chain(s.others.iter().map(|o| &o.record)).enumerate() {
+            let want = cap.read(vb, mr_sim::kart::KART_ARRAY + 0x504 * slot as u32, 0x504).unwrap();
+            let offs: Vec<String> = (0..0x504).filter(|&o| want[o] != rec[o]).map(|o| format!("{o:#x}:{:02x}/{:02x}", want[o], rec[o])).collect();
+            println!("kart {slot}: {} bytes differ (oracle/port): {}", offs.len(), offs.join(" "));
+        }
+        let mut m = cap.mem_at(vb, Some(&cap.ram0.clone().unwrap()));
+        let g = &s.globals;
+        let mut gm = m.clone();
+        g.write(&mut gm);
+        let (a, b) = (m.slice(0x800B_0700, 0x900).to_vec(), gm.slice(0x800B_0700, 0x900).to_vec());
+        let offs: Vec<String> = (0..0x900).filter(|&o| a[o] != b[o]).map(|o| format!("{:08X}:{:02x}/{:02x}", 0x800B_0700 + o, a[o], b[o])).collect();
+        println!("globals (fields RaceGlobals writes): {}", offs.join(" "));
+        println!("seed oracle {:08X} port {:08X}", m.u32(0x8000_9010), s.rand_seed());
+        let _ = &mut m;
+        return;
+    }
     // `--fresh-vs DIR`: a new title session with the oracle's seed against
     // an oracle capture from BACK TO MAIN MENU (title_check.py capture DIR:
     // kart heads, camera, frame counter, dt), the oracle's dt per tick.
@@ -57,6 +78,7 @@ fn main() {
         let cap = Capture::open(&dir).expect("open capture");
         let mut disc = mr_disc::Disc::open_default().expect("open the disc");
         let mut s = Session::with_config(&mut disc, mr_sim::session::SessionConfig::title(ORACLE_SEED, mr_sim::session::RNG_START, 30)).expect("title session");
+        s.water = mr_sim::water::WaterAnim::from_bytes(&mr_sim::title::ORACLE_WATER);
         let rd = |vb: u32, a: u32| cap.i32(vb, a);
         // the oracle's ticks: VBlanks where the frame counter changes (in
         // mode 0x10), the result one VBlank later
@@ -114,7 +136,7 @@ fn main() {
     let cap = Capture::open(&dir).expect("open capture");
     let max_ticks: usize = opt("--ticks").and_then(|v| v.parse().ok()).unwrap_or(usize::MAX);
     let mut disc = mr_disc::Disc::open_default().expect("open the disc");
-    let vb0 = cap.vbs[0];
+    let vb0 = opt("--from").and_then(|v| v.parse::<u32>().ok()).unwrap_or(cap.vbs[0]);
     let m = cap.mem_at(vb0, None);
     let mut w = World::course(&mut disc, 0x1E).expect("frontend world");
     w.heap = HeapLayout { faces: m.u32(mr_sim::oracle::course_addr::FACES_PTR) };
@@ -125,16 +147,26 @@ fn main() {
     let cm = mr_assets::mdl::Mdl::parse(&disc.read(&cpath).expect("read character")).expect("parse character");
     w.driver = mr_sim::render::DriverModel { part0_pivot: cm.parts[0].record.pivot };
     let mut s = Session::from_mem(&mut disc, w, &m).expect("session from the title RAM");
+    // from the race loader's state (counter 0): the first frame is a load
+    // frame (no FUN_8005C2EC rand(); session.rs)
+    if args.iter().any(|a| a == "--load-frame") {
+        s.load_frame = true;
+    }
     let rd = |vb: u32, a: u32| cap.i32(vb, a).unwrap();
     let mut prev = rd(vb0, 0x800B_0D90);
     let (mut n, mut exact, mut first_bad) = (0usize, 0usize, None);
     let mut max_err = 0i64;
-    for &vb in cap.vbs.iter().skip(1) {
+    let mut t_prev = rd(vb0, 0x800C_4F8C);
+    for &vb in cap.vbs.iter().filter(|&&v| v > vb0) {
+        // a tick: the frame counter or (the first frames: the counter stays
+        // 0) the camera's orbit parameter moves
         let f = rd(vb, 0x800B_0D90);
-        if f == prev {
+        let t = rd(vb, 0x800C_4F8C);
+        if f == prev && !(f == 0 && t != t_prev) {
             continue;
         }
         prev = f;
+        t_prev = t;
         let dt = rd(vb, 0x800B_0AEC);
         if let Err(e) = s.tick_dt(0, dt) {
             println!("tick {n} (VB {vb}): out of scope: {e:?}");

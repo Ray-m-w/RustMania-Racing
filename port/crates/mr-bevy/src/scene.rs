@@ -432,10 +432,12 @@ pub fn banner_polys(b: &dat::Banners, i: usize, sin: &SinTable, phase: (u16, u16
 pub fn update_banners(
     p: Res<crate::Player>,
     settings: Res<crate::settings::Settings>,
-    mut st: ResMut<BannerState>,
+    st: Option<ResMut<BannerState>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut q: Query<(&BannerMesh, &mut Visibility)>,
 ) {
+    // (no banner on the frontend course: the title, title.rs)
+    let Some(mut st) = st else { return };
     if !p.is_changed() {
         return;
     }

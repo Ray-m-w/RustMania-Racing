@@ -41,6 +41,12 @@ fn choice() -> &'static Choice {
             eprintln!("course {w}: not a race course of the game's table; DOCK instead (races: {})", races.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(" "));
         }
         let explicit = found.is_some();
+        // The title (title.rs) is the frontend course 0x1E run as the game
+        // runs it; the pick-list comes with START.
+        if crate::title::first_screen() == crate::title::Screen::Title {
+            let info = CourseInfo::read(&exe, crate::title::TITLE_COURSE as u8).expect("frontend course row");
+            return Choice { info, explicit: false, races };
+        }
         let info = found.unwrap_or_else(|| CourseInfo::read(&exe, mr_sim::course::DOCK).expect("DOCK row"));
         Choice { info, explicit, races }
     })
@@ -77,6 +83,10 @@ pub fn clear_rgb() -> [u8; 3] {
 /// oracle's race settings (`dock_default`), the others the game's boot
 /// settings for the course (`SessionConfig::course`).
 pub fn session_config(logic_hz: u8) -> mr_sim::session::SessionConfig {
+    if crate::title::on_title() {
+        let (seed, rng) = crate::title::session_seed();
+        return mr_sim::session::SessionConfig::title(seed, rng, logic_hz);
+    }
     let base = if info().id == mr_sim::course::DOCK {
         mr_sim::session::SessionConfig::dock_default()
     } else {
@@ -102,7 +112,9 @@ impl PickList {
     /// Show the list (results screen START).
     pub fn show(&mut self) {
         self.open = true;
-        self.sel = races().iter().position(|c| c.id == info().id).unwrap_or(0);
+        // (from the title, whose course is not a race: DOCK)
+        let here = |id: u8| races().iter().position(|c| c.id == id);
+        self.sel = here(info().id).or_else(|| here(mr_sim::course::DOCK)).unwrap_or(0);
     }
 }
 
@@ -132,6 +144,10 @@ fn first_open(mut pick: ResMut<PickList>) {
         return;
     }
     pick.started = true;
+    // the title opens it with START (title.rs)
+    if crate::title::on_title() {
+        return;
+    }
     // `--show-picklist`: open it in any run (screenshots).
     if (!explicit() && !tool_run()) || std::env::args().any(|a| a == "--show-picklist") {
         pick.show();
@@ -140,7 +156,8 @@ fn first_open(mut pick: ResMut<PickList>) {
 
 fn pause(pick: Res<PickList>, mut time: ResMut<Time<Virtual>>) {
     // (`--show-picklist` screenshots keep the race running under it.)
-    if pick.open && !time.is_paused() && !std::env::args().any(|a| a == "--show-picklist") {
+    // (the title keeps running under it, as the game's menus)
+    if pick.open && !time.is_paused() && !std::env::args().any(|a| a == "--show-picklist") && !crate::title::on_title() {
         time.pause();
     } else if !pick.open && time.is_paused() && pick.is_changed() {
         time.unpause();
@@ -240,14 +257,15 @@ pub fn list_prims(t: &HudTables, sel: usize) -> Vec<Prim> {
     v
 }
 
-fn overlay(mut commands: Commands, pick: Res<PickList>, font: Option<Res<Font>>, mut ov: ResMut<crate::hud::HudOverlay>) {
+fn overlay(mut commands: Commands, pick: Res<PickList>, font: Option<Res<Font>>, title: Res<crate::title::TitleOverlay>, mut ov: ResMut<crate::hud::HudOverlay>) {
     let Some(font) = font else {
         let mut disc = mr_disc::Disc::open_default().expect("open the disc");
         let exe = disc.read("SLUS_012.37").expect("read the executable");
         commands.insert_resource(Font(HudTables::from_exe(&exe).expect("HUD tables")));
         return;
     };
-    let want = if pick.open { Some(list_prims(&font.0, pick.sel)) } else { None };
+    // closed: the title's layer while it shows (title.rs), else the race HUD
+    let want = if pick.open { Some(list_prims(&font.0, pick.sel)) } else { title.0.clone() };
     if ov.prims != want {
         ov.prims = want;
     }

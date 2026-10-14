@@ -422,9 +422,7 @@ impl Plugin for AudioOutPlugin {
         if enabled {
             app.add_systems(Startup, start_stream);
         }
-        // the title screen plays its own track (title.rs); the race's queue
-        // starts when the race does
-        app.add_systems(Update, direct_music.run_if(crate::title::race_running));
+        app.add_systems(Update, direct_music);
         if flag("--audio-stats") {
             app.add_systems(Update, audio_stats);
         }

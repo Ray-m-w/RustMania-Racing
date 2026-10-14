@@ -170,7 +170,10 @@ fn select_objects(
         }
     }
     // Full draw distance (default): the whole course every frame, set once.
-    if !settings.faithful_draw_distance() {
+    // The title always uses the game's selection: its frontend course holds
+    // every menu's scenery (title.rs).
+    let title = title::on_title();
+    if !settings.faithful_draw_distance() && !title {
         if !*full_done {
             for (o, mut v) in q.iter_mut() {
                 *v = if scene::full_view_object(&vis.dat, &vis.info, o.0) { Visibility::Inherited } else { Visibility::Hidden };
@@ -199,7 +202,7 @@ fn select_objects(
     };
     let drawn: std::collections::HashSet<usize> = vis
         .dat
-        .drawn(eye, cam, &mask, mr_assets::dat::DrawParams::DOCK_1P)
+        .drawn(eye, cam, &mask, if title { title::TITLE_DRAW } else { mr_assets::dat::DrawParams::DOCK_1P })
         .iter()
         .map(|d| d.object)
         .collect();
@@ -345,6 +348,7 @@ impl SimRun {
             // race settings).
             let cfg = courses::session_config(pacing::logic_hz());
             let mut s = mr_sim::session::Session::with_config(&mut disc, cfg).expect("start the mr-sim session");
+            title::prepare(&mut s);
             // --autopilot: the game's AI drives Kermit too (demo / soak test).
             s.autopilot = std::env::args().any(|a| a == "--autopilot");
             s

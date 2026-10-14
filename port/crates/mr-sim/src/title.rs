@@ -32,6 +32,17 @@ pub const TITLE_KARTS: usize = 3;
 /// 0x800B07E2 on the title (FUN_8008C4AC's last statement).
 pub const TITLE_RACE_FLAGS: u16 = 8;
 
+/// The water animation state 0x800AFEF0..0x800AFF0B at the oracle's title
+/// load (BACK TO MAIN MENU from savestate slot 1, VB 407): the game never
+/// resets it, so it carries the power-on history (water.rs). With the
+/// oracle's rand() seed it makes a new title session that run, tick for
+/// tick (mr-title --fresh-vs).
+pub const ORACLE_WATER: [u8; 0x1C] = [
+    0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x80, 0x05, 0xC0, 0x06, 0x80, 0x0C, 0xB4, 0xFE, 0xD4, 0xFF, 0xA8, 0x00, 0x18, 0xFE, 0x04, 0x00, 0xD4, 0xFF, 0x3C, 0x00, 0xB4, 0xFE,
+];
+/// The BIOS rand() seed at that load (VB 369..405, analysis/s6/title/seed).
+pub const ORACLE_SEED: u32 = 0xF831_0C8E;
+
 /// 0x800C3028[c] != -1: the characters whose models the boot loaded
 /// (0..24 on the oracle, title and race alike) [RAM].
 pub fn character_loaded(c: u8) -> bool {

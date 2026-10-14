@@ -120,6 +120,8 @@ pub struct World {
     /// Item boxes, turbo tokens, challenge objects (DAT chunks 0x13, 0x12,
     /// 0x0C).
     pub pickups: crate::items::pickups::CoursePickups,
+    /// The course's row of the game's tables (course.rs).
+    pub info: crate::course::CourseInfo,
 }
 
 impl World {
@@ -211,12 +213,22 @@ impl Course {
 impl World {
     /// DOCK from the owner's disc alone: exe tables, DOCK.TER, DOCK.DAT.
     pub fn dock(disc: &mut mr_disc::Disc) -> Result<World, WorldError> {
+        World::course(disc, crate::course::DOCK)
+    }
+
+    /// Course `id` (0x800B0FAC; course::CourseInfo) from the owner's disc:
+    /// exe tables, `<course>.TER`, `<course>.DAT` (the files FUN_8004627C
+    /// loads for it).
+    pub fn course(disc: &mut mr_disc::Disc, id: u8) -> Result<World, WorldError> {
         let e = |m: &str| WorldError(m.to_string());
         let exe = ExeImage::parse(&disc.read("SLUS_012.37").map_err(|x| e(&format!("read exe: {x:?}")))?).map_err(|x| e(&x.0))?;
-        let ter = Ter::parse(&disc.read("COURSE_A/DOCK.TER").map_err(|x| e(&format!("read DOCK.TER: {x:?}")))?)
-            .map_err(|x| e(&format!("parse DOCK.TER: {x:?}")))?;
-        let dat_bytes = disc.read("COURSE_A/DOCK.DAT").map_err(|x| e(&format!("read DOCK.DAT: {x:?}")))?;
-        let dat = mr_assets::dat::Dat::parse(&dat_bytes).map_err(|x| e(&format!("parse DOCK.DAT: {x:?}")))?;
+        let info = crate::course::CourseInfo::read(&exe, id).ok_or_else(|| e(&format!("course {id}: not in the course table")))?;
+        let tp = info.file("TER");
+        let ter = Ter::parse(&disc.read(&tp).map_err(|x| e(&format!("read {tp}: {x:?}")))?)
+            .map_err(|x| e(&format!("parse {tp}: {x:?}")))?;
+        let dp = info.file("DAT");
+        let dat_bytes = disc.read(&dp).map_err(|x| e(&format!("read {dp}: {x:?}")))?;
+        let dat = mr_assets::dat::Dat::parse(&dat_bytes).map_err(|x| e(&format!("parse {dp}: {x:?}")))?;
         let kermit = mr_assets::mdl::Mdl::parse(&disc.read("CHARS_A/KERMIT.MDL").map_err(|x| e(&format!("read KERMIT.MDL: {x:?}")))?)
             .map_err(|x| e(&format!("parse KERMIT.MDL: {x:?}")))?;
         Ok(World {
@@ -227,6 +239,7 @@ impl World {
             course: Course::from_dat(&dat, &dat_bytes),
             pickups: crate::items::pickups::CoursePickups::from_dat(&dat, &dat_bytes),
             heap: HeapLayout { faces: STANDALONE_FACES },
+            info,
         })
     }
 }

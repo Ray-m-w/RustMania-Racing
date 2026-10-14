@@ -24,6 +24,7 @@ pub mod ai;
 pub mod body;
 pub mod camera;
 pub mod collide;
+pub mod course;
 pub mod fixed;
 pub mod globals;
 pub mod harness;

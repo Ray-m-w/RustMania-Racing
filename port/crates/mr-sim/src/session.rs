@@ -52,6 +52,8 @@ use crate::world::{TickInputs, World, WorldError};
 /// records). `dock_default` has the oracle savestate's values.
 #[derive(Clone, Copy, Debug)]
 pub struct SessionConfig {
+    /// Course index (0x800B0FAC; course::CourseInfo): 3 = DOCK.
+    pub course: u8,
     /// Grid position (0-based): 5 = the slot the player had in the oracle
     /// race (6th of 6).
     pub grid: i32,
@@ -105,6 +107,7 @@ impl SessionConfig {
     /// record (0x800E0190 + 0x20 * 4) 12186 (= 0:40.62 at 300 units/s).
     pub fn dock_default() -> Self {
         SessionConfig {
+            course: crate::course::DOCK,
             grid: 5,
             character: 0,
             laps: 3,
@@ -123,6 +126,24 @@ impl SessionConfig {
             lineup: None,
             items: true,
             logic_hz: 30,
+        }
+    }
+
+    /// A 1-player race on course `info` from the menus with the game's
+    /// boot-time settings (FUN_8008F448: laps 3, difficulty 8, the default
+    /// lap record) and the race loader's set-up for the course
+    /// (FUN_8008AB5C cup / slot, FUN_8008C4AC karts: 6, or 5 above cup 6).
+    /// The rand() seed and the random pointer are DOCK's oracle values
+    /// (any values give a valid race).
+    pub fn course(info: &crate::course::CourseInfo) -> Self {
+        SessionConfig {
+            course: info.id,
+            event: info.id as i32,
+            cup: info.cup,
+            laps: 3,
+            lap_record: info.lap_record,
+            opponents: (info.karts - 1).max(0) as u8,
+            ..Self::dock_default()
         }
     }
 
@@ -381,7 +402,7 @@ impl Session {
     }
 
     pub fn with_config(disc: &mut mr_disc::Disc, cfg: SessionConfig) -> Result<Session, SessionError> {
-        let world = World::dock(disc).map_err(SessionError::World)?;
+        let world = World::course(disc, cfg.course).map_err(SessionError::World)?;
         let read_mdl = |disc: &mut mr_disc::Disc, p: &str| -> Result<Mdl, SessionError> {
             let b = disc.read(p).map_err(|e| SessionError::Disc(format!("{p}: {e:?}")))?;
             Mdl::parse(&b).map_err(|e| SessionError::Disc(format!("{p}: {e:?}")))
@@ -395,7 +416,11 @@ impl Session {
         let camera_tables = CameraTables::from_exe(&exe).ok_or_else(|| SessionError::Disc("camera tables".into()))?;
         let template = crate::vehicle::racer_template(&world.tables, &racer);
         let n = 1 + cfg.opponents as usize;
-        let setup = RaceSetup { mode: 1, race_type: 0, race_flags: 0, challenge: 0, humans: 1, karts: n as i16 };
+        let race_type = world.info.race_type;
+        if world.info.mode != 1 {
+            return Err(SessionError::OutOfScope(format!("course {} is not a race course (mode {})", world.info.name, world.info.mode)));
+        }
+        let setup = RaceSetup { mode: 1, race_type, race_flags: 0, challenge: 0, humans: 1, karts: n as i16 };
         let mut rand_state = cfg.rand_seed;
         let mut globals = RaceGlobals {
             dt: if cfg.logic_hz == 60 { 1 } else { 2 },
@@ -406,7 +431,7 @@ impl Session {
             countdown_len: 300,
             race_flags: 0,
             challenge: 0,
-            race_type: 0,
+            race_type,
             race_over: 0,
             game_state: cfg.event,
             split_screen: 0,
@@ -1048,7 +1073,10 @@ impl Session {
             });
         }
         let record = m.slice(crate::kart::KART_ARRAY, 0x504).to_vec();
-        let mut cfg = SessionConfig::dock_default();
+        let mut cfg = SessionConfig::course(&world.info);
+        if world.info.id == crate::course::DOCK {
+            cfg = SessionConfig::dock_default();
+        }
         cfg.opponents = (n - 1) as u8;
         let mut s = Session {
             kart: crate::oracle::load_kart(m, 0),

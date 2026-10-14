@@ -84,9 +84,10 @@ pub fn init_kart(p: &KartInit, rng: &mut u32, rand: &mut dyn FnMut() -> i32) -> 
         b
     };
     r[0x4D7] = p.slot;
-    // 0x80060A3C: grid index. In a mode-1 race of type 0 with no option
-    // bits the kart takes grid position `grid`.
-    if s.mode != 1 || s.race_type != 0 || s.race_flags & 7 != 0 || s.challenge != 0 || p.flags & 0x60 != 0 {
+    // 0x80060A3C: grid index. In a mode-1 race of type 0 or 1 (race A / B;
+    // only types 2 and 3 offset the index) with no option bits the kart
+    // takes grid position `grid`.
+    if s.mode != 1 || !(0..=1).contains(&s.race_type) || s.race_flags & 7 != 0 || s.challenge != 0 || p.flags & 0x60 != 0 {
         crate::unreachable_in_scope!("grid placement outside a plain one-player race");
     }
     let gi = p.grid as usize;

@@ -484,9 +484,9 @@ impl Plugin for EffectsPlugin {
 fn setup(mut commands: Commands) {
     let mut disc = mr_disc::Disc::open_default().expect("open the disc");
     let exe = disc.read("SLUS_012.37").expect("read the executable");
-    let path = raw::course_raw_path(&exe, crate::scene::DOCK).expect("course");
+    let path = raw::course_raw_path(&exe, crate::courses::id()).expect("course");
     let file = disc.read(&path).expect("read RAW");
-    let env = raw::LoadEnv::from_exe(&exe, crate::scene::DOCK).expect("env");
+    let env = raw::LoadEnv::from_exe(&exe, crate::courses::id()).expect("env");
     let dec = raw::decode(&file, &env).expect("decode RAW");
     commands.insert_resource(FxTables::load(&exe, dec.slots));
     let a: Vec<String> = std::env::args().collect();

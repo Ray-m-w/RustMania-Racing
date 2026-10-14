@@ -32,6 +32,7 @@ pub mod settings;
 mod lighting;
 mod kartshadow;
 mod vramtex;
+pub mod courses;
 
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::prelude::*;
@@ -338,7 +339,9 @@ impl SimRun {
         } else {
             // Play: the full race - Kermit and five AI opponents from race
             // load; positions and catch-up come from the real field.
-            let cfg = mr_sim::session::SessionConfig { logic_hz: pacing::logic_hz(), ..mr_sim::session::SessionConfig::dock_default() };
+            // The course of this run (courses.rs; DOCK keeps the oracle's
+            // race settings).
+            let cfg = courses::session_config(pacing::logic_hz());
             let mut s = mr_sim::session::Session::with_config(&mut disc, cfg).expect("start the mr-sim session");
             // --autopilot: the game's AI drives Kermit too (demo / soak test).
             s.autopilot = std::env::args().any(|a| a == "--autopilot");
@@ -442,7 +445,7 @@ fn main() {
         // at the start of every race frame (oracle GP0 capture, VB 2500); seen
         // wherever no polygon covers the screen, under the additive water.
         // Stored 15-bit like any fill: (0, 2, 11) -> (0, 16, 90) on screen.
-        .insert_resource(ClearColor(psxfx::psx_fill(scene::DOCK_CLEAR)))
+        .insert_resource(ClearColor(psxfx::psx_fill(courses::clear_rgb())))
         .insert_resource(Player { driver, pose: Pose::default(), prev: Pose::default(), tick: 0, buttons: 0, kart: None, prev_kart: None })
         .insert_resource(ghost::Ghost::new(ghost))
         .add_systems(Startup, (scene::setup, setup_camera))
@@ -457,6 +460,7 @@ fn main() {
         .add_plugins(karts::KartsPlugin)
         .add_plugins(audio::AudioOutPlugin)
         .add_plugins(sfx::SfxPlugin)
+        .add_plugins(courses::CoursesPlugin)
         .add_systems(FixedUpdate, capture::tick.after(sim_tick).before(karts::feed_player))
         .add_systems(Last, write_outputs)
         .add_systems(PostUpdate, (fit_viewports, fit_bars).before(bevy::camera::CameraUpdateSystems))
@@ -604,7 +608,7 @@ fn fit_bars(
     }
 }
 
-fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_g: ResMut<hud::HudGlobals>, mut feed: ResMut<karts::KartFeed>) {
+fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_g: ResMut<hud::HudGlobals>, mut feed: ResMut<karts::KartFeed>, mut pick: ResMut<courses::PickList>) {
     // The pad as sampled this frame (pacing.rs; with low_latency also the
     // presses since the last tick).
     let buttons = latch.take_for_tick();
@@ -622,13 +626,18 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
             }
         }
         Driver::Sim(run) => {
-            // Results screen: START (pressed, not held) restarts the race. The
-            // game goes back to its menus here, which are out of scope.
+            // Results screen: START (pressed, not held) opens the course
+            // pick-list (courses.rs; the game goes back to its menus here).
+            // The same course restarts the race in place.
             if run.route.is_none()
+                && !pick.open
                 && matches!(run.session.phase(), mr_sim::race::RacePhase::Finished { .. })
                 && buttons & input::START != 0
                 && prev_buttons & input::START == 0
             {
+                pick.show();
+            }
+            if std::mem::take(&mut pick.restart) && run.route.is_none() {
                 let a: Vec<String> = std::env::args().collect();
                 let autopilot = run.session.autopilot;
                 **run = SimRun::new(false, a.iter().any(|x| x == "--leader"));

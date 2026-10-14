@@ -61,6 +61,16 @@ pub fn session_at_load(disc: &mut mr_disc::Disc, info: &CourseInfo, cap: &Captur
     let o = mr_sim::objects::ObjectState::read(&m);
     s.globals.objects.turntable_phase = o.turntable_phase;
     s.globals.objects.turntable_spin = o.turntable_spin;
+    // Particles, sparks, flat quads and projectiles left in RAM by the
+    // menus run on into the race (the race load does not clear them).
+    if std::env::var("MR_NOFX").is_err() {
+        if let Some(fx) = s.globals.fx.as_mut() {
+            fx.particles = mr_sim::particles::Particles::read(&m, fx.particles.types.clone());
+            fx.sparks = mr_sim::particles::Sparks::read(&m);
+            fx.flats = mr_sim::particles::Flats::read(&m);
+        }
+        s.globals.items.projectiles = mr_sim::items::ItemState::read(&m).projectiles;
+    }
     // The pickups' colours / timers come from the course load (before the
     // capture).
     if std::env::var("MR_NOPICK").is_err() {
@@ -161,6 +171,7 @@ fn main() {
         let mut first: Vec<Option<(usize, Vec<&str>)>> = vec![None; 1 + s.others.len()];
         let mut err = None;
         let mut rng_first = None;
+        let mut hidden_first: Option<usize> = None;
         for (j, &vb) in f.ends.iter().enumerate().take(n) {
             let m = cap.mem_at(vb, None);
             if let Err(e) = s.tick_dt(m.u16(0x800B_0CE8), m.i32(0x800B_0AEC)) {
@@ -183,6 +194,24 @@ fn main() {
                         format!("{:04X}/{:04X} cp {}/{}", u16::from_le_bytes([r[0x44E], r[0x44F]]), u16::from_le_bytes([o[0x44E], o[0x44F]]), i16::from_le_bytes([r[0x488], r[0x489]]), i16::from_le_bytes([o[0x488], o[0x489]]))
                     }).collect();
                     println!("      fr {j}: ptr {:+} seed {} cd {} btn {:?}", s.globals.rng.wrapping_sub(m.u32(0x800B_0BCC)) as i32, if s.rand_seed() == m.u32(0x8000_9010) { "=" } else { "X" }, s.countdown(), kb);
+                }
+            }
+            if std::env::var("MR_HIDDEN").is_ok() && hidden_first.is_none() {
+                let oi = mr_sim::items::ItemState::read(&m);
+                let pi = &s.globals.items;
+                let mut what = Vec::new();
+                if oi.pickups != pi.pickups { what.push("pickups"); }
+                if oi.projectiles != pi.projectiles { what.push("projectiles"); }
+                if oi.blink != pi.blink { what.push("blink"); }
+                if mr_sim::objects::ObjectState::read(&m).weather != s.globals.objects.weather { what.push("weather"); }
+                if let Some(fx) = s.globals.fx.as_ref() {
+                    let op = mr_sim::particles::Particles::read(&m, fx.particles.types.clone());
+                    if op != fx.particles { what.push("particles"); }
+                    if mr_sim::particles::Sparks::read(&m) != fx.sparks { what.push("sparks"); }
+                }
+                if !what.is_empty() {
+                    println!("      hidden state first differs at frame {j}: {what:?}");
+                    hidden_first = Some(j);
                 }
             }
             if let Ok(lim) = std::env::var("MR_CAM") {

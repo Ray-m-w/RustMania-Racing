@@ -95,7 +95,7 @@ fn scales(p: &crate::Player, cap: Option<&crate::capture::CaptureReplay>, rows: 
 pub fn setup(mut commands: Commands) {
     let mut disc = mr_disc::Disc::open_default().expect("open the disc");
     let exe = disc.read("SLUS_012.37").expect("read the executable");
-    let Ok(w) = World::dock(&mut disc) else { return };
+    let Ok(w) = World::course(&mut disc, crate::courses::info().id) else { return };
     commands.insert_resource(PickupShadows(build(&w, &exe)));
 }
 

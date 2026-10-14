@@ -46,11 +46,10 @@ use crate::ghost::GhostKart;
 use crate::vramtex::VramTextures;
 use crate::PlayerKart;
 
-/// Course index of DOCK in the game's course table (0x800ACAA0; RAW.md).
-pub const DOCK: u32 = 3;
-
 /// The frame clear colour on DOCK (GP0 0x02 fill at the start of each race
-/// frame: 0x025F1300 = rgb 0, 19, 95) [GP0, analysis/s5/fx/race3e/gpu].
+/// frame: 0x025F1300 = rgb 0, 19, 95) [GP0, analysis/s5/fx/race3e/gpu] =
+/// DOCK's course-row fog colour; courses::clear_rgb gives every course's.
+#[allow(dead_code)]
 pub const DOCK_CLEAR: [u8; 3] = [0, 0x13, 0x5F];
 
 /// Decoded course VRAM + the texture slot table (0x800DFF00) models use.
@@ -131,12 +130,14 @@ pub fn setup(
 ) {
     let mut disc = mr_disc::Disc::open_default().expect("open the disc (MRM_DISC or game.toml)");
     let exe = disc.read("SLUS_012.37").expect("read the executable");
-    let (vram, slots, dslots) = load_vram(&mut disc, &exe, DOCK);
+    // The course of this run (courses.rs: --course, default DOCK).
+    let course = crate::courses::info();
+    let (vram, slots, dslots) = load_vram(&mut disc, &exe, course.id as u32);
     let mut tex = VramTextures::new(vram);
 
     // Track scenery: every DAT object, world = origin + (M v) >> 12 (x4 for
     // the quarter-unit layer), exactly the game's integer transform.
-    let dat = Dat::parse(&disc.read("COURSE_A/DOCK.DAT").expect("read DAT")).expect("parse DAT");
+    let dat = Dat::parse(&disc.read(&course.file("DAT")).expect("read DAT")).expect("parse DAT");
     let sin = SinTable::from_exe(&exe).expect("sin table");
     // One entity per DAT object (TrackObject), so per-frame object selection
     // (the game's visibility stream / LOD) can show and hide them.
@@ -221,7 +222,7 @@ pub fn setup(
     // Sky dome (DOCK.AXE): gouraud quads drawn around the eye with zero
     // translation (FUN_80034AE4), i.e. directions only. Rendered as a big
     // shell that follows the camera (crate::follow_sky).
-    if let Ok(axe) = disc.read("COURSE_A/DOCK.AXE").map(|b| Axe::parse(&b)) {
+    if let Ok(axe) = disc.read(&course.file("AXE")).map(|b| Axe::parse(&b)) {
         let axe = axe.expect("parse AXE");
         let polys: Vec<PsxPoly> = axe
             .drawn_quads()
@@ -267,7 +268,7 @@ pub fn setup(
     }
 
     // Debug: the collision surface (DOCK.TER), flat shaded (--show-ter).
-    let ter = Ter::parse(&disc.read("COURSE_A/DOCK.TER").expect("read TER")).expect("parse TER");
+    let ter = Ter::parse(&disc.read(&course.file("TER")).expect("read TER")).expect("parse TER");
     if std::env::args().any(|a| a == "--show-ter") { commands.spawn((
         Mesh3d(meshes.add(ter_mesh(&ter))),
         MeshMaterial3d(mats.add(StandardMaterial {

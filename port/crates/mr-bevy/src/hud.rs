@@ -78,6 +78,13 @@ pub struct ItemHudInput {
     pub manual: bool,
 }
 
+/// A full-screen layer drawn instead of the race HUD while set (the course
+/// pick-list, courses.rs).
+#[derive(Resource, Clone, Debug, Default)]
+pub struct HudOverlay {
+    pub prims: Option<Vec<Prim>>,
+}
+
 #[derive(Resource)]
 struct HudRes {
     tables: HudTables,
@@ -110,6 +117,7 @@ impl Plugin for HudPlugin {
         app.init_resource::<HudGlobals>()
             .init_resource::<HudInput>()
             .init_resource::<ItemHudInput>()
+            .init_resource::<HudOverlay>()
             .add_systems(Startup, setup.after(crate::scene::setup))
             .add_systems(Update, (state_from_player, items_from_player, fit_hud, draw.after(state_from_player).after(items_from_player).after(fit_hud)));
     }
@@ -121,9 +129,9 @@ fn setup(mut commands: Commands) {
     let tables = HudTables::from_exe(&exe).expect("HUD tables in the exe");
     let items = ItemTables::from_exe(&exe).expect("item HUD tables in the exe");
     // Slot table from the course RAW (the font page 0xF and slot 5 come with it).
-    let path = mr_assets::raw::course_raw_path(&exe, crate::scene::DOCK).expect("course");
+    let path = mr_assets::raw::course_raw_path(&exe, crate::courses::id()).expect("course");
     let file = disc.read(&path).expect("read RAW");
-    let env = mr_assets::raw::LoadEnv::from_exe(&exe, crate::scene::DOCK).expect("env");
+    let env = mr_assets::raw::LoadEnv::from_exe(&exe, crate::courses::id()).expect("env");
     let dec = mr_assets::raw::decode(&file, &env).expect("decode RAW");
     let slots = hud::slot_attrs(&dec.slots);
     commands.insert_resource(HudRes { tables, items, slots, mats: HashMap::new(), pool: Vec::new(), last: None, fx: Vec::new(), extra: 0.0, last_extra: 0.0 });
@@ -351,7 +359,7 @@ fn items_from_player(
         race_time: g.race_clock,
         countdown: g.countdown,
         mode: g.mode as u8,
-        course: crate::scene::DOCK as u8,
+        course: crate::courses::id() as u8,
         e38: g.cup as i16,
         special: special_globals(s),
         cam,
@@ -419,7 +427,7 @@ fn replay_items(p: &crate::Player, pulse: &mut (HudPulse, i32)) -> Option<ItemHu
         race_time: hud::race_clock_from_kart(r),
         countdown: 0,
         mode: 1,
-        course: crate::scene::DOCK as u8,
+        course: crate::courses::id() as u8,
         e38: 4,
         special: (-1, 0, 0),
         cam,
@@ -536,6 +544,7 @@ fn draw(
     mut commands: Commands,
     input: Res<HudInput>,
     items: Res<ItemHudInput>,
+    overlay: Res<HudOverlay>,
     res: Option<ResMut<HudRes>>,
     tex: Option<ResMut<VramTextures>>,
     mut images: ResMut<Assets<Image>>,
@@ -545,9 +554,10 @@ fn draw(
     mut fx: ResMut<crate::psxfx::FxPrims>,
 ) {
     let (Some(mut res), Some(mut tex)) = (res, tex) else { return };
-    let prims: Vec<Prim> = match (input.state, items.state.as_ref()) {
-        (Some(st), Some(it)) => hud_items::race_hud(&res.tables, &res.items, &st, it),
-        (Some(st), None) => res.tables.layout(&st).into_iter().map(Prim::Sprt).collect(),
+    let prims: Vec<Prim> = match (overlay.prims.as_ref(), input.state, items.state.as_ref()) {
+        (Some(o), _, _) => o.clone(),
+        (None, Some(st), Some(it)) => hud_items::race_hud(&res.tables, &res.items, &st, it),
+        (None, Some(st), None) => res.tables.layout(&st).into_iter().map(Prim::Sprt).collect(),
         _ => Vec::new(),
     };
     if res.last.as_ref() == Some(&prims) && res.last_extra == res.extra {

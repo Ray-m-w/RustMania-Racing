@@ -519,7 +519,9 @@ fn load_tables() -> Tables {
     let chars = (0..16u32)
         .map_while(|c| Some((at(CHAR_VOICE_TABLE + c * 20)?, at(CHAR_VOICE_TABLE + c * 20 + 2)?)))
         .collect();
-    Tables { music: xa::exe_course_music(&exe, DOCK_COURSE), intro: xa::exe_course_voice(&exe, DOCK_COURSE), chars }
+    // The course's row of 0x800ACB34 (+3 music track, +4 intro clip).
+    let course = crate::courses::id() as u8;
+    Tables { music: xa::exe_course_music(&exe, course), intro: xa::exe_course_voice(&exe, course), chars }
 }
 
 impl MusicDirector {

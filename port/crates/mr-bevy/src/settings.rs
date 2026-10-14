@@ -48,6 +48,8 @@ pub const KNOWN: &[Opt] = &[
     Opt { key: "logic_hz", default: "60", allowed: "30|60", help: "simulation rate: 30 = the game's logic (2 VBlanks per tick, exact against the original); 60 = the 60 Hz mode (1 VBlank per tick, within the feel tolerance of 30; kart-physics-ledger.md \"60 Hz mode\")" },
     Opt { key: "render_latency", default: "low", allowed: "low|normal", help: "low = no pipelined rendering (the frame is rendered right after its update) and a swapchain of at most 1 queued frame; normal = Bevy's defaults (render one frame behind on its own thread, 2 queued frames)" },
     Opt { key: "low_latency", default: "true", allowed: "true|false", help: "pad sampled every display frame and the coming tick shown as it is sampled (look-ahead on a throw-away copy; the simulation is unchanged); false = the Session 4 display (interpolated one tick behind)" },
+    // --- P courses ---
+    Opt { key: "course", default: "", allowed: "", help: "race course: a TER file name of the game's 18 race courses (DOCK, BOG, NEW_YORK, ...; courses.rs) or its index; empty = the pick-list at start (DOCK behind it)" },
 ];
 
 #[derive(Resource, Clone, Debug)]

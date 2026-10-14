@@ -76,6 +76,9 @@ pub struct FxFrame {
     pub quads: Vec<crate::kartfx::Quad3>,
     /// The flat list 0x800C84B8 (splash rings, skid quads; FUN_800342B8).
     pub flats: Vec<mr_sim::particles::Flat>,
+    /// The ground decals of the specials (FUN_800861F0 entries of the
+    /// shadow list, drawn by FUN_8002ADA8 like the kart shadows; kartfx.rs).
+    pub decals: Vec<crate::kartshadow::ShadowRec>,
     /// The eye (world units) the flats are culled against.
     pub eye: [i32; 3],
     pub manual: bool,
@@ -211,9 +214,14 @@ pub struct KartLodHidden(pub u8);
 /// Everything drawn from one kart record: the special glow and the inline
 /// status billboards (kart_effects), the status shapes (FUN_80037B80's
 /// function cases) and, with the game's LOD, the far impostor.
-fn kart_all(t: &FxTables, rec: &[u8], cam: FxCamera, frame: i32, faithful_lod: bool, out: &mut FxFrame) -> bool {
+/// `face`: a TER face pointer's normal when the source can resolve it (a live
+/// session); else the kart's own smoothed ground normal +0x2D0 stands in.
+fn kart_all(t: &FxTables, rec: &[u8], cam: FxCamera, frame: i32, faithful_lod: bool, face: &dyn Fn(u32) -> Option<[i16; 3]>, out: &mut FxFrame) -> bool {
     kart_effects(t, rec, cam, frame, &mut out.billboards);
     crate::kartfx::status_quads(&t.kart, rec, cam.eye, &mut out.quads);
+    let own = [0x2D0usize, 0x2D2, 0x2D4].map(|o| i16::from_le_bytes([rec[o], rec[o + 1]]));
+    let normal = |p: u32| if p == 0 { None } else { face(p).or(Some(own)) };
+    crate::kartfx::special_decals(&t.kart, rec, &normal, &mut out.decals);
     if faithful_lod && crate::kartfx::lod(rec, cam.eye) >= 0x10 {
         crate::kartfx::impostor(t, &t.kart, rec, cam.yaw, &mut out.billboards);
         return true;
@@ -516,7 +524,7 @@ fn capture_source(
     items_from_mem(&t, &m, cam, m.i32(0x800B_0D90), &mut out.billboards);
     let mut h = 0u8;
     for k in 0..6u32 {
-        if kart_all(&t, m.slice(0x800C_30A8 + 0x504 * k, 0x504), cam, m.i32(0x800B_0D90), settings.faithful_draw_distance(), &mut out) {
+        if kart_all(&t, m.slice(0x800C_30A8 + 0x504 * k, 0x504), cam, m.i32(0x800B_0D90), settings.faithful_draw_distance(), &|_| None, &mut out) {
             h |= 1 << k;
         }
     }
@@ -723,7 +731,9 @@ fn session_source(
     items_from_mem(&t, m, cam, src.frame, &mut out.billboards);
     let mut h = 0u8;
     for (slot, rec) in &src.recs {
-        if kart_all(&t, rec, cam, src.frame, settings.faithful_draw_distance(), &mut out) {
+        let w = &s.world;
+        let face = |p: u32| w.face_index(p).and_then(|i| w.ter.faces.get(i)).map(|f| f.normal);
+        if kart_all(&t, rec, cam, src.frame, settings.faithful_draw_distance(), &face, &mut out) {
             h |= 1 << slot;
         }
     }
@@ -760,8 +770,23 @@ const S: f32 = 1.0 / crate::UNITS;
 
 /// Billboards and streaks -> PS1 primitives for the effects pass (psxfx.rs:
 /// blending in the game's colour space, depth-tested against the scene).
-fn draw(fx: Res<FxFrame>, t: Option<Res<FxTables>>, mut prims: ResMut<FxPrims>, cam: Query<&Transform, With<crate::ChaseCamera>>) {
+fn draw(fx: Res<FxFrame>, t: Option<Res<FxTables>>, p: Res<crate::Player>, mut prims: ResMut<FxPrims>, cam: Query<&Transform, With<crate::ChaseCamera>>) {
     let Ok(ct) = cam.single() else { return };
+    // the specials' ground decals: FUN_8002ADA8 as for the kart shadows
+    if let (Some(t), Some((eye, cm))) = (t.as_ref(), p.pose.cam) {
+        for d in &fx.decals {
+            let Some(rs) = t.slots.get(d.slot as usize).copied().flatten() else { continue };
+            let Some(tpage) = rs.tpage else { continue };
+            let slot = mr_assets::dat::TexSlot { tpage, clut: rs.clut, fixed_clut: 0 };
+            if !d.visible(eye) {
+                continue;
+            }
+            let pos = crate::kartshadow::record_corners(d);
+            if let Some((prim, _, _)) = crate::kartshadow::shadow_prim(d, pos, eye, cm, &slot) {
+                prims.list.push(prim);
+            }
+        }
+    }
     let right = ct.rotation * Vec3::X;
     let up = ct.rotation * Vec3::Y;
     for b in &fx.billboards {

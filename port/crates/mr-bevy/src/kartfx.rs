@@ -44,6 +44,10 @@ pub struct KartFxTables {
     pub box6: [u8; 24],
     /// 0x80020F54: FUN_80036A34's four quads.
     pub grid4: [u8; 16],
+    /// 0x800AC168: FUN_800861F0's four corners (x, z), times size / 16.
+    pub decal_corners: [[i16; 2]; 4],
+    /// The sine table 0x800A88C0 (1.0 = 16384; cos = entry + 1024).
+    pub sin: Vec<i16>,
 }
 
 fn exe_off(a: u32) -> usize {
@@ -61,6 +65,11 @@ impl KartFxTables {
             ball: at(0x800B_07B4, 4).try_into().unwrap(),
             box6: at(0x8002_0F3C, 24).try_into().unwrap(),
             grid4: at(0x8002_0F54, 16).try_into().unwrap(),
+            decal_corners: {
+                let c = at(0x800A_C168, 16);
+                std::array::from_fn(|i| [i16::from_le_bytes([c[4 * i], c[4 * i + 1]]), i16::from_le_bytes([c[4 * i + 2], c[4 * i + 3]])])
+            },
+            sin: mr_assets::dat::SinTable::from_exe(exe).map(|t| t.0).unwrap_or_default(),
         }
     }
 }
@@ -364,6 +373,96 @@ pub fn status_quads(kt: &KartFxTables, r: &[u8], eye: [i32; 3], out: &mut Vec<Qu
     }
 }
 
+/// FUN_800861F0: one entry of the ground-decal part of the shadow list
+/// (0x800C8B38 entries 0xC6..0xE5 = 0x800CB058, count DAT_800B0DCD; both
+/// cleared every frame by FUN_800306D0) drawn by FUN_8002ADA8 like the kart
+/// shadows. `normal`: the face normal at the face pointer `p4` (+8..+C of a
+/// TER face; pointer 0 = flat). Flags 0: shadow tile (0xA0, 0) 0x20, slot
+/// 0x14, B - F; 1: slot 0x15 (0x80, 0xC0) 0x10, B - F; 2: (0x68, 0xA8)
+/// 0x18, slot 0x14, B + F. [CODE 800861f0, 8003ccbc, 800252a4, 8002ada8,
+/// 800306d0]
+#[allow(clippy::too_many_arguments)]
+pub fn decal(kt: &KartFxTables, pos: [i32; 3], normal: Option<[i16; 3]>, size: i32, scale: u8, intensity: u8, flags: u8) -> crate::kartshadow::ShadowRec {
+    let sin = |a: i32| kt.sin.get((a & 0xFFF) as usize).map(|v| (*v as i32) >> 2).unwrap_or(0);
+    let cos = |a: i32| kt.sin.get((a & 0xFFF) as usize + 1024).map(|v| (*v as i32) >> 2).unwrap_or(4096);
+    // FUN_8003CCBC: angles of the normal (0, 0 without a face)
+    let (a, b) = match normal {
+        Some(n) => {
+            let (nx, ny, nz) = (n[0] as i32, n[1] as i32, n[2] as i32);
+            let a = (-mr_assets::dat::ratan2(nz, -ny)) & 0xFFF;
+            let t = -ny * cos(a) - nz * sin(a);
+            let t = (if t < 0 { t + 0xFFF } else { t }) >> 12;
+            (a, mr_assets::dat::ratan2(nx, t) & 0xFFF)
+        }
+        None => (0, 0),
+    };
+    // FUN_800252A4(b, a): the rows used are m0, m2 = 0, m3, m5, m6, m8
+    let mz = |x: i32, y: i32| {
+        let p = x * y;
+        (if p < 0 { p + 0xFFF } else { p }) >> 12
+    };
+    let m = [cos(b), -sin(b), 0, mz(sin(b), cos(a)), mz(cos(b), cos(a)), -sin(a), mz(sin(b), sin(a)), mz(cos(b), sin(a)), cos(a)];
+    let m = m.map(|v| v as i16 as i32);
+    let offs = kt.decal_corners.map(|c| {
+        let q = |v: i16| {
+            let p = v as i32 * size;
+            (if p < 0 { p + 0xF } else { p }) >> 4
+        };
+        let (x, z) = (q(c[0]), q(c[1]));
+        [((x * m[0] + z * m[2]) >> 12) as i16, ((x * m[3] + z * m[5]) >> 12) as i16, ((x * m[6] + z * m[8]) >> 12) as i16]
+    });
+    let (uv0, wh, slot, tpage_add) = match flags {
+        2 => ([0x68, 0xA8], [0x18, 0x18], 0x14, 0x20),
+        1 => ([0x80, 0xC0], [0x10, 0x10], 0x15, 0x40),
+        _ => ([0xA0, 0x00], [0x20, 0x20], 0x14, 0x40),
+    };
+    crate::kartshadow::ShadowRec { origin: pos, offs, uv0, size: wh, slot, scale, count: 1, intensity, tpage_add }
+}
+
+/// The FUN_800861F0 calls of FUN_8006C388 (the character specials' per
+/// effect animation, switch on +0x4F1 - 1) for one kart record, from the
+/// fields that frame's code left in the record. `normal` resolves a TER
+/// face pointer (+0x2E0 / +0x30C / +0x318) to its normal.
+pub fn special_decals(kt: &KartFxTables, r: &[u8], normal: &dyn Fn(u32) -> Option<[i16; 3]>, out: &mut Vec<crate::kartshadow::ShadowRec>) {
+    let eff = r[0x4F1] as i8;
+    if eff < 0 {
+        return;
+    }
+    let u32at = |o: usize| i32at(r, o) as u32;
+    let clock = i16at(r, 0x468);
+    let ground = [i32at(r, 0), i32at(r, 0x31C), i32at(r, 8)];
+    match eff {
+        // effects 4, 0x13, 0x14, 0x17: the kart's shadow, grown (it floats);
+        // +0x300 = the size clock the same code just stored
+        4 | 0x13 | 0x14 | 0x17 => {
+            let size = match eff {
+                4 => 4,
+                0x17 => 6,
+                _ => 3,
+            };
+            out.push(decal(kt, ground, normal(u32at(0x2E0)), size, (i32at(r, 0x300) << 3) as u8, 0x80, 0));
+        }
+        // effect 7: a slot 0x15 tile under the kart, size from +0x176
+        7 => {
+            let t = if clock > 0xF { 2 * (300 - clock).min(8) } else { clock };
+            out.push(decal(kt, ground, normal(u32at(0x2E0)), (i16at(r, 0x176) / 0x30) as i16 as i32, (t << 3) as u8, 0xFF, 1));
+        }
+        // effect 0xC: the beam's glow at +0x300, intensity +0x310 (t * 8)
+        0xC => {
+            let p = [i32at(r, 0x300), i32at(r, 0x304), i32at(r, 0x308)];
+            out.push(decal(kt, p, normal(u32at(0x30C)), 5, 0x80, i32at(r, 0x310) as u8, 2));
+        }
+        // effect 0xF: a shadow at +0x300 while +0x318 (a face) is set
+        0xF => {
+            if u32at(0x318) != 0 {
+                let p = [i32at(r, 0x300), i32at(r, 0x304), i32at(r, 0x308)];
+                out.push(decal(kt, p, normal(u32at(0x318)), 3, i32at(r, 0x30C) as u8, 0x80, 0));
+            }
+        }
+        _ => {}
+    }
+}
+
 /// A list quad as an effects-pass primitive (`None` when back-facing and
 /// culled). `eye`/`rot`: the chase camera (Bevy).
 pub fn quad_prim(t: &FxTables, q: &Quad3, eye: Vec3, rot: Quat) -> Option<FxPrim> {
@@ -429,11 +528,34 @@ mod tests {
     }
 
     #[test]
+    fn decal_flat_corners_and_glow_texture() {
+        let kt = KartFxTables {
+            vehicle: vec![],
+            character: vec![],
+            ball: [0; 4],
+            box6: [0; 24],
+            grid4: [0; 16],
+            decal_corners: [[-16, -16], [16, -16], [16, 16], [-16, 16]],
+            sin: (0..5120).map(|i| ((i as f64) * std::f64::consts::TAU / 4096.0).sin().mul_add(16384.0, 0.0).round() as i16).collect(),
+        };
+        // no face: corners = table * size / 16 in the ground plane
+        let d = decal(&kt, [100, 200, 300], None, 5, 0x80, 0x40, 2);
+        assert_eq!(d.offs[0], [-5, 0, -5]);
+        assert_eq!(d.offs[2], [5, 0, 5]);
+        assert_eq!((d.uv0, d.size, d.slot, d.tpage_add, d.intensity, d.scale), ([0x68, 0xA8], [0x18, 0x18], 0x14, 0x20, 0x40, 0x80));
+        // CLUT 9 as in the oracle's GP0: (0x68 >> 6) | ((0xA8 & 0xC0) >> 4)
+        assert_eq!(d.clut_add(), 9);
+        // a flat floor normal (0, -4096, 0) gives the same corners
+        let f = decal(&kt, [0, 0, 0], Some([0, -4096, 0]), 5, 0x80, 0x40, 2);
+        assert_eq!(f.offs, d.offs);
+    }
+
+    #[test]
     fn effect_0xe_quad_is_symmetric_about_the_look_point() {
         let mut r = rec();
         r[0x4F1] = 0xE;
         r[0x468..0x46A].copy_from_slice(&16i16.to_le_bytes());
-        let kt = KartFxTables { vehicle: vec![], character: vec![], ball: [0xE2, 0x40, 0x10, 7], box6: [0; 24], grid4: [0; 16] };
+        let kt = KartFxTables { vehicle: vec![], character: vec![], ball: [0xE2, 0x40, 0x10, 7], box6: [0; 24], grid4: [0; 16], decal_corners: [[0; 2]; 4], sin: vec![] };
         let mut out = Vec::new();
         status_quads(&kt, &r, [0, 0, 0], &mut out);
         assert_eq!(out.len(), 1);

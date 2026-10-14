@@ -59,6 +59,8 @@ struct VOut {
     // view depth of the fragment minus the pull
     @location(5) vdepth: f32,
     @location(6) @interpolate(flat) radius: f32,
+    // the ground plane's normal (flag PLANE), x and z (y = the rest, up)
+    @location(7) @interpolate(flat) gn: vec2<f32>,
 };
 
 @vertex
@@ -72,6 +74,7 @@ fn vs(v: VIn) -> VOut {
     o.ctr = v.ctr;
     o.vdepth = o.clip.w - v.extra.x;
     o.radius = v.extra.y;
+    o.gn = v.extra.zw;
     return o;
 }
 
@@ -94,6 +97,7 @@ const SEMI_TEXELS: u32 = 2u;
 const OPAQUE_TEXELS: u32 = 4u;
 const DEPTH: u32 = 8u;
 const SMOOTH: u32 = 16u;
+const PLANE: u32 = 32u;
 
 fn srgb(c: f32) -> f32 {
     if (c <= 0.0031308) {
@@ -123,7 +127,12 @@ fn fs(in: VOut) -> @location(0) vec4<f32> {
             var exempt = false;
             if (in.ctr.w >= 0.0) {
                 let ps = world_at(fp, ds);
-                if (ps.y <= in.ctr.y + in.ctr.w && distance(ps, in.ctr.xyz) <= in.radius) {
+                var h = ps.y - in.ctr.y;
+                if ((in.flags & PLANE) != 0u) {
+                    let n = vec3<f32>(in.gn.x, sqrt(max(1.0 - dot(in.gn, in.gn), 0.0)), in.gn.y);
+                    h = dot(ps - in.ctr.xyz, n);
+                }
+                if (h <= in.ctr.w && distance(ps, in.ctr.xyz) <= in.radius) {
                     let px = world_at(fp + vec2<i32>(1, 0), scene_depth(fp + vec2<i32>(1, 0)));
                     let py = world_at(fp + vec2<i32>(0, 1), scene_depth(fp + vec2<i32>(0, 1)));
                     let n = cross(px - ps, py - ps);

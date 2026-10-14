@@ -1,7 +1,7 @@
 """Routes that make the five kart status shapes appear on the player's kart
 (Session 6, track H).
 
-    python tools/oracle/status_routes.py OUTDIR [END_VB]
+    python tools/oracle/status_routes.py OUTDIR [END_VB] [--types=0,0xB,...] [--player-shoots]
 
 FUN_80037B80 draws shapes for effect types 0, 0xB, 0xC, 0xE, 0x15 (+0x4F1
 of a victim kart). A character special (R2 with a full meter, FUN_8006B828)
@@ -20,7 +20,8 @@ The AI fires R2 at once and again whenever the previous special ends (300
 VBlanks). The drive is race3's (slot 2). First attempt (the player as
 shooter, R2 at VB 150): the five AI victims were out of view; kept as
 --player-shoots for the record.
-Writes OUTDIR/status_<type>.json for tools/oracle/fx_capture.py.
+--types picks other effect types (= shooter characters 0..24; Session 6
+also 4 and 7 for the specials' ground decals). Writes OUTDIR/status_<type>.json for tools/oracle/fx_capture.py.
 """
 import json
 import os
@@ -30,6 +31,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 KART0 = 0x800C30A8
 KART = 0x504
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
+opt_types = [a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--types=")]
+types = [int(x, 0) for x in opt_types[0].split(",")] if opt_types else [0, 0xB, 0xC, 0xE, 0x15]
 out = args[0]
 end_vb = int(args[1]) if len(args) > 1 else 330
 player_shoots = "--player-shoots" in sys.argv
@@ -51,7 +54,7 @@ def with_r2(steps, at, n=4):
     return sorted(keep + add + inner, key=lambda s: s[0])
 
 
-for typ in (0, 0xB, 0xC, 0xE, 0x15):
+for typ in types:
     steps = [s for s in base["steps"] if s[0] <= end_vb + 60]
     if player_shoots:
         pokes = [[KART0 + 0x48A, 0x1A4, 2, 3]] + ([[KART0 + 0x4B2, typ, 1, 3]] if typ else [])

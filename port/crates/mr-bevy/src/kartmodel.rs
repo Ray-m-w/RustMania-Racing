@@ -287,10 +287,18 @@ pub fn to_transform(x: &PartXform) -> Transform {
         Vec3::new(e(0, 1), e(1, 1), e(2, 1)),
         Vec3::new(e(0, 2), e(1, 2), e(2, 2)),
     );
+    // The record's matrices carry the kart's scale (+0x442: shrinking into
+    // a hole, the specials' pulses and squashes) in their column lengths:
+    // M = R * diag(s), s = column lengths (shear, if any, is dropped).
+    let sc = Vec3::new(m.x_axis.length(), m.y_axis.length(), m.z_axis.length());
+    let safe = |v: f32| if v > 1e-4 { v } else { 1.0 };
+    let r = Mat3::from_cols(m.x_axis / safe(sc.x), m.y_axis / safe(sc.y), m.z_axis / safe(sc.z));
+    let scale = sc.map(|v| if v > 1e-4 { v } else { 1e-4 });
+    let scale = if (scale - Vec3::ONE).abs().max_element() < 2e-3 { Vec3::ONE } else { scale };
     Transform {
         translation: crate::to_bevy(x.trans[0] * 32, x.trans[1] * 32, x.trans[2] * 32),
-        rotation: Quat::from_mat3(&m).normalize(),
-        scale: Vec3::ONE,
+        rotation: Quat::from_mat3(&r).normalize(),
+        scale,
     }
 }
 

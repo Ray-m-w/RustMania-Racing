@@ -13,7 +13,10 @@
 
 use std::collections::HashMap;
 
+use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
+use bevy::render::render_resource::AsBindGroup;
+use bevy::shader::ShaderRef;
 use mr_assets::mdl::{Mdl, SlotAttr};
 
 use crate::kartmodel::{self, KartModel, KART_LEN};
@@ -171,6 +174,7 @@ pub fn sync_rigs(
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut mats: ResMut<Assets<StandardMaterial>>,
+    mut tmats: ResMut<Assets<KartMaterial>>,
     roots: Query<(Entity, &KartRigRoot)>,
     mut commands: Commands,
 ) {
@@ -197,12 +201,12 @@ pub fn sync_rigs(
                 for ((model, part), ms, semi) in parts {
                     c.spawn((Transform::default(), Visibility::default(), RigPart { slot, model, part })).with_children(|c| {
                         for (mesh, mat) in ms {
-                            let mat = own_material(&mut mats, &mat);
+                            let mat = own_material(&mats, &mut tmats, &mat);
                             c.spawn((Mesh3d(mesh), MeshMaterial3d(mat.clone()), RigTint { slot, model, mat }));
                         }
                         // semi-transparent polygons (canopies etc.): the effects pass
                         if let Some(s) = semi {
-                            c.spawn((Transform::default(), Visibility::default(), s));
+                            c.spawn((Transform::default(), Visibility::default(), RigSemi { slot, model, base: s.clone(), tint: [1.0; 3] }, s));
                         }
                     });
                 }
@@ -210,6 +214,7 @@ pub fn sync_rigs(
                     for (pi, poly) in polys.iter().enumerate() {
                         let id = |p: [i32; 3]| crate::to_bevy(p[0] * 32, p[1] * 32, p[2] * 32);
                         for (mesh, mat) in psxmesh::build(std::slice::from_ref(poly), &mut tex, &mut images, &mut meshes, &mut mats, id) {
+                            let mat = own_material(&mats, &mut tmats, &mat);
                             c.spawn((
                                 Mesh3d(mesh.clone()),
                                 MeshMaterial3d(mat.clone()),
@@ -225,20 +230,44 @@ pub fn sync_rigs(
     }
 }
 
+/// The kart models' material: the psxmesh StandardMaterial (unlit, vertex
+/// colours, page texture) plus the kart's colour factors applied in the
+/// game's gamma space (kart_tint.wgsl).
+pub type KartMaterial = ExtendedMaterial<StandardMaterial, KartTint>;
+
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
+pub struct KartTint {
+    /// r, g, b factors (1.0 = 0x1000), w unused.
+    #[uniform(100)]
+    pub rgb: Vec4,
+}
+
+impl Default for KartTint {
+    fn default() -> Self {
+        KartTint { rgb: Vec4::ONE }
+    }
+}
+
+const KART_TINT_SHADER: Handle<Shader> = bevy::asset::uuid_handle!("6f1c2a4e-9d3b-4c57-8e21-5b7d0f3a9c64");
+
+impl MaterialExtension for KartTint {
+    fn fragment_shader() -> ShaderRef {
+        ShaderRef::Handle(KART_TINT_SHADER)
+    }
+}
+
 /// A rig mesh's own material, tinted by the kart's colour factors.
 #[derive(Component)]
 pub struct RigTint {
     pub slot: u8,
     /// 0 vehicle, 1 driver
     pub model: usize,
-    pub mat: Handle<StandardMaterial>,
+    pub mat: Handle<KartMaterial>,
 }
 
-fn own_material(mats: &mut Assets<StandardMaterial>, shared: &Handle<StandardMaterial>) -> Handle<StandardMaterial> {
-    match mats.get(shared).cloned() {
-        Some(m) => mats.add(m),
-        None => shared.clone(),
-    }
+fn own_material(mats: &Assets<StandardMaterial>, tmats: &mut Assets<KartMaterial>, shared: &Handle<StandardMaterial>) -> Handle<KartMaterial> {
+    let base = mats.get(shared).cloned().unwrap_or_default();
+    tmats.add(ExtendedMaterial { base, extension: KartTint::default() })
 }
 
 /// The kart's colour factors (4.12, 0x1000 = 1.0): FUN_80026F3C lights the
@@ -246,37 +275,73 @@ fn own_material(mats: &mut Assets<StandardMaterial>, shared: &Handle<StandardMat
 /// (+0x416, +0x41A, +0x41E) (a colour matrix instead of the plain one when
 /// any is not 0x1000). Character specials set them: 0xB (frozen) r, g
 /// 0x400 / 0x800, b 0x2000 (blue); 0xE all 0x400 (dark) [CODE 80026f3c,
-/// 800276e8] [RAM: analysis/s6/status]. The PS1 multiplies gamma-space
-/// colours; the unlit material multiplies linear light, so the factor is
-/// converted at a typical kart texel (`tint_linear`).
+/// 800276e8] [RAM: analysis/s6/status]. Applied to the gamma-encoded colour
+/// in kart_tint.wgsl, as the PS1 multiplies its colours.
 pub fn tint_factors(r: &[u8], model: usize) -> [f32; 3] {
     let o = if model == 0 { [0x414, 0x418, 0x41C] } else { [0x416, 0x41A, 0x41E] };
     o.map(|o| i16::from_le_bytes([r[o], r[o + 1]]) as f32 / 4096.0)
 }
 
-/// A gamma-space factor as a linear multiplier, exact for a texel of value
-/// 0.35 (~90 / 255, the karts' body colours): lin(0.35 g) / lin(0.35).
-/// (A pure power g^2.2 makes the dark tints about half as bright as the
-/// oracle's: the sRGB curve is linear near black.)
-pub fn tint_linear(g: f32) -> f32 {
-    let lin = |c: f32| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
-    const C0: f32 = 0.35;
-    lin(C0 * g.max(0.0)) / lin(C0)
+/// A rig part's semi-transparent polygons (drawn by the effects pass) and
+/// their untinted originals: the colour factors scale their modulation too
+/// (the game lights them with the same matrix). Without this a dark tint
+/// left the karts' subtractive shading polygons at full strength (B - F
+/// with an untinted F: the body went black).
+#[derive(Component)]
+pub struct RigSemi {
+    pub slot: u8,
+    pub model: usize,
+    pub base: psxmesh::FxSemi,
+    pub tint: [f32; 3],
+}
+
+fn kart_factors(feed: &KartFeed, slot: u8, model: usize) -> Option<[f32; 3]> {
+    let k = feed.now.iter().find(|k| k.slot == slot)?;
+    if k.record.len() < 0x420 {
+        return None;
+    }
+    Some(match std::env::var("MRM_TINT").ok().and_then(|v| v.parse::<f32>().ok()) {
+        Some(v) => [v; 3],
+        None => tint_factors(&k.record, model).map(|g| g.max(0.0)),
+    })
+}
+
+/// Scale the semi-transparent polygons' modulation (gamma space, as the
+/// effects pass works) by the kart's colour factors, when they change.
+pub fn tint_semis(feed: Res<KartFeed>, mut q: Query<(&mut RigSemi, &mut psxmesh::FxSemi)>) {
+    for (mut rs, mut semi) in q.iter_mut() {
+        let Some(f) = kart_factors(&feed, rs.slot, rs.model) else { continue };
+        if f == rs.tint {
+            continue;
+        }
+        rs.tint = f;
+        let prims: Vec<crate::psxfx::FxPrim> = rs
+            .base
+            .0
+            .iter()
+            .map(|p| {
+                let mut p = p.clone();
+                for v in p.v.iter_mut() {
+                    for c in 0..3 {
+                        v.rgb[c] *= f[c];
+                    }
+                }
+                p
+            })
+            .collect();
+        *semi = psxmesh::FxSemi(std::sync::Arc::new(prims));
+    }
 }
 
 /// Tint every rig mesh from its kart's record (only when it changes).
-pub fn tint_rigs(feed: Res<KartFeed>, q: Query<&RigTint>, mut mats: ResMut<Assets<StandardMaterial>>) {
+pub fn tint_rigs(feed: Res<KartFeed>, q: Query<&RigTint>, mut mats: ResMut<Assets<KartMaterial>>) {
     for t in q.iter() {
-        let Some(k) = feed.now.iter().find(|k| k.slot == t.slot) else { continue };
-        if k.record.len() < 0x420 {
-            continue;
-        }
-        let f = tint_factors(&k.record, t.model).map(tint_linear);
+        let Some(f) = kart_factors(&feed, t.slot, t.model) else { continue };
+        let want = Vec4::new(f[0], f[1], f[2], 1.0);
         let Some(m) = mats.get(&t.mat) else { continue };
-        let want = Color::linear_rgba(f[0], f[1], f[2], m.base_color.alpha());
-        if m.base_color.to_linear() != want.to_linear() {
+        if m.extension.rgb != want {
             if let Some(mut m) = mats.get_mut(&t.mat) {
-                m.base_color = want;
+                m.extension.rgb = want;
             }
         }
     }
@@ -318,6 +383,7 @@ pub fn place_rigs(
         let (t0, t1) = (kartmodel::to_transform(&b0), kartmodel::to_transform(&b1));
         tr.translation = t0.translation.lerp(t1.translation, a);
         tr.rotation = t0.rotation.slerp(t1.rotation, a);
+        tr.scale = t0.scale.lerp(t1.scale, a);
         let want = if b1.visible && lod_hidden & (1 << rp.slot) == 0 { Visibility::Inherited } else { Visibility::Hidden };
         if *vis != want {
             *vis = want;
@@ -365,8 +431,10 @@ pub struct KartsPlugin;
 
 impl Plugin for KartsPlugin {
     fn build(&self, app: &mut App) {
+        bevy::asset::load_internal_asset!(app, KART_TINT_SHADER, "kart_tint.wgsl", Shader::from_wgsl);
+        app.add_plugins(MaterialPlugin::<KartMaterial>::default());
         app.init_resource::<KartFeed>()
             .add_systems(FixedUpdate, feed_player.after(crate::sim_tick))
-            .add_systems(Update, (sync_rigs, place_rigs.after(sync_rigs), tint_rigs.after(sync_rigs)));
+            .add_systems(Update, (sync_rigs, place_rigs.after(sync_rigs), tint_rigs.after(sync_rigs), tint_semis.after(sync_rigs)));
     }
 }

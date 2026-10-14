@@ -207,6 +207,9 @@ pub fn update_shadows(
     mut prims: ResMut<FxPrims>,
 ) {
     let Some((eye, cm)) = p.pose.cam else { return };
+    if std::env::var("MRM_NO_SHADOW").is_ok() {
+        return;
+    }
     let karts = kart_records(&feed);
     let a = time.overstep_fraction();
     for (k, prev) in &karts {
@@ -228,6 +231,15 @@ pub fn update_shadows(
 /// The corners of a record as drawn (Bevy world).
 pub fn record_corners(r: &ShadowRec) -> [Vec3; 4] {
     r.draw_offsets().map(|o| crate::to_bevy(r.origin[0] + o[0] * 32, r.origin[1] + o[1] * 32, r.origin[2] + o[2] * 32))
+}
+
+/// Exemption height above the shadow's plane, times its half extent.
+pub const SHADOW_PLANE_EPS: f32 = 0.1;
+
+/// The upward normal of the quad A, B, C, D (Bevy world).
+fn plane_up(pos: [Vec3; 4]) -> Vec3 {
+    let n = (pos[2] - pos[0]).cross(pos[3] - pos[1]).normalize_or_zero();
+    if n.y < 0.0 { -n } else { n }
 }
 
 /// FUN_8002ADA8 for one record at corners `pos` (Bevy world, A, B, C, D):
@@ -265,8 +277,12 @@ pub fn shadow_prim(rec: &ShadowRec, pos: [Vec3; 4], eye: [i32; 3], cm: [i32; 9],
             page: Some((tp & !0x60, cl)),
             blend: Blend::Abr(((tp >> 5) & 3) as u8),
             center,
-            ground_eps: 0.5 * ext,
+            // exempt: the ground within a little of the shadow's own plane;
+            // a kart body above it hides the shadow, as the game's ground
+            // list draws the shadow under the kart
+            ground_eps: SHADOW_PLANE_EPS * ext,
             ground_radius: 2.0 * ext,
+            ground_normal: Some(plane_up(pos)),
             depth_pull: 0.0,
             ..Default::default()
         },

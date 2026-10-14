@@ -93,6 +93,10 @@ pub struct FxPrim {
     /// ... and only within this distance of `center` (Bevy units): the
     /// surface the primitive sits on, not terrain far in front of it.
     pub ground_radius: f32,
+    /// The ground plane's (upward) normal: `ground_eps` is then the height
+    /// above that plane through `center` instead of above `center.y` (ground
+    /// decals: a slope stays exempt, a kart body above the plane hides it).
+    pub ground_normal: Option<Vec3>,
     /// Pulled toward the eye by this much (Bevy units) for the occlusion
     /// test only: the ordering-table bias some sprites carry (FUN_80011E3C
     /// sorts at OTZ * 4 + bias * 4).
@@ -125,6 +129,7 @@ impl Default for FxPrim {
             center: Vec3::ZERO,
             ground_eps: -1.0,
             ground_radius: 0.0,
+            ground_normal: None,
             depth_pull: 0.0,
             view: VIEW_MAIN,
             bucket: 0,
@@ -381,6 +386,7 @@ const FLAG_SEMI_TEXELS: u32 = 2;
 const FLAG_OPAQUE_TEXELS: u32 = 4;
 const FLAG_DEPTH: u32 = 8;
 const FLAG_SMOOTH: u32 = 16;
+const FLAG_PLANE: u32 = 32;
 
 /// Sort (per view: by bucket, then far to near, as the ordering table
 /// draws) and pack.
@@ -459,6 +465,11 @@ fn build_frame(
             if smooth.is_some() {
                 common |= FLAG_SMOOTH;
             }
+            let gn = p.ground_normal.map(|n| n.normalize_or_zero()).filter(|n| n.y > 0.0);
+            if gn.is_some() {
+                common |= FLAG_PLANE;
+            }
+            let gn = gn.unwrap_or(Vec3::Y);
             let idx: &[usize] = if p.tri { &[0, 1, 2] } else { &[0, 1, 2, 1, 3, 2] };
             for (pipe, phase, scale, alpha) in phases {
                 let flags = phase | common;
@@ -469,7 +480,7 @@ fn build_frame(
                     vf.verts.extend_from_slice(&[v.uv[0], v.uv[1], flags as f32, scale]);
                     vf.verts.extend_from_slice(&[v.rgb[0], v.rgb[1], v.rgb[2], alpha]);
                     vf.verts.extend_from_slice(&[p.center.x, p.center.y, p.center.z, p.ground_eps]);
-                    vf.verts.extend_from_slice(&[p.depth_pull, p.ground_radius, 0.0, 0.0]);
+                    vf.verts.extend_from_slice(&[p.depth_pull, p.ground_radius, gn.x, gn.z]);
                 }
                 let n = idx.len() as u32;
                 let pg = Some(page.unwrap_or(white));

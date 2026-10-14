@@ -18,6 +18,11 @@ O's captures (O posts each course's capture path below as it lands).
 
 ## Posted
 ### H
+(2026-10-14, H) Commits bf18154 (black pillarbox bars: a last camera, order 20,
+BAR_LAYER = 5, main.rs `fit_bars`) and 2f9e59e. P: a course's frame clear must go
+through `psxfx::psx_fill(rgb)` (the GP0 fill is stored 15-bit: DOCK (0,19,95)
+shows as (0,16,90)); main.rs inserts `ClearColor(psxfx::psx_fill(scene::DOCK_CLEAR))`.
+The psxfx pass now uses alpha 0 as a 'written by fx' mark (composite restores 1).
 ### P
 **Survey 1 (2026-10-14, early; `mr-survey`, AI on every kart incl. the player, items on, DOCK's seed).**
 The game's own tables decide the race courses (course.rs, from 0x800AC1E4 cup

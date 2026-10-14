@@ -519,8 +519,8 @@ Known differences (not one-for-one):
   frame's projectile step (the game: at once); the breaking projectile
   itself skips its ground step as in the game (track S), so only another
   projectile in the same frame could tell.
-- Breakable floor hits (FUN_8003C4D4 paths of FUN_80069648) are not ported
-  (walls are); no capture had one.
+- Breakable floor hits (FUN_8003C4D4 paths of FUN_80069648): ported by
+  track S (below).
 - Hooks: FUN_80061BC4 scans all 24 records; the port scans the course's.
   No race course has hooks.
 - Weather: the drops' render-side colours / sizes are kept for drawing; the
@@ -580,4 +580,18 @@ Result: BASE, BOG, CAPE, GALLERY, GHOST, GLACIER, GRAVE, HAPPY, ISLAND,
 LONDON, NEW_YORK, OVAL, PARK, RALLY, ROCK, SPEEDWAY and DOCK (start_probe)
 exact, every kart, to the end of the capture (1603-1635 frames; DOCK
 834). DISCO parts at 387 (k5's wall contact, below).
-
+### Breakable floor / ceiling hits [CODE][ORACLE]
+FUN_80069648's ground step: a projectile landing on a floor face (not on
+the floor the frame before) or pushed under a FACE_ALT face (not under it
+before) of a breakable TER group (FUN_8003C4D4(face) at 0x8006A4xx for the
+nearest face 0x800B0B0C, 0x8006A278 for the ALT face 0x800B0C84) breaks it
+through FUN_80069334 after its y is snapped; the step then ends as for a
+wall break (owner +0x4DD byte; ground_y / face / on-floor flags not
+updated, no kart hits). weapons.rs. Oracle: a type-0 projectile poked
+above LONDON's group-0 crate top at the grid restore (slot 4;
+analysis/oracle/stuck/LONDON_floorbreak): breaks at VB 8 (spent, grounded,
+y = floor - 0x1000, kart 1's +0x4DD set); `mr-course-check --dir` free run
+and teacher forced exact (projectile, random pointer, karts) to frame 303,
+where a new AI projectile's launch y differs (the --dir session's AI
+look_* fields, +0x324.., are not rebuilt by load_mem [INFER]; not a
+course capture issue). The ceiling path is from the code only.

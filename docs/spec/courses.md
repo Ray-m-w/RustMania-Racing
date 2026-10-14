@@ -74,9 +74,10 @@ on all 17 captured courses.)
 
 Breakable scenery (no chunk; FUN_80083B08's per-course switch, jump table
 0x80023318 course - 1): TER groups listed with their DAT slots; a projectile's
-wall hit on such a group (FUN_8003C568 -> FUN_80069334) disables it (faces and
+wall hit on such a group (FUN_8003C568 -> FUN_80069334), or its landing on
+a floor / ceiling face of one (FUN_8003C4D4; track S), disables it (faces and
 walls stop colliding, FUN_8004229C), hides the scenery and puffs two
-explosions. Tables checked against RAM on all 8 courses that have them.
+explosions; the projectile is spent and its step ends there. Tables checked against RAM on all 8 courses that have them.
 
 Weather (course flags 0x20 snow / 0x40 rain, 0x800B0ACA): FUN_8008650C, 16
 drops at 0x800D75D0; each frame the next free slot is placed at random around

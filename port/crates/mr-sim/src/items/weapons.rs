@@ -401,6 +401,14 @@ fn step(i: usize, karts: &mut [KartState], g: &mut RaceGlobals, w: &World, rand:
                     // Under a FACE_ALT surface (a ceiling): pushed below it.
                     p.pos[1] = alt.y.wrapping_sub(top);
                     if was_alt == 0 {
+                        // 0x8006A278: a breakable ceiling breaks
+                        // (FUN_8003C4D4 -> FUN_80069334) and the step ends.
+                        let grp = crate::breakables::face_group(&w.ter, alt.face);
+                        if grp != -1 && crate::breakables::hit(g, w, grp, p.pos, p.spin_rate as i32) {
+                            p = broke(p, karts, g, w);
+                            g.items.projectiles[i] = p;
+                            return;
+                        }
                         let n = w.ter.faces[alt.face].normal;
                         if p.flags & 4 == 0 {
                             p.on_alt = 1;
@@ -427,6 +435,14 @@ fn step(i: usize, karts: &mut [KartState], g: &mut RaceGlobals, w: &World, rand:
                 p.grounded = 1;
                 p.pos[1] = gq.nearest_y.wrapping_sub(bottom);
                 if was_floor == 0 {
+                    // 0x8006A4xx: a breakable floor breaks (FUN_8003C4D4
+                    // -> FUN_80069334) and the step ends.
+                    let grp = crate::breakables::face_group(&w.ter, near.face);
+                    if grp != -1 && crate::breakables::hit(g, w, grp, p.pos, p.spin_rate as i32) {
+                        p = broke(p, karts, g, w);
+                        g.items.projectiles[i] = p;
+                        return;
+                    }
                     if p.flags & 4 == 0 {
                         p.on_floor = 1;
                     } else {

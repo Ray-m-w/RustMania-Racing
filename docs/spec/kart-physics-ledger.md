@@ -625,7 +625,7 @@ at frame 387; the game counted the wall, the port did not (the kart 82 TER
 units above the walls' top as the port had them). The course captures do
 not hold the lift records (0x800DD708) or the TER, so the checker took the
 lifts from ram0 (the course menu). A capture from DISCO's course menu with
-the lift region (analysis/oracle/stuck/DISCO_lifts; scratch slot 11) shows
+the lift region (tools/oracle/capture_menu_lifts.py; analysis/oracle/stuck/DISCO_lifts, scratch slot 11) shows
 the menu running FUN_800859EC: lift 0's wait timer drops by 2 every 2
 VBlanks (the menu's frame counter 0x800B0D90 steps by dt 2 too) and the
 lift starts down just before the race load. session_at_load now steps the

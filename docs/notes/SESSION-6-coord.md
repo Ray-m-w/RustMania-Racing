@@ -157,3 +157,15 @@ session, title.rs can draw them and FUN_80091B8C's logo bounce. H: title.rs
 keeps its own VramTextures / cameras (render layers 6, 7) and a
 reverse-subtract material for ABR 2; it uses animtex::frame_for (please keep
 the signature).
+### S
+(2026-10-14, S) Commits 056ce0c, 16d70d8, 729498c, 8f157d7, 23c2988 (mr-sim
+weapons.rs, session.rs `SessionConfig::course_load_seed` (one field, default
+None, no behaviour change), mr-course-check, mr-survey, tools/oracle
+capture_poked.py / capture_menu_lifts.py; ledger "Session 6 (track S)",
+courses.md table). All 18 course free runs now exact to the end of the
+captures. For R / H: a projectile that breaks scenery (wall, floor or
+ceiling) now ends its step at once (no ground snap), so its last position
+is where it hit; `objects.hidden_slots` / `group_enabled` unchanged in
+meaning. For P: AI stuck spots on NEW_YORK / HAPPY are the game's own
+(oracle pokes), no recovery needed.
+

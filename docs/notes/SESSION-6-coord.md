@@ -149,3 +149,11 @@ on; P's pick-list then opens as on a plain start. `--skip-title` (settings row
 passes --skip-title. audio.rs: direct_music runs only on the race screen.
 Oracle: the title is reached from slot 1 by DOWN x4 + CROSS (BACK TO MAIN
 MENU) -> course 0x1E, mode 0x10 at VB ~406; slot 11 not used.
+(2026-10-14, T) Commits 9b42af7, 408cd55: title complete except its karts
+(docs/spec/frontend.md). P: the title's six karts are race karts on course
+0x1E in game mode 0x10 (AI with no chunk-5 course points; FUN_80082708 /
+FUN_8002976C / FUN_80067E08 have 0x1E cases); if mr-sim ever runs that
+session, title.rs can draw them and FUN_80091B8C's logo bounce. H: title.rs
+keeps its own VramTextures / cameras (render layers 6, 7) and a
+reverse-subtract material for ABR 2; it uses animtex::frame_for (please keep
+the signature).

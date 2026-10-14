@@ -491,6 +491,7 @@ impl Session {
             // Course objects at the course load: FUN_800637B8 (jets),
             // FUN_800616A0 (hooks); the turntables' draws below.
             objects: crate::objects::ObjectState { jets: crate::objects::jets_load(&world), hooks: crate::hooks::load(&world), weather: crate::weather::Weather::load(&world), lifts: world.course.objects.lifts.clone(), group_enabled: crate::breakables::race_load(world.info.id, world.ter.groups.len(), &world.course.objects.breakables), ..Default::default() },
+            hud_gauge_rgb: None,
         };
         // FUN_8008C4AC: the first human's grid slot (*rng++ % karts), the
         // other karts on the following slots; with no opponents the
@@ -620,6 +621,18 @@ impl Session {
                 }
             }
             let (phase, spin) = crate::objects::turntables_load(&s.world, &mut rand);
+            // FUN_80084490's switch: the animated scenery (scenery.rs). Its
+            // random bytes are taken just before the race-load pointer
+            // [INFER: render-side phases only].
+            let nb = crate::scenery::load_draws(s.world.info.id).1;
+            let mut ptr = s.cfg.rng_start.wrapping_sub(nb);
+            let world = &s.world;
+            let mut byte = || {
+                let b = world.rng_byte(ptr);
+                ptr = ptr.wrapping_add(1);
+                b
+            };
+            s.globals.objects.anim = crate::scenery::load(world.info.id, &spin, &mut rand, &mut byte);
             s.globals.objects.turntable_phase = phase;
             s.globals.objects.turntable_spin = spin;
         }
@@ -944,6 +957,9 @@ impl Session {
             let mut recs: Vec<&mut Vec<u8>> = std::iter::once(&mut self.record).chain(self.others.iter_mut().map(|o| &mut o.record)).collect();
             crate::items::after_kart_loop(ks, &mut recs, g, w, &cams, self.cfg.items, skip, &mut rand);
         }
+        // FUN_800859EC's start: the turntable phases and the animated
+        // scenery's spin (scenery.rs; render side, every tick: per VBlank).
+        crate::scenery::frame(g);
         // FUN_8007A9DC's end, FUN_800859EC: the lifts (lifts.rs) move and
         // carry their TER groups (60 Hz mode: once per pair, the pair's dt:
         // a lift steps once per game frame).
@@ -1048,7 +1064,7 @@ impl Session {
             let renders = if self.camera.mode_changed != 0 { 2 } else { 1 };
             for _ in 0..renders {
                 for k in ks.iter().take(g.humans.max(0) as usize) {
-                    crate::race::hud_draws(g, k);
+                    crate::race::hud_draws(g, w, k);
                 }
             }
         }

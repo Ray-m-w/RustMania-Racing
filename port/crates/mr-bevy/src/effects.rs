@@ -528,6 +528,7 @@ fn capture_source(
             h |= 1 << k;
         }
     }
+    crate::kartfx::projectile_decals(&t.kart, &m, &|_| None, &mut out.decals);
     if hidden.0 != h {
         hidden.0 = h;
     }
@@ -552,6 +553,8 @@ pub struct FxSource {
     recs: Vec<(usize, Vec<u8>)>,
     frame: i32,
     cam: FxCamera,
+    /// The courses' moving scenery and weather (movers.rs).
+    scenery: crate::movers::SceneryFrame,
 }
 
 impl FxSource {
@@ -565,6 +568,7 @@ impl FxSource {
             recs: s.kart_records().map(|(slot, _, _, r)| (slot, r.to_vec())).collect(),
             frame: s.globals.frame,
             cam: FxCamera { roll: s.camera.roll as i32, yaw: s.camera.yaw as i32, eye: s.camera.pos },
+            scenery: crate::movers::SceneryFrame::of(s),
         }
     }
 }
@@ -656,7 +660,7 @@ fn interp_source(a: &FxSource, b: &FxSource, t: f32, ma: &mut Mem, mb: &mut Mem)
 /// the last two ticks (classic), or between the last tick and the coming one
 /// (`low_latency`: `FxLookahead`), at `Time<Fixed>`'s overstep.
 #[allow(clippy::too_many_arguments)]
-fn session_source(
+pub(crate) fn session_source(
     p: Res<crate::Player>,
     cap: Option<Res<crate::capture::CaptureReplay>>,
     t: Option<Res<FxTables>>,
@@ -666,6 +670,7 @@ fn session_source(
     feed: Res<crate::karts::KartFeed>,
     mut fx: ResMut<FxFrame>,
     mut hidden: ResMut<KartLodHidden>,
+    mut scenery: ResMut<crate::movers::SceneryShown>,
     mut st: Local<SourceCache>,
 ) {
     let Some(t) = t else { return };
@@ -687,6 +692,11 @@ fn session_source(
         (st.prev.as_ref().filter(|q| q.ticks + 1 == now.ticks), Some(now))
     };
     let a = time.overstep_fraction().clamp(0.0, 1.0);
+    // the moving scenery and weather between the same two states
+    scenery.0 = Some(match (from, to) {
+        (Some(f), Some(g)) => crate::movers::SceneryFrame::lerp(&f.scenery, &g.scenery, a),
+        _ => now.scenery.clone(),
+    });
     let ma = st.ma.get_or_insert_with(|| Mem::new(vec![0; 0x20_0000], vec![0; 0x400]));
     let mb = st.mb.get_or_insert_with(|| Mem::new(vec![0; 0x20_0000], vec![0; 0x400]));
     let (src, m): (FxSource, &mut Mem) = match (from, to) {
@@ -737,6 +747,11 @@ fn session_source(
             h |= 1 << slot;
         }
     }
+    {
+        let w = &s.world;
+        let face = |p: u32| w.face_index(p).and_then(|i| w.ter.faces.get(i)).map(|f| f.normal);
+        crate::kartfx::projectile_decals(&t.kart, m, &face, &mut out.decals);
+    }
     if hidden.0 != h {
         hidden.0 = h;
     }
@@ -759,7 +774,7 @@ fn session_source(
 /// session_source's state: the last two real ticks' sources and two
 /// scratch game-layout memories.
 #[derive(Default)]
-struct SourceCache {
+pub(crate) struct SourceCache {
     prev: Option<FxSource>,
     now: Option<FxSource>,
     ma: Option<Mem>,
@@ -770,7 +785,7 @@ const S: f32 = 1.0 / crate::UNITS;
 
 /// Billboards and streaks -> PS1 primitives for the effects pass (psxfx.rs:
 /// blending in the game's colour space, depth-tested against the scene).
-fn draw(fx: Res<FxFrame>, t: Option<Res<FxTables>>, p: Res<crate::Player>, mut prims: ResMut<FxPrims>, cam: Query<&Transform, With<crate::ChaseCamera>>) {
+pub(crate) fn draw(fx: Res<FxFrame>, t: Option<Res<FxTables>>, p: Res<crate::Player>, mut prims: ResMut<FxPrims>, cam: Query<&Transform, With<crate::ChaseCamera>>) {
     let Ok(ct) = cam.single() else { return };
     // the specials' ground decals: FUN_8002ADA8 as for the kart shadows
     if let (Some(t), Some((eye, cm))) = (t.as_ref(), p.pose.cam) {

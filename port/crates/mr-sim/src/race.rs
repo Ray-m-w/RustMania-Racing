@@ -303,14 +303,17 @@ pub fn result(slot: usize, k: &KartState) -> KartResult {
 /// runs (0 < countdown < 0x800B07F8) FUN_8004E8E8 flickers the face button
 /// to copy (+0x4DA, one byte) and jitters the two hand sprites (three bytes
 /// each) [CODE 8004e8e8].
-pub fn hud_draws(g: &mut RaceGlobals, k: &KartState) {
+pub fn hud_draws(g: &mut RaceGlobals, w: &World, k: &KartState) {
     if g.mode == 1 && g.countdown != 0 && g.countdown < g.countdown_len {
         let n = if (0..4).contains(&k.copy_button) { 7 } else { 6 };
         g.rng = g.rng.wrapping_add(n);
     }
     // Race flag 8 (DISCO), racing: FUN_80049FD8 (the damage gauge) jitters
     // its colour with three bytes while +0x43E is 0x321..0x3E7.
+    g.hud_gauge_rgb = None;
     if g.mode == 1 && g.countdown == 0 && k.finished == 0 && g.race_flags & 8 != 0 && ((k.stun as u16).wrapping_sub(0x321)) < 199 {
+        // (render side: the colour the gauge's heart is drawn with)
+        g.hud_gauge_rgb = Some([w.rng_byte(g.rng), w.rng_byte(g.rng.wrapping_add(1)), w.rng_byte(g.rng.wrapping_add(2))]);
         g.rng = g.rng.wrapping_add(3);
     }
 }

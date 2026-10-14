@@ -42,6 +42,7 @@ pub mod particles;
 pub mod progress;
 pub mod race;
 pub mod render;
+pub mod scenery;
 pub mod session;
 pub mod sound;
 pub mod tables;

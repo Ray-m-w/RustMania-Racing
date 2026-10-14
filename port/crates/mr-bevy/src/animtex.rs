@@ -29,9 +29,45 @@ struct Strip {
     shown: Option<usize>,
 }
 
+/// A per-course VRAM scroll of FUN_8007A9DC's switch (FUN_8005E38C(slot,
+/// u, v, w, h, 0, sy, du, dv)): the w x h texels at (u, v) of texture slot
+/// `slot` become the same-sized block at (u + du, v + dv) scrolled up by sy
+/// rows (wrapping), every race frame. [CODE 8007a9dc, 8005e38c]
+struct Scroll {
+    /// Destination and source, VRAM halfwords (4-bit texels / 4).
+    x: usize,
+    y: usize,
+    sx: usize,
+    sy: usize,
+    w: usize,
+    h: usize,
+    /// The row scroll for frame counter f.
+    rows: fn(i32) -> usize,
+    shown: Option<usize>,
+}
+
+/// FUN_8007A9DC's scrolls on the race courses: (slot, u, v, w, h, du, dv,
+/// rows(f)). GALLERY (4), ISLAND (6), NEW_YORK (0x11), DISCO (0x1F, two).
+fn scrolls(course: u32) -> Vec<(usize, i32, i32, i32, i32, i32, i32, fn(i32) -> usize)> {
+    fn up(f: i32) -> usize {
+        (f & 0x3F) as usize
+    }
+    fn down(f: i32) -> usize {
+        ((f & 0x1F) * -2 + 0x3F) as usize
+    }
+    match course {
+        4 => vec![(5, 0x40, 0x40, 8, 0x40, 0, -0x40, up as fn(i32) -> usize)],
+        6 => vec![(5, 0xC0, 0xC0, 0x40, 0x40, 0, -0x40, down)],
+        0x11 => vec![(5, 0xC0, 0xC0, 0x40, 0x40, 0, -0x40, up)],
+        0x1F => vec![(5, 0xC0, 0, 0x40, 0x40, -0x40, 0, up), (5, 0x40, 0xC0, 0x40, 0x40, 0, -0x40, up)],
+        _ => Vec::new(),
+    }
+}
+
 #[derive(Resource, Default)]
 struct AnimTex {
     strips: Vec<Strip>,
+    scrolls: Vec<Scroll>,
 }
 
 pub struct AnimTexPlugin;
@@ -64,6 +100,16 @@ fn setup(mut at: ResMut<AnimTex>) {
         }
         j += "}";
         let _ = std::fs::write(path, j);
+    }
+    // FUN_8005E38C's rectangles: x = slot x + u / 4 (C division), y =
+    // slot y + v; the source du / 4, dv away
+    // dev: MRM_NO_SCROLL leaves them out (side-by-sides)
+    let list = if std::env::var("MRM_NO_SCROLL").is_ok() { Vec::new() } else { scrolls(crate::courses::id()) };
+    for (slot, u, v, w, h, du, dv, rows) in list {
+        let Some(ts) = dec.slots.get(slot).copied().flatten() else { continue };
+        let q = |a: i32| (if a < 0 { a + 3 } else { a }) >> 2;
+        let (x, y) = (ts.x as i32 + q(u), ts.y as i32 + v);
+        at.scrolls.push(Scroll { x: x as usize, y: y as usize, sx: (x + q(du)) as usize, sy: (y + dv) as usize, w: q(w) as usize, h: h as usize, rows, shown: None });
     }
     for a in &dec.anims {
         if let Some(s) = place(&exe, &dec.slots, a) {
@@ -131,6 +177,23 @@ fn step(
     };
     // dev: MRM_ANIM_OFFSET=n shifts the counter the strips see (timing checks)
     let f = f - std::env::var("MRM_ANIM_OFFSET").ok().and_then(|v| v.parse::<i32>().ok()).unwrap_or(0);
+    for s in at.scrolls.iter_mut() {
+        let r = (s.rows)(f).min(s.h);
+        if s.shown == Some(r) {
+            continue;
+        }
+        // MoveImage of rows r.. then rows ..r (no column scroll on the
+        // race courses)
+        let mut data = Vec::with_capacity(s.w * s.h);
+        for row in (r..s.h).chain(0..r) {
+            for col in 0..s.w {
+                data.push(tex.vram.get(s.sx + col, s.sy + row));
+            }
+        }
+        tex.write_rect(&mut images, s.x, s.y, s.w, s.h, &data);
+        pages.refresh(&tex.vram, &mut images, s.x, s.y, s.w, s.h);
+        s.shown = Some(r);
+    }
     for s in at.strips.iter_mut() {
         let Some(k) = frame_for(s.slot, f) else { continue };
         let k = k.min(s.frames.len().saturating_sub(1));

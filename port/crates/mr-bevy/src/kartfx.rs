@@ -463,6 +463,23 @@ pub fn special_decals(kt: &KartFxTables, r: &[u8], normal: &dyn Fn(u32) -> Optio
     }
 }
 
+/// FUN_80069648's FUN_800861F0 call for each projectile still in flight
+/// after its frame (0x800DDC50, 4 x 0x48; +0x2E live): a shadow tile at
+/// (x, ground y +0x18, z) on the face +0x44, size 10 for the flag 0x600
+/// weapons else 7, scale and intensity 0x80, flags 0. `m`: game-layout
+/// memory holding the projectile table.
+pub fn projectile_decals(kt: &KartFxTables, m: &mr_sim::mem::Mem, normal: &dyn Fn(u32) -> Option<[i16; 3]>, out: &mut Vec<crate::kartshadow::ShadowRec>) {
+    for i in 0..4u32 {
+        let p = 0x800D_DC50 + 0x48 * i;
+        if m.u8(p + 0x2E) == 0 {
+            continue;
+        }
+        let size = if m.u16(p + 0x34) & 0x600 != 0 { 10 } else { 7 };
+        let face = m.u32(p + 0x44);
+        out.push(decal(kt, [m.i32(p), m.i32(p + 0x18), m.i32(p + 8)], if face == 0 { None } else { normal(face) }, size, 0x80, 0x80, 0));
+    }
+}
+
 /// A list quad as an effects-pass primitive (`None` when back-facing and
 /// culled). `eye`/`rot`: the chase camera (Bevy).
 pub fn quad_prim(t: &FxTables, q: &Quad3, eye: Vec3, rot: Quat) -> Option<FxPrim> {

@@ -138,6 +138,8 @@ pub fn states(c: &Cap, vb: u32) -> (HudState, ItemHud, [(u16, u16); 32]) {
         kart: rec,
         karts,
         players: i16at(0x800B_0E28).max(0) as usize,
+        race_flags: 0,
+        gauge_rgb: None,
     };
     let tab = c.read(vb, 0x800D_FF00, 0x160);
     let mut slots = [(0u16, 0u16); 32];

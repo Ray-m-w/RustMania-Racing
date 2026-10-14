@@ -76,6 +76,8 @@ fn state_3800() -> (HudState, ItemHud) {
         kart,
         karts,
         players: 1,
+        race_flags: 0,
+        gauge_rgb: None,
     };
     (st, it)
 }

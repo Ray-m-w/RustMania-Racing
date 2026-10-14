@@ -151,7 +151,10 @@ pub fn setup(
         let _ = std::fs::write(&path, layer_report(&dat, &sin, &dslots, &info));
     }
     for (i, o) in dat.objects.iter().enumerate() {
-        let mut polys = object_polys(&dat, o, &sin, &dslots);
+        // special-slot scenery the race code moves / hides (movers.rs):
+        // built in mesh space, placed by its pose every frame
+        let mover = crate::movers::mover_slot(&dat, i).map(|s| crate::movers::mover(&dat, i, s));
+        let mut polys = if mover.is_some() { crate::movers::local_polys(&dat, o, &sin, &dslots) } else { object_polys(&dat, o, &sin, &dslots) };
         if textured_only {
             polys.retain(|p| p.tex.is_some());
         }
@@ -177,20 +180,22 @@ pub fn setup(
         // far camera's pass for layer 1, under everything for the ground list.
         let view = if far { crate::psxfx::VIEW_FAR } else { crate::psxfx::VIEW_MAIN };
         let semi = psxmesh::semi_prims(&polys, view, if ground { -1 } else { 0 }, world);
-        commands
-            .spawn((Transform::default(), Visibility::default(), crate::TrackObject(i)))
-            .with_children(|c| {
-                for (mesh, mat) in parts {
-                    if far {
-                        c.spawn((Mesh3d(mesh), MeshMaterial3d(mat), RenderLayers::layer(FAR_LAYER)));
-                    } else {
-                        c.spawn((Mesh3d(mesh), MeshMaterial3d(mat)));
-                    }
+        let mut e = commands.spawn((Transform::default(), Visibility::default(), crate::TrackObject(i)));
+        if let Some(m) = mover {
+            e.insert((crate::movers::pose_transform(&m, None).unwrap_or_default(), m));
+        }
+        e.with_children(|c| {
+            for (mesh, mat) in parts {
+                if far {
+                    c.spawn((Mesh3d(mesh), MeshMaterial3d(mat), RenderLayers::layer(FAR_LAYER)));
+                } else {
+                    c.spawn((Mesh3d(mesh), MeshMaterial3d(mat)));
                 }
-                if let Some(s) = semi {
-                    c.spawn((Transform::default(), Visibility::default(), s));
-                }
-            });
+            }
+            if let Some(s) = semi {
+                c.spawn((Transform::default(), Visibility::default(), s));
+            }
+        });
     }
 
     // The waving start/finish banner (DAT chunk id 9, FUN_800351e8): an
@@ -522,7 +527,9 @@ fn surface_samples(polys: &[PsxPoly], step: f32, out: &mut Vec<(Vec3, f32)>) {
 /// parked off the course otherwise), plus the layer-1 objects that are real
 /// backdrop. Layer-1 stand-ins of layer-0 scenery are dropped.
 pub fn full_view_object(dat: &Dat, info: &LayerInfo, i: usize) -> bool {
-    if dat.special.iter().any(|s| *s == Some(i)) {
+    // the pickups' slots (effects.rs draws the items); the other special
+    // slots are course scenery (movers.rs)
+    if dat.special.iter().enumerate().any(|(s, o)| *o == Some(i) && crate::movers::pickup_slot(dat, s)) {
         return false;
     }
     if i >= dat.layer0_count {

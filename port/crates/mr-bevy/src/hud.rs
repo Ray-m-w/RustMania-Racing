@@ -366,6 +366,8 @@ fn items_from_player(
         kart: s.record().to_vec(),
         karts,
         players: g.humans.max(1) as usize,
+        race_flags: g.race_flags,
+        gauge_rgb: g.hud_gauge_rgb,
     });
 }
 
@@ -398,6 +400,8 @@ fn capture_items(m: &mr_sim::mem::Mem) -> ItemHud {
         kart: m.slice(k0, 0x504).to_vec(),
         karts,
         players: m.i16(0x800B_0E28).max(1) as usize,
+        race_flags: m.u16(0x800B_07E2),
+        gauge_rgb: None,
     }
 }
 
@@ -440,6 +444,8 @@ fn replay_items(p: &crate::Player, pulse: &mut (HudPulse, i32)) -> Option<ItemHu
             character: r[0x4B2],
         }],
         players: 1,
+        race_flags: 0,
+        gauge_rgb: None,
     })
 }
 

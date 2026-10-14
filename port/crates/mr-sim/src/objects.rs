@@ -121,6 +121,9 @@ pub struct ObjectState {
     /// on the disc), and the DAT slots knocked down (render side).
     pub group_enabled: Vec<Option<bool>>,
     pub hidden_slots: Vec<(i16, u8)>,
+    /// The course's animated scenery (scenery.rs; 0x800D8630): spin
+    /// angles and spin-up per object (render side).
+    pub anim: Vec<crate::scenery::AnimObject>,
 }
 
 /// |a - b| with the game's SquareRoot0 of the squared sum (wrapping).
@@ -453,7 +456,7 @@ impl ObjectState {
                 }
             })
             .collect();
-        ObjectState { jets, turntable_phase, turntable_spin, hooks, weather, lifts, lift_offsets, group_enabled, hidden_slots: Vec::new() }
+        ObjectState { jets, turntable_phase, turntable_spin, hooks, weather, lifts, lift_offsets, group_enabled, hidden_slots: Vec::new(), anim: crate::scenery::read(m) }
     }
 }
 

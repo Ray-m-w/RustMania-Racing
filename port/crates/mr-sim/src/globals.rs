@@ -84,6 +84,10 @@ pub struct RaceGlobals {
     /// Course objects' run-time state (objects.rs: jets, turntables,
     /// hooks); empty on DOCK.
     pub objects: crate::objects::ObjectState,
+    /// Race flag 8: the colour FUN_80049FD8 drew the damage gauge's heart
+    /// with this frame (three random bytes while +0x43E is 0x321..0x3E7;
+    /// None = 0x80 grey). Render side.
+    pub hud_gauge_rgb: Option<[u8; 3]>,
 }
 
 /// The 60 Hz logic mode: every tick is one VBlank (dt = 1); two ticks make
@@ -207,6 +211,7 @@ impl RaceGlobals {
             fx: None,
             hz60: Hz60::default(),
             objects: crate::objects::ObjectState::read(m),
+            hud_gauge_rgb: None,
             lap_record: m.i32(0x800E_0190u32.wrapping_add((8 * m.i8(0x800B_0E32) as i32 + 0x20 * m.i8(0x800B_0E38) as i32) as u32)),
         }
     }

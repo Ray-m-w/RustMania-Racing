@@ -330,6 +330,11 @@ pub struct ItemHud {
     pub karts: Vec<MapKart>,
     /// DAT_800B0E28: human players.
     pub players: usize,
+    /// DAT_800B07E2: race option bits (8: the damage race, DISCO).
+    pub race_flags: u16,
+    /// The colour FUN_80049FD8 drew the damage gauge's heart with (three
+    /// random bytes while +0x43E is 0x321..0x3E7); None = 0x80.
+    pub gauge_rgb: Option<[u8; 3]>,
 }
 
 /// Kart record offsets the item HUD reads.
@@ -683,6 +688,24 @@ fn marker(t: &ItemTables, x: i32, y: i32, heading: i32, rgb: [u8; 3], a: i32, b:
     vis.then_some(Prim::F3 { v, rgb })
 }
 
+/// FUN_80049FD8(x, y, kart, 1): the damage gauge of the race flag 8 (DISCO)
+/// - the white fill (what is left: 20 - damage / 50 rows from the bottom),
+/// the heart (semi-transparent B/2 + F/2, flickering with three random
+/// bytes from 0x321 damage) and its outline; texture slot 0x15, CLUT + 3.
+/// Damage = kart +0x43E. [CODE 80049fd8, 8004f688]
+pub fn damage_gauge(s: &ItemHud, x: i32, y: i32) -> Vec<Prim> {
+    let d = le::i16(&s.kart, 0x43E) as i32;
+    let rgb = s.gauge_rgb.unwrap_or([0x80; 3]);
+    let fill = (0x14 - d / 0x32) as i16 as i32;
+    let mut out = Vec::new();
+    if fill > 0 {
+        out.push(Prim::Sprt(sprt(x - 0xD, y - (fill - 10), 0xE2, (0x40 - fill) as u8, 0x1A, fill, [0x80; 3], 0x15, 3, 0x60)));
+    }
+    out.push(Prim::Sprt(sprt(x - 0xD, y - 10, 0xE2, 0x2C, 0x1A, 0x14, rgb, 0x15, 3, 0)));
+    out.push(Prim::Sprt(sprt(x - 0x11, y - 0xC, 0xC0, 0x28, 0x22, 0x18, [0x80; 3], 0x15, 3, 0x60)));
+    out
+}
+
 /// The whole 1-player race HUD in the game's add order (FUN_80051698 ->
 /// FUN_8004f688 for the player, then the minimap; the timer FUN_80050b2c
 /// last): the minimal HUD of `HudTables::layout` with the item parts
@@ -711,6 +734,10 @@ pub fn race_hud(ht: &HudTables, t: &ItemTables, st: &crate::hud::HudState, s: &I
     out.extend(head);
     out.extend(p.weapons);
     out.extend(lap);
+    // race flag 8: the damage gauge after "LAP n/m" (FUN_8004F688 case 1)
+    if s.race_flags & 8 != 0 {
+        out.extend(damage_gauge(s, 0x30, 0xB4));
+    }
     out.extend(p.meter);
     out.extend(minimap(t, s));
     out.extend(timer);

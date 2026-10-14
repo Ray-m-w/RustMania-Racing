@@ -533,4 +533,29 @@ Known differences (not one-for-one):
   (FUN_8005E38C cases), falling weather and knocked-down scenery are not
   drawn yet (render-ledger).
 - AI stuck spots: a rare AI kart jumps in place against a wall (NEW_YORK,
-  HAPPY, seed dependent; the game's AI has no recovery either) [INFER].
+  HAPPY, seed dependent). Not a difference: the game does the same at the
+  same spots [ORACLE] (track S below).
+
+## Session 6 (track S): course simulation gaps
+### AI stuck spots (NEW_YORK, HAPPY) [ORACLE][CODE]
+`mr-survey --seed N` (hex) over 0x10..0x260 found the stuck episodes
+(`MR_STUCK=1` prints where, `MR_TRACEK=slot:t0-t1` traces a kart):
+- NEW_YORK A, TER (-251, -149, -4715), seg 35/6 (seeds 0x66 k3, 0x160 k5,
+  30 Hz): an AI kart that leaves seg 68 wide at the 76 -> 68 corner is put on
+  seg 35 by FUN_8009004C (nearer), drives along the raised surface-14 ledge
+  south of seg 35 into a corner; position held by the walls, it jumps at
+  random (speed < 0x180) and never turns away. Stuck to the end of the race.
+- NEW_YORK B, TER (-6622, -150, -4459), seg 76/1 (seed 0x129 k4, 0x97 k2):
+  same ledge after the seg 79 jump; escapes after a while by a random jump.
+- HAPPY C, TER (3865, 0, -7685), seg 17/7 (seed 0x169 k1, 60 Hz): wedged
+  below the path's step (aim 1250 units up), jumping.
+Oracle: each kart poked onto its spot at the grid restore (A and B: slot 9,
+C: slot 10; tools/oracle/capture_poked.py; analysis/oracle/stuck/NEW_YORK_AB,
+HAPPY_C): the game's kart stays at A and C for the whole 1400 VB (~33 s
+after GO) and leaves B after ~13 s, as in the port. `mr-course-check --dir
+analysis/oracle/stuck/NEW_YORK_AB NEW_YORK` (and HAPPY_C HAPPY): the port
+from the same memory is exact, free run and teacher forced, every kart,
+every frame. The code has no recovery for an AI kart: the only ways off a
+spot are the AI's random jump (FUN_80090914) and a full-meter special move
+(FUN_800913F4); +0x4C7 hand-over and the 10-minute limit concern humans.
+So the port keeps the game's behaviour (no recovery added).

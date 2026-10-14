@@ -80,6 +80,16 @@ fn run(info: &CourseInfo, hz: u8, seed: Option<u32>) -> Report {
             break;
         }
         let karts: Vec<&mr_sim::KartState> = std::iter::once(&s.kart).chain(s.others.iter().map(|o| &o.kart)).collect();
+        if let Ok(spec) = std::env::var("MR_TRACEK") {
+            // slot:first_tick-last_tick
+            let (sl, r) = spec.split_once(':').unwrap();
+            let (a, b) = r.split_once('-').unwrap();
+            let (sl, a, b): (usize, u64, u64) = (sl.parse().unwrap(), a.parse().unwrap(), b.parse().unwrap());
+            if (a..=b).contains(&s.ticks) {
+                let k = &karts[sl];
+                eprintln!("t{} k{sl}: W ({}, {}, {}) pyr ({}, {}, {}) face {:08X} TER ({}, {}, {}) v ({}, {}, {}) hdg {} seg {}/{} aim ({}, {}, {}) btn {:04X} fwd {} side {} gc {} jump {} wall {} wf {} surf {} float {} est {} e4 {}", s.ticks, k.x, k.y, k.z, k.pitch, k.heading, k.roll, k.floor_face_ptr, k.x >> 5, k.y >> 5, k.z >> 5, k.vx, k.vy, k.vz, k.heading, k.path_seg, k.path_pt, k.ai_tx, k.ai_ty, k.ai_tz, k.buttons, k.fwd_speed, k.side_speed, k.ground_contact, k.jump_state, k.wall_hit, k.wall_flag, k.surface, k.float_state, k.speed_est, k.object_e4);
+            }
+        }
         let racing = s.countdown() == 0;
         for (i, k) in karts.iter().enumerate() {
             if !racing || k.finished != 0 {
@@ -100,6 +110,9 @@ fn run(info: &CourseInfo, hz: u8, seed: Option<u32>) -> Report {
                             match r.stuck.iter().rposition(|x| x.0 == i && now - x.2 <= STUCK_SECONDS) {
                                 Some(e) => stuck_since[i] = Some(e as u64),
                                 None => {
+                                    if std::env::var("MR_STUCK").is_ok() {
+                                        eprintln!("stuck k{i} at {now:.1}s: pos ({}, {}, {}) TER ({}, {}, {}) hdg {} seg {}/{} cp {} lap {} btn {:04X} fwd {} gc {} jump {} wall {} flags {:04X} pause {:02X} surf {}", k.x, k.y, k.z, k.x >> 5, k.y >> 5, k.z >> 5, k.heading, k.path_seg, k.path_pt, k.course_point, k.lap, k.buttons, k.fwd_speed, k.ground_contact, k.jump_state, k.wall_hit, k.flags, k.pause_bits, k.surface);
+                                    }
                                     r.stuck.push((i, now, now));
                                     stuck_since[i] = Some((r.stuck.len() - 1) as u64);
                                 }

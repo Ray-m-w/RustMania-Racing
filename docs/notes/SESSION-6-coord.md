@@ -136,3 +136,16 @@ world-6 unlock bytes poked (save shows "GAME STATUS CHANGED"); worlds 7/8 need
 0x800B0F12 held during the menu route (not in the world list). VOLCANO's course
 menu offers only 1/2 PLAYER BATTLE + CHICKEN CHASE (no race; screenshot in
 O's log): not captured, nor HOUSE / WHATEVER (cup 8, same type per P's table).
+### T
+(2026-10-14, T) Commit dcc785a: the title screen is the port's first screen
+(port/crates/mr-bevy/src/title.rs, Bevy state `title::Screen` Title -> Race).
+While it shows: the race's cameras are off (HudCamera too, so P's
+`race_visible` keeps the pick-list closed) and Time<Virtual> is paused; START
+fades out, waits for START's release, unpauses and turns the race cameras back
+on; P's pick-list then opens as on a plain start. `--skip-title` (settings row
+`skip_title`) and every tool flag (--oracle-grid, --route, --replay,
+--replay-capture, --shot, --fx-shots, --latency-log, --autopilot,
+--record-route, --trace-out, --ghost) start in the race; P's relaunch already
+passes --skip-title. audio.rs: direct_music runs only on the race screen.
+Oracle: the title is reached from slot 1 by DOWN x4 + CROSS (BACK TO MAIN
+MENU) -> course 0x1E, mode 0x10 at VB ~406; slot 11 not used.

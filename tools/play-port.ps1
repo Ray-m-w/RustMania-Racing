@@ -7,8 +7,8 @@
 #   .\tools\play-port.ps1 -Record    # solo lap aligned to the oracle savestate,
 #                                    # recorded for tools\compare-drive.ps1
 #
-#   .	ools\play-port.ps1 -Hz30      # the game's 30 Hz logic (60 Hz is the default)
-#   .	ools\play-port.ps1 --msaa 8   # any other mr-bevy option or --set key=value
+#   .\tools\play-port.ps1 -Hz30      # the game's 30 Hz logic (60 Hz is the default)
+#   .\tools\play-port.ps1 --msaa 8   # any other mr-bevy option or --set key=value
 #
 # Controls (keyboard): arrows steer, X accelerate (CROSS), S brake/reverse
 # (CIRCLE), Z jump (SQUARE), A = TRIANGLE (start game), Enter = START. Gamepad: south = accelerate, east = brake, west =

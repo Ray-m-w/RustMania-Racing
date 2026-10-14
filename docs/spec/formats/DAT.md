@@ -199,10 +199,30 @@ Only the layer-0 renderer (FUN_80012390/80012620 family) does this; layer 1
   subdivided 2x2 (UVs 0x00/0x1E-0x1F/0x3F inside a 64-texel tile, colours
   interpolated); the texel mapping is the stored one.
 
-### Kind 2/3 "parts" models [CODE 8002e13c] (none on DOCK; kept raw)
-i32 n; n x 12 bytes (three i32 per part [INFER: pivot]); then per part i32 k
-and k x 44-byte records [INFER: prebuilt primitives]. FUN_8002e13c counts the
-records. Present on other tracks (e.g. STUNT/MOUNTAIN: 280).
+### Kind 2/3 "parts" models [CODE 8002e13c, 80028010, 8002b7f8, 8002c328] [GPU] (none on DOCK)
+i32 n; n x 12 bytes (three i32 per part: the pivot, object units); then per
+part i32 k and k x 44-byte records. FUN_8002e13c counts the records. Race
+courses with them: HAPPY 73, PARK 33, GRAVE 31, LONDON 23, SPEEDWAY 23, BOG
+11, CAPE 9, GHOST 8, NEW_YORK 4, GALLERY 1, ISLAND 1 (also STUNT/MOUNTAIN).
+Record: +0 four (x, y) i16 offsets (cyclic order; x right, y down, view
+units), +16 i16 dz, +18 u16 tex (bits 0-4 texture slot, 5-6 added to the
+tpage ABR bits; 0x60 = opaque), +20 four (u, v), +28 four colours (r, g, b,
+code). Drawn as a GT4, GPU order 0, 1, 3, 2; CLUT = slot CLUT + (u0 >> 6) +
+4 (v0 >> 6) unless the slot has a fixed CLUT.
+- Kind 2 (FUN_80028010 case 2 -> FUN_8002b7f8(model, camera * object
+  rotation, the object's view position, 4096, course bias + 16 * b_lo)):
+  each part's pivot goes to view space (LLM = camera * object, BK = the
+  object's view position); the GTE rotation is diag(0x1999, 0x1000, 0), so
+  a record's offsets lie in the screen plane (x * 1.6 for the 512-pixel
+  screen) around the pivot, dz added to its depth. Case 0xA (scaled
+  descriptor): diag(1.6 sx, sy) / 4096, model at +0x1C.
+- Kind 3 (case 3 -> FUN_8002c328): rotation camera * Ry(-DAT_800b0f0a) with
+  the z column zeroed: the quad stays upright and turns with the camera's
+  heading; near records (OTZ below the bias argument's / 4 or / 16) are
+  subdivided by DivideGT4 (after an NCLIP test that permutes the corners).
+- Sorted at T[OTZ + bias] like the meshes; drawn only for 0 < OTZ < cd4 +
+  4 bias (kind 3: -0x40 <).
+- Port: `PartsModel::quads`, mr-bevy parts.rs (Session 6 visual check).
 
 ### Visibility zone record [CODE 8002e3dc, 8005d908, 8005dc14, 80010000] [RAM]
 | off | type | meaning |

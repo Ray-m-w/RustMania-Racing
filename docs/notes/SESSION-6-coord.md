@@ -169,3 +169,14 @@ is where it hit; `objects.hidden_slots` / `group_enabled` unchanged in
 meaning. For P: AI stuck spots on NEW_YORK / HAPPY are the game's own
 (oracle pokes), no recovery needed.
 
+### R
+(2026-10-14, R) Commit 3a2ef9b: the courses' moving scenery (mr-sim
+scenery.rs = 0x800D8630 animated objects; mr-bevy movers.rs), weather drops,
+FUN_8007A9DC VRAM scrolls (animtex.rs), projectile shadows
+(kartfx::projectile_decals), DISCO damage gauge (hud_items::damage_gauge;
+RaceGlobals::hud_gauge_rgb). The full view no longer drops special slots
+(only the pickups 0x20..). Checker: `cargo run --release --offline -p mr-sim
+--bin mr-scenery -- [NAME] [--slots]`. Dev: MRM_LOOK, MRM_NO_SCROLL,
+MRM_MOVERS_DEBUG. For whoever takes it: DISCO's palette differs from the
+oracle (load-time CLUTs, course flag 0x10 path); GLACIER's port frame lacks
+the minimap.

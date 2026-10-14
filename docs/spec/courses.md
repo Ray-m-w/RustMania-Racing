@@ -155,3 +155,44 @@ nor the TER are captured). Particles compare without the render pass's
 on-screen bit (flags 0x200). All 18 courses run exact to the end of the
 capture, random state included; the two teacher-forced random-state frames
 left are weather spawns (GRAVE 273, BOG 1056).
+
+## Render notes (Session 6, track R)
+What the courses move or animate and how mr-bevy draws it (render-ledger.md
+has the rules; code: mr-sim scenery.rs, mr-bevy movers.rs, animtex.rs,
+kartfx.rs, hud_items.rs).
+- The DAT special slots outside the pickups (0x20 + the chunk 0x0C items)
+  are course scenery: before Session 6 R the full view left all of them out
+  (breakables, spinners, lifts' pieces, CAPE's slots 2..0x13 etc. were
+  invisible); now each is drawn at its run-time pose.
+- Animated objects 0x800D8630 (FUN_80084490 / FUN_800859EC; `mr-scenery`
+  checks structure, phases and every moved slot's matrix / origin against
+  the course captures' RAM):
+
+| course | moving / animated | evidence |
+|---|---|---|
+| BOG | lifts 0, 1 move slots 1..3 / 4..6 (and TER groups 0, 1); rain | 6 slots exact; rain streaks vs end.png |
+| GHOST | 10 breakable groups (slots 1..10) hidden when hit | slots drawn (grid sbs) |
+| HAPPY | lift 0 moves slot 0x1F; slots 0x50..0x53 pulse in x (frame % 48); 4 breakable groups (slots 1..10) | 5 slots exact |
+| GALLERY | 15 breakable slots (group 0 takes 1); VRAM scroll slot 5 (0x40, 0x40) 8 x 64 | - |
+| PARK | - | - |
+| NEW_YORK | 2 breakables; VRAM scroll slot 5 (0xC0, 0xC0) 64 x 64 | - |
+| LONDON | snow; 13 breakables; jets' smoke (particles) | snow vs end.png |
+| GRAVE | snow; 2 breakables (group 2 is TER only) | - |
+| DOCK | (none; its record names slot 1 with no lift) | - |
+| ISLAND | lift 0 moves slots 1..4 (and groups 0, 1); 7 breakables; VRAM scroll slot 5 (0xC0, 0xC0) down | 4 slots exact |
+| BASE | turntable disc slots 1, 2 (turntable 0's spin); fans slots 3 / 4 spinning up / down with jets 1 / 0; slots 5 / 6 turned by the global spin 0x800A889C; 4 breakables | 6 slots exact, load phases exact |
+| CAPE | slot 1 (layer 1) spins +-5 (sign from a random byte); jets' smoke | 1 slot exact |
+| OVAL | 6 spinners (slots 1..6) at the turntables' spins | 6 slots exact, load phases exact |
+| ROCK | lifts 0..2 move slots 1..3 (scenery only) | 3 slots exact |
+| DISCO | 12 spotlight spinners (slots 1..12; speed / sign from two random bytes each), lifts 0..6 move slots 0xD..0x15 (0xE a layer-1 stand-in) and TER groups 0..6, slot 0x16 at turntable 0's spin; two VRAM scrolls; damage gauge (race flag 8) | 18 slots exact, load phases exact; gauge vs end.png |
+| SPEEDWAY, RALLY | - | - |
+| GLACIER | snow; jets' smoke | snow vs end.png |
+
+- Weather drops, projectile shadows, VRAM scrolls, damage gauge: see the
+  render ledger. Side by sides: analysis/s6/courses/sbs_NAME_{grid,end}.png
+  (oracle left, port right; the port's free run is not the oracle's, so
+  karts / camera differ), look_*/pair_* (dev MRM_LOOK views two ticks apart).
+- Seen, not R's scope: DISCO's palette is bluer / purpler in the oracle at
+  the grid and at VB 3400 (static, not an animation: likely the load-time
+  CLUTs, FUN_800441D8 / FUN_80045F1C with course flag 0x10); GLACIER's port
+  frame has no minimap where the oracle draws one.

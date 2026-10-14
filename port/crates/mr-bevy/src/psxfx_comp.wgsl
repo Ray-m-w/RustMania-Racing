@@ -28,7 +28,16 @@ fn comp_fs(in: CompOut) -> @location(0) vec4<f32> {
     let t = textureLoad(fx_src, vec2<i32>(floor(in.pos.xy)), 0);
 #ifdef LINEAR_SRC
     // fx_blend = linear: the working copy is sRGB too (already decoded)
-    return t;
+    return vec4<f32>(t.rgb, 1.0);
 #endif
-    return vec4<f32>(srgb_to_linear(t.r), srgb_to_linear(t.g), srgb_to_linear(t.b), t.a);
+    var c = t.rgb;
+    if (t.a < 0.5) {
+        // written by the pass: the GPU's 15-bit store (truncate to 5 bits),
+        // on the display lattice floor(c5 * 255 / 31) (bytes x: c5 =
+        // floor((x + 1) * 31 / 255) maps every lattice byte to itself)
+        let x = round(c * 255.0);
+        let c5 = floor((x + 1.0) * 31.0 / 255.0);
+        c = floor(c5 * 255.0 / 31.0) / 255.0;
+    }
+    return vec4<f32>(srgb_to_linear(c.r), srgb_to_linear(c.g), srgb_to_linear(c.b), 1.0);
 }

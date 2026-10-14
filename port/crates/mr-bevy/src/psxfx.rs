@@ -16,8 +16,15 @@
 //!    texel 0x0000 is transparent;
 //! 3. the result is drawn back over the main texture (decoded in the shader,
 //!    re-encoded by the sRGB store: the same bytes), all MSAA samples.
-//! Remaining error: 8-bit instead of 5-bit channels (no 15-bit quantisation,
-//! no dithering) and the 5->8 bit texel expansion (c * 255 / 31).
+//! 15-bit store (Session 6): every pixel the pass wrote is marked (alpha 0)
+//! and the composite truncates it to 5 bits per channel, as the GPU stores
+//! a blended / modulated result in the 15-bit framebuffer (`fx_blend = psx`
+//! only). Values are kept on the display lattice c * 255 / 31 (vram::rgba;
+//! the PS1's DAC shows 31 as full scale). Not modelled: dithering (the GPU's
+//! 4x4 offsets before the truncation change the mean by < 0.1 of a 5-bit
+//! step; at 1280x960+ the pattern would be a fine-grain noise), and the
+//! scenery drawn by the main pass stays 8-bit (bilinear / lighting
+//! options). The frame clear is quantised where it is set (`psx_fill`).
 //!
 //! Occlusion (Session 5, "sprite depth"): every fragment is depth-tested
 //! against the scene's depth buffer, except where the occluder is an
@@ -263,6 +270,14 @@ fn page_image(n: u32, data: Vec<u8>) -> Image {
     );
     img.sampler = ImageSampler::nearest();
     img
+}
+
+/// A GP0 fill colour (0x02, e.g. the race frame's clear) as the 15-bit
+/// framebuffer holds it: 8 -> 5 bits per channel (truncated), shown on the
+/// display lattice c * 255 / 31. DOCK's (0, 19, 95) -> (0, 2, 11) -> (0, 16, 90).
+pub fn psx_fill(rgb: [u8; 3]) -> Color {
+    let q = |c: u8| ((c as u32 >> 3) * 255 / 31) as u8;
+    Color::srgb_u8(q(rgb[0]), q(rgb[1]), q(rgb[2]))
 }
 
 /// Options (Settings rows under "F effects").
@@ -514,9 +529,11 @@ fn init_pipes(mut commands: Commands, shaders: Res<FxShaders>) {
 
 fn blend_state(pipe: u8) -> Option<BlendState> {
     let c = |src, dst, op| BlendComponent { src_factor: src, dst_factor: dst, operation: op };
-    let keep_alpha = c(BlendFactor::Zero, BlendFactor::One, BlendOperation::Add);
+    // alpha 0 marks the pixels the pass wrote (the frame copy's alpha is 1):
+    // the composite stores them as the GPU does, 5 bits per channel
+    let mark = c(BlendFactor::Zero, BlendFactor::Zero, BlendOperation::Add);
     let color = match pipe {
-        0 => return None,
+        0 => c(BlendFactor::One, BlendFactor::Zero, BlendOperation::Add),
         // B/2 + F/2 (alpha 0.5 from the shader)
         1 => c(BlendFactor::SrcAlpha, BlendFactor::OneMinusSrcAlpha, BlendOperation::Add),
         // B + F, B + F/4 (F scaled in the shader)
@@ -525,7 +542,7 @@ fn blend_state(pipe: u8) -> Option<BlendState> {
         3 => c(BlendFactor::One, BlendFactor::One, BlendOperation::ReverseSubtract),
         _ => return None,
     };
-    Some(BlendState { color, alpha: keep_alpha })
+    Some(BlendState { color, alpha: mark })
 }
 
 fn fx_descriptor(p: &FxPipes, pipe: u8, ms: bool, format: TextureFormat) -> RenderPipelineDescriptor {
@@ -550,7 +567,7 @@ fn fx_descriptor(p: &FxPipes, pipe: u8, ms: bool, format: TextureFormat) -> Rend
             targets: vec![Some(ColorTargetState {
                 format,
                 blend: blend_state(pipe),
-                write_mask: if pipe == 0 { ColorWrites::COLOR } else { ColorWrites::ALL },
+                write_mask: ColorWrites::ALL,
             })],
         }),
         primitive: PrimitiveState { cull_mode: None, ..default() },

@@ -441,7 +441,8 @@ fn main() {
         // The game's frame clear on DOCK: GP0 fill 0x025F1300 = rgb (0, 19, 95)
         // at the start of every race frame (oracle GP0 capture, VB 2500); seen
         // wherever no polygon covers the screen, under the additive water.
-        .insert_resource(ClearColor(Color::srgb_u8(scene::DOCK_CLEAR[0], scene::DOCK_CLEAR[1], scene::DOCK_CLEAR[2])))
+        // Stored 15-bit like any fill: (0, 2, 11) -> (0, 16, 90) on screen.
+        .insert_resource(ClearColor(psxfx::psx_fill(scene::DOCK_CLEAR)))
         .insert_resource(Player { driver, pose: Pose::default(), prev: Pose::default(), tick: 0, buttons: 0, kart: None, prev_kart: None })
         .insert_resource(ghost::Ghost::new(ghost))
         .add_systems(Startup, (scene::setup, setup_camera))

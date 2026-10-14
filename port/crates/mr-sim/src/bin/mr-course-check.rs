@@ -114,6 +114,27 @@ pub fn session_at_load(disc: &mut mr_disc::Disc, info: &CourseInfo, cap: &Captur
     let po = mr_sim::objects::ObjectState::read(&pre);
     s.globals.objects.lifts = po.lifts;
     s.globals.objects.lift_offsets = po.lift_offsets;
+    // The captures do not hold the lifts (0x800DD708): `pre` has the menu
+    // state's (ram0). The course menu keeps running FUN_800859EC, so the
+    // lifts step once per menu frame (the frame counter 0x800B0D90 advances
+    // by dt 0x800B0AEC) up to the race load (track S, oracle
+    // analysis/oracle/stuck/DISCO_lifts: lift 0's timer runs down by 2 every
+    // 2 VBlanks in the menu and it starts down before the race load).
+    if std::env::var("MR_NOMENULIFTS").is_err() && !s.globals.objects.lifts.is_empty() {
+        let objs = s.world.course.objects.lift_objects.clone();
+        let dt0 = s.globals.dt;
+        let mut last = cap.mem_at(cap.vbs[0], None).i32(0x800B_0D90);
+        for &v in cap.vbs.iter().filter(|&&v| v > cap.vbs[0] && v < load) {
+            let mv = cap.mem_at(v, None);
+            let f = mv.i32(0x800B_0D90);
+            if f != last {
+                s.globals.dt = mv.i32(0x800B_0AEC);
+                mr_sim::lifts::frame(&mut s.globals, &objs);
+                last = f;
+            }
+        }
+        s.globals.dt = dt0;
+    }
     s.sync_ter();
     // The weather runs on between races too (drops in flight, next slot).
     if s.globals.objects.weather.is_some() {
@@ -398,7 +419,39 @@ fn teacher_forced(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_f
     let mut tf_err = None;
     for j in 1..n {
         let mprev = cap.mem_at(ends[j - 1], None);
+        // The lifts are not in the course captures: keep the session's own
+        // (stepped from the menu state, session_at_load) over the reload.
+        // Nor is the TER: the breakable groups' states read from it are the
+        // menu's; keep the session's own too.
+        let keep_lifts = cap.read(ends[j - 1], 0x800D_D708, 4).is_none().then(|| (s.globals.objects.lifts.clone(), s.globals.objects.lift_offsets.clone()));
+        let keep_groups = cap.read(ends[j - 1], mprev.u32(0x800B_0FA4), 4).is_none().then(|| (s.globals.objects.group_enabled.clone(), s.globals.objects.hidden_slots.clone()));
         s.load_mem(&mprev);
+        if let Some((l, o)) = keep_lifts {
+            s.globals.objects.lifts = l;
+            s.globals.objects.lift_offsets = o;
+        }
+        if let Some((g, h)) = keep_groups {
+            s.globals.objects.group_enabled = g;
+            s.globals.objects.hidden_slots = h;
+        }
+        s.sync_ter();
+        if let Some((fj, slot)) = std::env::var("MR_WALLDBG").ok().and_then(|v| { let (a, b) = v.split_once(':')?; Some((a.parse::<usize>().ok()?, b.parse::<usize>().ok()?)) }) {
+            if fj == j {
+                // Analysis: the walls near kart `slot` before frame j.
+                let k = s.kart_records().find(|r| r.0 == slot).map(|r| KartState::from_record(r.3)).unwrap();
+                let (kx, ky, kz) = (k.x >> 5, k.y >> 5, k.z >> 5);
+                println!("      frame {j} k{slot}: TER ({kx}, {ky}, {kz}) v ({}, {}, {}) hdg {} probe {}..{}", k.vx, k.vy, k.vz, k.heading, k.probe_top, k.probe_bottom);
+                let t = &s.world.ter;
+                for (wi, wl) in t.walls.iter().enumerate() {
+                    let (a, b) = (t.wall_points[wl.p0 as usize], t.wall_points[wl.p1 as usize]);
+                    let near = |p: &mr_assets::ter::WallPoint| (p.x - kx).abs() < 1200 && (p.z - kz).abs() < 1200;
+                    if near(&a) || near(&b) {
+                        println!("        wall {wi} grp {} dis {} p0 {:?} p1 {:?}", mr_sim::breakables::wall_group(t, wi), wl.disabled, a, b);
+                    }
+                }
+                println!("        lifts {:?} offsets {:?} applied {:?}", s.globals.objects.lifts, s.globals.objects.lift_offsets, s.world.ter_applied);
+            }
+        }
         let m = cap.mem_at(ends[j], None);
         if let Err(e) = s.tick_dt(m.u16(0x800B_0CE8), m.i32(0x800B_0AEC)) {
             tf_err = Some((j, e.to_string()));

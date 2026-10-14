@@ -525,8 +525,8 @@ Known differences (not one-for-one):
   No race course has hooks.
 - Weather: the drops' render-side colours / sizes are kept for drawing; the
   shadow (FUN_800861F0) of hooks is not.
-- DISCO: one teacher-forced frame (387, kart 5) hits a wall the port misses
-  (near a lift); free runs reach it later anyway.
+- DISCO: one teacher-forced frame (387, kart 5) hit a wall the port
+  missed: the lift was not where the checker had it (resolved, track S).
 - Free runs (mr-course-check) part from the oracle 90..850 frames after GO:
   first in hidden state (particle / spark lists, then the random pointer by
   1-2 bytes), as on DOCK (456).
@@ -579,7 +579,8 @@ spark, projectile and jet field by field. What it found, in order:
 Result: BASE, BOG, CAPE, GALLERY, GHOST, GLACIER, GRAVE, HAPPY, ISLAND,
 LONDON, NEW_YORK, OVAL, PARK, RALLY, ROCK, SPEEDWAY and DOCK (start_probe)
 exact, every kart, to the end of the capture (1603-1635 frames; DOCK
-834). DISCO parts at 387 (k5's wall contact, below).
+834). DISCO parted at 387 (k5's wall contact; resolved below: all 18
+exact).
 ### Breakable floor / ceiling hits [CODE][ORACLE]
 FUN_80069648's ground step: a projectile landing on a floor face (not on
 the floor the frame before) or pushed under a FACE_ALT face (not under it
@@ -618,3 +619,20 @@ state that runs on through the menus: the turntable phases (render side)
 and the pickups' grow / bob animation (FUN_8007BBF0: scale, scale rate, vy;
 a fresh course load starts them at 0, which SPEEDWAY's free run showed
 matters). All 18 free runs unchanged with the model (17 exact to the end).
+### DISCO frame 387: the lifts run on through the course menu [ORACLE]
+Kart 5 crossed the edge of lift 0's platform (walls 248 / 259, TER group 0)
+at frame 387; the game counted the wall, the port did not (the kart 82 TER
+units above the walls' top as the port had them). The course captures do
+not hold the lift records (0x800DD708) or the TER, so the checker took the
+lifts from ram0 (the course menu). A capture from DISCO's course menu with
+the lift region (analysis/oracle/stuck/DISCO_lifts; scratch slot 11) shows
+the menu running FUN_800859EC: lift 0's wait timer drops by 2 every 2
+VBlanks (the menu's frame counter 0x800B0D90 steps by dt 2 too) and the
+lift starts down just before the race load. session_at_load now steps the
+lifts once per menu frame (each change of 0x800B0D90, dt 0x800B0AEC) from
+the first captured VBlank to the race load; teacher forcing keeps the
+session's own lift and breakable-group states across each reload. DISCO:
+free run and teacher forced exact to the end (1635 frames); the other lift
+courses (BOG, ISLAND, HAPPY, ROCK) unchanged (exact). Not a port change:
+the session's lifts were right, the checker's starting state was not.
+

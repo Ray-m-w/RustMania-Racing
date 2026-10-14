@@ -122,13 +122,13 @@ particles / projectiles in flight).
 | course | race load | teacher forced (motion, every frame) | random state (tf frames off) | free run: first kart divergence (frame; GO = ~239) | before track S |
 |---|---|---|---|---|---|
 | BASE | exact | exact | 0 | exact to the end (1632) | 774 |
-| BOG | exact | exact | 1 | exact to the end (1603) | 395 |
+| BOG | exact | exact | 1 (weather) | exact to the end (1603) | 395 |
 | CAPE | exact | exact | 0 | exact to the end (1631) | 537 |
-| DISCO | exact | exact but k5 at 387 (wall contact, 1 frame) | 1 | 387 (k5, the teacher-forced frame; others follow) | 328 |
+| DISCO | exact | exact | 0 | exact to the end (1635) | 328 |
 | GALLERY | exact | exact | 0 | exact to the end (1630) | 1003 |
 | GHOST | exact | exact | 0 | exact to the end (1631) | 689 |
 | GLACIER | exact | exact | 0 | exact to the end (1635) | 632 |
-| GRAVE | exact | exact | 10 (weather; TER not captured after a break) | exact to the end (1632) | 556 |
+| GRAVE | exact | exact | 1 (weather) | exact to the end (1632) | 556 |
 | HAPPY | exact | exact | 0 | exact to the end (1633) | 1092 |
 | ISLAND | exact | exact | 0 | exact to the end (1634) | 726 |
 | LONDON | exact | exact | 0 | exact to the end (1629) | 529 |
@@ -146,9 +146,12 @@ found the free runs' first hidden difference was the projectile ring slot
 checker now sets it from RAM) and, on GRAVE / LONDON / GALLERY, a
 projectile breaking scenery: the game skips that projectile's ground step
 and kart hits and draws one random byte for the owner's +0x4DD (ported).
-Particles compare without the render pass's on-screen bit (flags 0x200).
-17 of 18 courses now run exact to the end of the capture; DISCO parts at
-frame 387 (k5's wall contact, the one teacher-forced frame). The rare
-teacher-forced random-state frames are weather spawns (GRAVE 273, BOG) and
-GRAVE's gate after a break (the captures do not hold the TER, so a reload
-re-enables the broken group).
+DISCO's frame 387 was the lifts: the captures do not hold them, and the
+course menu keeps stepping them (one step per menu frame, dt 2) between the
+menu state and the race load; the checker now runs them on through those
+frames (oracle: analysis/oracle/stuck/DISCO_lifts) and keeps its own lift
+and breakable-group states over teacher-forced reloads (neither the lifts
+nor the TER are captured). Particles compare without the render pass's
+on-screen bit (flags 0x200). All 18 courses run exact to the end of the
+capture, random state included; the two teacher-forced random-state frames
+left are weather spawns (GRAVE 273, BOG 1056).

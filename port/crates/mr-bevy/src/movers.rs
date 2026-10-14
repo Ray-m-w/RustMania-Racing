@@ -216,7 +216,7 @@ impl Plugin for MoversPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SceneryShown>()
             .add_systems(Update, place.after(crate::select_objects).after(crate::effects::session_source).before(crate::shot))
-            .add_systems(Update, weather.after(crate::effects::session_source).before(crate::effects::draw))
+            .add_systems(Update, weather.after(crate::effects::session_source).after(crate::effects::capture_source).before(crate::effects::draw))
             .add_systems(Update, look.after(crate::follow_camera).before(crate::follow_sky).before(crate::shot))
             .add_systems(Update, hide_dev.after(place).before(crate::shot))
             .add_systems(Update, decal_check);
@@ -374,9 +374,36 @@ fn decal_check(p: Res<crate::Player>, t: Option<Res<crate::effects::FxTables>>, 
 }
 
 /// FUN_8007E21C's weather loop: the drops into the effects frame.
-fn weather(shown: Res<SceneryShown>, p: Res<crate::Player>, t: Option<Res<crate::effects::FxTables>>, mut fx: ResMut<crate::effects::FxFrame>) {
-    let (Some(fr), Some(t)) = (shown.0.as_ref(), t) else { return };
-    if fr.drops.is_empty() {
+fn weather(
+    shown: Res<SceneryShown>,
+    p: Res<crate::Player>,
+    t: Option<Res<crate::effects::FxTables>>,
+    cap: Option<Res<crate::capture::CaptureReplay>>,
+    mut rows: Option<ResMut<crate::effects::CapRows>>,
+    mut fx: ResMut<crate::effects::FxFrame>,
+) {
+    let Some(t) = t else { return };
+    // `--replay-capture`: the 16 drops of the captured list 0x800D75D0
+    let captured = match (cap.as_ref(), rows.as_mut()) {
+        (Some(cap), Some(rows)) => rows.mem(cap.vb).map(|m| {
+            let flags = crate::courses::info().flags;
+            let drops = (0..16u32)
+                .map(|i| 0x800D_75D0 + 0x2C * i)
+                .filter(|&a| m.i16(a + 0x14) != -1)
+                .map(|a| DropView {
+                    pos: [m.i32(a), m.i32(a + 4), m.i32(a + 8)],
+                    speed: m.i32(a + 0x10),
+                    timer: m.i16(a + 0x14),
+                    size: [m.u8(a + 0x1A), m.u8(a + 0x1B)],
+                    rgb: [m.u8(a + 0x23), m.u8(a + 0x24), m.u8(a + 0x25)],
+                })
+                .collect();
+            SceneryFrame { snow: flags & 0x20 != 0, drops, ..Default::default() }
+        }),
+        _ => None,
+    };
+    let Some(fr) = captured.as_ref().or(shown.0.as_ref()) else { return };
+    if fr.drops.is_empty() || crate::courses::info().flags & 0x60 == 0 {
         return;
     }
     // the human camera's eye >> 5 (camera +0x34 / +0x3C)

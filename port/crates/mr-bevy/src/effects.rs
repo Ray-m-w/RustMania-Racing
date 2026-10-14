@@ -497,7 +497,7 @@ fn setup(mut commands: Commands) {
     }
 }
 
-fn capture_source(
+pub(crate) fn capture_source(
     cap: Option<Res<crate::capture::CaptureReplay>>,
     rows: Option<ResMut<CapRows>>,
     t: Option<Res<FxTables>>,

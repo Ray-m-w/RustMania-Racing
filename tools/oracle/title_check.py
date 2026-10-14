@@ -123,7 +123,8 @@ def karts(outdir, end_vb=1760, slot=11):
     src = os.path.join(gc.ROOT, "analysis", "states", "title", "title_vb430.pst")
     if os.path.exists(src):
         shutil.copyfile(src, gc.slot_path(slot))
-    regions = [(0x800C30A8, 3 * 0x504), (0x800B0700, 0x900), (0x800C4F40, 0x70), (0x80009010, 4)]
+    regions = [(0x800C30A8, 3 * 0x504), (0x800B0700, 0x900), (0x800C4F40, 0x70), (0x80009010, 4),
+               (0x800DDD90, 20 * 12), (0x800DD6C0, 40)]
     route = {"name": "title_idle", "slot": slot, "end_vb": end_vb, "steps": [[0, ""]]}
     with OracleLock():
         m = _run(route, outdir, slot=slot, regions=regions)

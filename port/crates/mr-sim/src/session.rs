@@ -1106,6 +1106,15 @@ impl Session {
                 fx.flats.skids(s, rec, g.dt, &w.tables);
             }
         }
+        // FUN_80091B8C (course 0x1E): the title's logo letters bounce off
+        // the karts (title.rs).
+        if g.game_state == crate::title::TITLE_COURSE as i32 {
+            if let Some(d) = w.title.as_deref() {
+                let karts: Vec<[i32; 2]> = ks.iter().map(|k| [k.x, k.z]).collect();
+                let shots: Vec<[i32; 2]> = g.items.projectiles.iter().filter(|p| p.active).map(|p| [p.pos[0], p.pos[2]]).collect();
+                d.letters.lock().unwrap().frame(&karts, &shots, g.dt);
+            }
+        }
         // FUN_8008650C: falling weather (weather.rs). 60 Hz mode: once per
         // pair with the pair's dt (spawn rate and draws as the game's).
         if g.objects.weather.is_some() && g.hz60.beat() {
@@ -1290,6 +1299,13 @@ impl Session {
             let d = crate::title::TitleData::load(disc, &world).map_err(SessionError::Disc)?;
             let chars: Vec<u8> = (0..n).map(|s| m.u8(crate::kart::KART_ARRAY + 0x504 * s as u32 + 0x4B2)).collect();
             *d.chars.lock().unwrap() = chars;
+            {
+                let mut l = d.letters.lock().unwrap();
+                for i in 0..l.height.len() {
+                    l.height[i] = m.i32(0x800D_DD94 + 12 * i as u32);
+                    l.speed[i] = m.i16(0x800D_D6C0 + 2 * i as u32);
+                }
+            }
             world.title = Some(Box::new(d));
         }
         let mut s = Session {

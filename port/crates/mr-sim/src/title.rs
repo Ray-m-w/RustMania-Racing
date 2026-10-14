@@ -54,6 +54,8 @@ pub struct TitleData {
     /// A kart re-created during this tick's kart loop: the session swaps
     /// its record and models in after the kart's update.
     pub pending: std::sync::Mutex<Option<Respawned>>,
+    /// The logo letters' bounce (FUN_80091B8C; `Letters`).
+    pub letters: std::sync::Mutex<Letters>,
 }
 
 impl Clone for TitleData {
@@ -64,6 +66,7 @@ impl Clone for TitleData {
             characters: self.characters.clone(),
             chars: std::sync::Mutex::new(self.chars.lock().unwrap().clone()),
             pending: std::sync::Mutex::new(self.pending.lock().unwrap().clone()),
+            letters: std::sync::Mutex::new(self.letters.lock().unwrap().clone()),
         }
     }
 }
@@ -89,7 +92,9 @@ impl TitleData {
             let path = ai::model_path(&w.exe, ai::addr::CHARACTER_PATHS, c, "MDL");
             characters.push(path.and_then(|p| mdl(disc, &p).map(|m| (m.parts[0].record.pivot, p))));
         }
-        Ok(TitleData { templates, vehicle_models, characters, chars: Default::default(), pending: Default::default() })
+        let dat = mr_assets::dat::Dat::parse(&disc.read(&w.info.file("DAT")).map_err(|e| format!("{e:?}"))?).map_err(|e| format!("{e:?}"))?;
+        let letters = Letters::load(&dat);
+        Ok(TitleData { templates, vehicle_models, characters, chars: Default::default(), pending: Default::default(), letters: std::sync::Mutex::new(letters) })
     }
 }
 
@@ -140,4 +145,80 @@ pub fn respawn(slot: usize, chars: &[u8], g: &mut RaceGlobals, w: &World, d: &Ti
     let b = crate::update::rng_next(g, w) as i32;
     crate::items::particle(g, [kart.drv_x, kart.ref_y, kart.drv_z], [kart.vx, kart.vy, kart.vz], 0, b << 4, 0, 0x11, [0x80; 3], 0x180, 0x180, 0x20);
     Respawned { record, kart, character: c, vehicle: v, pivot, vehicle_model: d.vehicle_models[v as usize].clone().unwrap_or_default(), character_model: cpath }
+}
+
+/// The logo's bouncing letters (FUN_80091AA8 at the load, FUN_80091B8C each
+/// title frame after the camera): 20 pairs of special slots 0x68 + 2i /
+/// 0x69 + 2i (letter and its shadow), each at its object's centre x, z
+/// (0x800DDD90 + 12i, world units) and a height 0x800DDD94 + 12i (0 at
+/// rest, negative = up) with a speed 0x800DD6C0 + 2i. A resting letter
+/// (height 0, speed < 0x40) jumps with -0x600 when a kart is within 0x4000
+/// (x) / 0x8000 (z) world units, else with -0x400 for a flying projectile;
+/// per VBlank the speed grows by 0x30 (at most 0x6000) and moves the
+/// height; landing (height > 0) puts it back at 0 and halves the speed,
+/// reversed. Objects follow at (x, height, z) >> 5 (FUN_8002DF88).
+/// [CODE 80091aa8, 80091b8c] [RAM: positions = the objects' centres]
+#[derive(Clone, Debug, Default)]
+pub struct Letters {
+    /// Per letter: (x, z) world units, height, speed.
+    pub xz: Vec<[i32; 2]>,
+    pub height: Vec<i32>,
+    pub speed: Vec<i16>,
+    /// The DAT objects of the two special slots (None: empty slot).
+    pub objects: Vec<[Option<usize>; 2]>,
+}
+
+impl Letters {
+    pub const N: usize = 20;
+    pub const FIRST_SLOT: usize = 0x68;
+
+    pub fn load(dat: &mr_assets::dat::Dat) -> Letters {
+        let mut l = Letters::default();
+        for i in 0..Self::N {
+            let o = |s: usize| dat.special.get(s).copied().flatten();
+            let pair = [o(Self::FIRST_SLOT + 2 * i), o(Self::FIRST_SLOT + 2 * i + 1)];
+            let xz = pair[0].map(|k| [dat.objects[k].centre[0] << 5, dat.objects[k].centre[2] << 5]).unwrap_or([0, 0]);
+            l.xz.push(xz);
+            l.height.push(0);
+            l.speed.push(0);
+            l.objects.push(pair);
+        }
+        l
+    }
+
+    /// FUN_80091B8C, mode 0x10 branch. `karts`: every kart's (x, z) world
+    /// units; `projectiles`: the flying ones' (x, z).
+    pub fn frame(&mut self, karts: &[[i32; 2]], projectiles: &[[i32; 2]], dt: i32) {
+        let near = |a: [i32; 2], b: [i32; 2]| a[0].wrapping_sub(b[0]).unsigned_abs() < 0x4000 && a[1].wrapping_sub(b[1]).unsigned_abs() < 0x8000;
+        for i in 0..self.xz.len() {
+            if self.height[i] == 0 && self.speed[i] < 0x40 {
+                if karts.iter().any(|&k| near(k, self.xz[i])) {
+                    self.speed[i] = -0x600;
+                } else if projectiles.iter().any(|&p| near(p, self.xz[i])) {
+                    self.speed[i] = 0xFC00u16 as i16;
+                }
+            }
+            for _ in 0..dt.max(1) {
+                let v = self.speed[i].wrapping_add(0x30);
+                self.speed[i] = if v > 0x6000 { 0x6000 } else { v };
+                let y = self.height[i].wrapping_add(self.speed[i] as i32);
+                self.height[i] = y;
+                if y > 0 {
+                    self.height[i] = 0;
+                    self.speed[i] = (-(self.speed[i] as i32) / 2) as i16;
+                }
+            }
+        }
+    }
+
+    /// The objects' y offsets now (DAT units, `height >> 5`), per object.
+    pub fn offsets(&self) -> Vec<(usize, i32)> {
+        let mut out = Vec::new();
+        for (i, pair) in self.objects.iter().enumerate() {
+            for o in pair.iter().flatten() {
+                out.push((*o, self.height[i] >> 5));
+            }
+        }
+        out
+    }
 }

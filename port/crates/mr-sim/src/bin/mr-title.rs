@@ -14,10 +14,102 @@ use mr_sim::oracle::{self, Capture};
 use mr_sim::session::Session;
 use mr_sim::world::{HeapLayout, World};
 
+/// The BIOS rand() seed at the oracle's title load (VB 369..405 after BACK
+/// TO MAIN MENU from slot 1; analysis/s6/title/seed) and the random pointer
+/// the race loader resets (RNG_START).
+const ORACLE_SEED: u32 = 0xF831_0C8E;
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let opt = |k: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).cloned();
     std::env::set_current_dir(oracle::repo_root()).unwrap();
+    // `--fresh N [--hz 30|60]`: a new title session (SessionConfig::title)
+    // run N ticks: no out-of-scope path, karts on the course.
+    if let Some(nt) = opt("--fresh").and_then(|v| v.parse::<usize>().ok()) {
+        let hz: u8 = opt("--hz").and_then(|v| v.parse().ok()).unwrap_or(30);
+        let mut disc = mr_disc::Disc::open_default().expect("open the disc");
+        for seed in [ORACLE_SEED, 1u32, 0x1234_5678, 0xDEAD_BEEF, 7] {
+            let rng = if seed == ORACLE_SEED { mr_sim::session::RNG_START } else { mr_sim::session::RNG_START + seed % 0x5DB };
+            let cfg = mr_sim::session::SessionConfig::title(seed, rng, hz);
+            let mut s = Session::with_config(&mut disc, cfg).expect("title session");
+            if seed == ORACLE_SEED {
+                let chars: Vec<u8> = std::iter::once(&s.record).chain(s.others.iter().map(|o| &o.record)).map(|r| r[0x4B2]).collect();
+                let cols: Vec<u8> = s.globals.items.pickups.iter().skip(mr_sim::items::FIRST_TOKEN).take(s.globals.items.tokens as usize).map(|p| p.colour).collect();
+                let pos: Vec<[i32; 3]> = std::iter::once(&s.kart).chain(s.others.iter().map(|o| &o.kart)).map(|k| [k.x, k.y, k.z]).collect();
+                println!("oracle seed: characters {chars:?} (oracle 17, 23, 19), grid {pos:?}, token colours {cols:?}");
+            }
+            let mut err = None;
+            for t in 0..nt {
+                if let Err(e) = s.tick(0) {
+                    err = Some((t, e));
+                    break;
+                }
+            }
+            let pos: Vec<[i32; 3]> = std::iter::once(&s.kart).chain(s.others.iter().map(|o| &o.kart)).map(|k| [k.x >> 5, k.y >> 5, k.z >> 5]).collect();
+            println!("fresh title seed {seed:#x} at {hz} Hz: {} ticks, {:?}; karts at {:?} (DAT units)", s.ticks, err, pos);
+        }
+        return;
+    }
+    // `--fresh-vs DIR`: a new title session with the oracle's seed against
+    // an oracle capture from BACK TO MAIN MENU (title_check.py capture DIR:
+    // kart heads, camera, frame counter, dt), the oracle's dt per tick.
+    if let Some(dir) = opt("--fresh-vs") {
+        let cap = Capture::open(&dir).expect("open capture");
+        let mut disc = mr_disc::Disc::open_default().expect("open the disc");
+        let mut s = Session::with_config(&mut disc, mr_sim::session::SessionConfig::title(ORACLE_SEED, mr_sim::session::RNG_START, 30)).expect("title session");
+        let rd = |vb: u32, a: u32| cap.i32(vb, a);
+        // the oracle's ticks: VBlanks where the frame counter changes (in
+        // mode 0x10), the result one VBlank later
+        let mut ticks = Vec::new();
+        let mut prev = None;
+        for &vb in &cap.vbs {
+            if cap.u16(vb, 0x800B_0D46) != Some(0x10) || (ticks.is_empty() && rd(vb, 0x800B_0D90) != Some(0)) {
+                continue;
+            }
+            // after the load frame, a tick = the camera's orbit parameter moves
+            let f = if ticks.is_empty() { rd(vb, 0x800B_0D90) } else { rd(vb, 0x800C_4F8C) };
+            if ticks.is_empty() || f != prev {
+                ticks.push(vb);
+                prev = rd(vb, 0x800C_4F8C);
+            }
+        }
+        let (mut exact, mut first) = (0, None);
+        for (i, &vb) in ticks.iter().enumerate() {
+            // the load frame (counter 0, dt 0): the karts on the grid
+            let dt = rd(vb, 0x800B_0AEC).unwrap_or(2);
+            if std::env::var("MR_TITLE_DEBUG").is_ok() { eprintln!("tick {i} VB {vb}: port seed before {:08X} rng {:08X}", s.rand_seed(), s.globals.rng); }
+            if i > 0 && s.tick_dt(0, dt.max(1)).is_err() {
+                break;
+            }
+            let v = vb + 1;
+            if !cap.has(v) {
+                break;
+            }
+            let mut ok = true;
+            for (slot, k) in std::iter::once(&s.kart).chain(s.others.iter().map(|o| &o.kart)).enumerate() {
+                let a = mr_sim::kart::KART_ARRAY + 0x504 * slot as u32;
+                let want = [rd(v, a).unwrap(), rd(v, a + 4).unwrap(), rd(v, a + 8).unwrap()];
+                if want != [k.x, k.y, k.z] {
+                    ok = false;
+                    if first.is_none() {
+                        first = Some((i, v, slot, want, [k.x, k.y, k.z]));
+                    }
+                }
+            }
+            let eye = [rd(v, 0x800C_4F68).unwrap(), rd(v, 0x800C_4F6C).unwrap(), rd(v, 0x800C_4F70).unwrap()];
+            if i > 0 && eye != s.camera.pos {
+                ok = false;
+                if first.is_none() {
+                    first = Some((i, v, 9, eye, s.camera.pos));
+                }
+            }
+            if ok {
+                exact += 1;
+            }
+        }
+        println!("fresh title vs {dir}: {} oracle ticks, {exact} exact (3 karts + camera eye); first difference {:?}", ticks.len(), first);
+        return;
+    }
     let dir = args.get(1).filter(|a| !a.starts_with("--")).cloned().unwrap_or_else(|| "analysis/s6/title/karts".into());
     let cap = Capture::open(&dir).expect("open capture");
     let max_ticks: usize = opt("--ticks").and_then(|v| v.parse().ok()).unwrap_or(usize::MAX);
@@ -110,6 +202,19 @@ fn main() {
             ok = false;
             if first_bad.is_none() {
                 first_bad = Some((n, vb, 9, "camera", want_eye[0] as i64, s.camera.pos[0] as i64));
+            }
+        }
+        // the logo letters' heights, when the capture has them
+        if let (Some(d), true) = (s.world.title.as_deref(), cap.read(vb, 0x800D_DD94, 4).is_some()) {
+            let l = d.letters.lock().unwrap();
+            for i in 0..l.height.len() {
+                let want = rd(vb, 0x800D_DD94 + 12 * i as u32);
+                if want != l.height[i] {
+                    ok = false;
+                    if first_bad.is_none() {
+                        first_bad = Some((n, vb, 20 + i, "letter height", want as i64, l.height[i] as i64));
+                    }
+                }
             }
         }
         if ok {

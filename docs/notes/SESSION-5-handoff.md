@@ -65,3 +65,17 @@ the original's look (for side-by-sides).
 Owner drives `-Hz60`; if it feels right, flip `logic_hz` default to 60. Then
 Session 6: the other 20 race courses (docs/notes/SESSION-4-handoff.md "Not
 started"), then the front end.
+
+## Open, closed in Session 6 (2026-10-14, track H)
+- Water ~7 % bright: fixed (the clear is stored 15-bit, the effects pass
+  stores its pixels 5 bits per channel; the oracle's VRAM shots expand
+  c << 3, so compare on the 5-bit scale): open water VB 3350 blue 16.96
+  oracle / 17.04 port (was 17.99), VB 800 16.34 / 16.65 (was 17.55).
+  effects.md, render-ledger.md.
+- Animated texture decode misaligned: not so; the vram_peek hex is high byte
+  first, read that way all 26 reads equal a decoded frame exactly.
+- 4:3 pillarbox bars: black (and letterbox bars), main.rs `fit_bars`.
+- Status effects: all five shapes captured on the oracle and matched; the
+  kart colour factors (0xB blue, 0xE dark) now tint the models. Still open:
+  0xC's ground glow (FUN_800861F0 list, not drawn). effects.md.
+- slab_allocator startup errors: owner says ignore unless they come back.

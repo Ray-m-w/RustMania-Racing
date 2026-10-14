@@ -169,6 +169,39 @@ particles"); effects.rs draws them with the rest.
   pull of the occlusion test. [CODE 80036a34, 800365c0, 800376a4,
   80037018, 80037364, 80011e3c] Not seen in any oracle capture (the
   recorded races have no character specials); [CODE] only.
+  **Verified (Session 6, H)** against oracle captures made for it
+  (tools/oracle/status_routes.py: from slot 2, AI kart 1 fires a character
+  special at the player with bridge v4 pokes: kart 1 meter +0x48A = 0x1A4,
+  flags +0x496 = 5 (AI + R2 preference), character +0x4B2 = the wanted type
+  (the type is the shooter's character table byte 0x800AC231 + 0x14 c = c);
+  the player's flags = 3, so every AI kart is "behind kart 0"). All five
+  shapes appeared on the player and match the port's drawing from the
+  captured records (analysis/s6/status/sbs_status_<type>.png, VB 30..280):
+  0 the lily-pad grid, 0xB the ice box, 0xC the beam, 0xE the mask, 0x15
+  the glasses. Differences found and their state:
+  - fixed: the karts' colour factors +0x414 / +0x418 / +0x41C (vehicle,
+    FUN_80026F3C) and +0x416 / +0x41A / +0x41E (driver, FUN_800276E8), 4.12,
+    were ignored by the models; 0xB sets r, g 0x400 / 0x800 and b 0x2000
+    (the frozen kart turns blue), 0xE all 0x400 (dark). mr-bevy karts.rs
+    `tint_rigs` gives each rig its own materials and tints them from the
+    record (the gamma-space factor converted at a typical texel, 0.35).
+    Kart body means at VB 280, oracle vs port: 0xB 13/32/49 vs 13/25/42,
+    0xE 20/21/1 vs 16/12/1, untinted (0x15) 75/88/4 vs 80/91/3.
+  - open: 0xC also draws a pink additive glow on the ground at +0x300 (GP0:
+    FT4 uv (0x68, 0xA8) 0x18 x 0x18, slot 0x14 CLUT 9, every other frame).
+    It is an entry of FUN_800861F0's list 0x800CB058 (32 x 0x30, count
+    DAT_800B0DCD cleared by FUN_800306D0 each frame; flags 2 = this glow,
+    0 = a 0x20 shadow tile (0xA0, 0) subtractive, 1 = slot 0x15 (0x80,
+    0xC0)), filled by FUN_8006C388's effect animations (0xC: at +0x300,
+    size 5, colour +0x310) and by the weapons (projectile shadows). Its
+    drawer was not located; mr-sim marks those calls "render" and nothing
+    draws them. [CODE 800861f0, 8006c388] [GP0 analysis/s6/status/v2/gpu_c]
+  - not a port error: the "SPECIAL MOVE" banner and icons (FUN_80049440)
+    sat ~4 VBlanks ahead in the first side by sides. The oracle's
+    `screenshot` at VBlank n shows the frame drawn from the RAM of n - 4
+    (GP0: the icon x of the frame drawn at vbt + 1 is the RAM row's own,
+    x = (+0x468 << 10) / 300 - 0x100); the side by sides take the port's
+    replay at n - 4 (`--fx-shots` VB - 4) and then agree.
 - **Far-kart impostor** FUN_8007D660 (Session 5): not an exhaust flame. The
   kart LOD byte +0x4B4 is (|kart - eye| >> 10)^2 / 0x1200 capped at 0x20
   (FUN_8002976C, recomputed each frame; the port's formula matches the
@@ -261,8 +294,13 @@ drawn by one pass after Bevy's main transparent pass, for the chase camera:
   reverse subtract, ABR 3 = one + one with F / 4), and writes the result
   back into every MSAA sample. Texels: modulation texel * rgb / 128
   clamped; 0x0000 transparent; on a semi-transparent primitive a texel with
-  STP clear is drawn opaque. Remaining error: 8-bit channels instead of
-  5-bit (no 15-bit quantisation, no dithering).
+  STP clear is drawn opaque. 15-bit store (Session 6): the pass marks the
+  pixels it writes (alpha 0) and the composite truncates them to 5 bits
+  per channel on the display lattice c * 255 / 31, as the GPU stores a
+  blended / modulated result (`fx_blend = psx` only). Not modelled:
+  dithering (the GPU's 4 x 4 offsets before the truncation move the mean
+  by < 0.1 of a 5-bit step; at window resolution the pattern would be
+  fine-grain noise); the main pass's scenery stays 8-bit.
 - **Occlusion.** Each fragment is tested against the scene depth (the
   sprite's own depth; camera-facing quads are flat in view space). The
   game has no depth buffer: its ordering table draws the "ground" list
@@ -309,6 +347,19 @@ drawn by one pass after Bevy's main transparent pass, for the chase camera:
   default look analysis/s5/semi/default/b_*.png. Residual: 8-bit vs
   15-bit, and the water's animated strips (0xA / 0xC; the decode
   alignment open above).
+  Session 6 (H): three causes, two fixed. (1) The clear is a GP0 fill into
+  the 15-bit framebuffer: (0, 19, 95) is stored (0, 2, 11) and shown
+  (0, 16, 90) (`psxfx::psx_fill`); the port showed the 8-bit value. (2)
+  The GPU truncates each result to 5 bits: now done in the pass (above).
+  (3) Measurement: the oracle's VRAM screenshots expand 5 -> 8 bits as
+  c << 3 (max 248), the port as c * 255 / 31 (the DAC's full scale), a
+  3 % difference in the comparison itself; compare on the 5-bit scale.
+  The animated strips were not a cause (next section). Open water means,
+  5-bit scale (analysis/s6/water/means.py: mask b > 100, r < 70, g < 60
+  at 512 x 240, `--faithful-view`, race3e): VB 800 oracle 4.59/3.36/16.34,
+  before 5.29/3.47/17.55 (+7.4 % blue), now 4.97/2.90/16.65 (+1.9 %);
+  VB 3350 oracle 4.86/2.95/16.96, before 5.29/3.34/17.99 (+6.1 %), now
+  4.96/2.75/17.04 (+0.5 %). Side by side analysis/s6/water/sbs_water_q5.png.
 
 - **Display timing (Session 5, finishing).** The effects are drawn at the
   karts' presentation state, not at the last tick: effects.rs keeps an
@@ -355,3 +406,9 @@ earlier 9 times, two earlier once; the item-box stars in the side-by-sides
 (VB 2431, 2510, 3010) match within one frame. Open: no read matches a
 decoded frame exactly (best 112 of 896 halfwords differ), so the RAW strip
 decode is slightly off (alignment) though the pictures match.
+Closed (Session 6, H): the decode is exact. `vram_peek`'s hex holds each
+halfword high byte first; read that way, all 26 reads of strip 0x19 in
+race3e equal a decoded frame halfword for halfword (0 of 896 differ; the
+"112" were the non-zero halfwords, columns 6 and 7, byte-swapped).
+FUN_800311AC's pointer (DAT_800BBB20[slot] = chunk + 8 by FUN_800441D8:
+w, h, then frame k at + 4 + k * w * h / 2) agrees with mr-assets.

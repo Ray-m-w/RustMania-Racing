@@ -23,6 +23,12 @@ BAR_LAYER = 5, main.rs `fit_bars`) and 2f9e59e. P: a course's frame clear must g
 through `psxfx::psx_fill(rgb)` (the GP0 fill is stored 15-bit: DOCK (0,19,95)
 shows as (0,16,90)); main.rs inserts `ClearColor(psxfx::psx_fill(scene::DOCK_CLEAR))`.
 The psxfx pass now uses alpha 0 as a 'written by fx' mark (composite restores 1).
+(2026-10-14, H) Commit e0018dd: karts.rs `tint_rigs` (kart colour factors +0x414..+0x41E
+tint the models; per-rig materials). P: FUN_8006C388 / weapons call FUN_800861F0
+(list 0x800CB058: 0xC's ground glow, effect tiles, projectile shadows), marked
+"render" in specials.rs / weapons.rs; nothing draws it yet (drawer not located);
+if mr-sim ever fills it, H's side would draw it through psxfx. Status-effect
+captures: tools/oracle/status_routes.py (slot 2, read only), analysis/s6/status.
 ### P
 **Survey 1 (2026-10-14, early; `mr-survey`, AI on every kart incl. the player, items on, DOCK's seed).**
 The game's own tables decide the race courses (course.rs, from 0x800AC1E4 cup

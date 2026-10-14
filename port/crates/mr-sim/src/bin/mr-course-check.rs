@@ -70,6 +70,10 @@ pub fn session_at_load(disc: &mut mr_disc::Disc, info: &CourseInfo, cap: &Captur
             fx.flats = mr_sim::particles::Flats::read(&m);
         }
         s.globals.items.projectiles = mr_sim::items::ItemState::read(&m).projectiles;
+        // The round-robin slot 0x800B07E0 runs on from the menus too.
+        if std::env::var("MR_NONEXTPROJ").is_err() {
+            s.globals.items.next_projectile = mr_sim::items::ItemState::read(&m).next_projectile;
+        }
     }
     // The pickups' colours / timers come from the course load (before the
     // capture).
@@ -244,14 +248,51 @@ fn free_run(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_fields:
             if oi.pickups != pi.pickups { what.push("pickups"); }
             if oi.projectiles != pi.projectiles { what.push("projectiles"); }
             if oi.blink != pi.blink { what.push("blink"); }
-            if mr_sim::objects::ObjectState::read(&m).weather != s.globals.objects.weather { what.push("weather"); }
+            let oo = mr_sim::objects::ObjectState::read(&m);
+            if oo.weather != s.globals.objects.weather { what.push("weather"); }
+            // (TER group states are not comparable: the captures do not
+            // hold the TER, ObjectState::read sees the menu's copy.)
+            if oo.jets != s.globals.objects.jets {
+                what.push("jets");
+                println!("        jets: port {:?}
+              oracle {:?}", s.globals.objects.jets, oo.jets);
+            }
             if let Some(fx) = s.globals.fx.as_ref() {
                 let op = mr_sim::particles::Particles::read(&m, fx.particles.types.clone());
-                if op != fx.particles { what.push("particles"); }
+                if !same_particles(&op, &fx.particles) { what.push("particles"); }
                 if mr_sim::particles::Sparks::read(&m) != fx.sparks { what.push("sparks"); }
             }
             if !what.is_empty() {
                 println!("      hidden state first differs at frame {j}: {what:?}");
+                for (i, (a, b)) in s.globals.items.projectiles.iter().zip(oi.projectiles.iter()).enumerate() {
+                    if a != b {
+                        println!("        projectile {i}: port   {a:?}
+                       oracle {b:?}");
+                    }
+                }
+                if let Some(fx) = s.globals.fx.as_ref() {
+                    let mut op = mr_sim::particles::Particles::read(&m, fx.particles.types.clone());
+                    op.phase = fx.particles.phase;
+                    if op.next != fx.particles.next {
+                        println!("        particle ring next: port {} oracle {}", fx.particles.next, op.next);
+                    }
+                    for i in 0..mr_sim::particles::N {
+                        if !same_particle(&op.list[i], &fx.particles.list[i]) {
+                            println!("        particle {i}: port   {:?}
+                     oracle {:?}", fx.particles.list[i], op.list[i]);
+                        }
+                    }
+                    let os = mr_sim::particles::Sparks::read(&m);
+                    if os.next != fx.sparks.next {
+                        println!("        spark ring next: port {} oracle {}", fx.sparks.next, os.next);
+                    }
+                    for i in 0..mr_sim::particles::N_SPARKS {
+                        if os.list[i] != fx.sparks.list[i] {
+                            println!("        spark {i}: port   {:?}
+                  oracle {:?}", fx.sparks.list[i], os.list[i]);
+                        }
+                    }
+                }
                 hidden_first = Some(j);
             }
         }
@@ -364,4 +405,18 @@ fn teacher_forced(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_f
             println!("      k{} {:<14} {:>5} frames, first {}", k.0, k.1, v.0, v.1);
         }
     }
+}
+/// Particle equality without the drawer's on-screen bit (flags 0x200: set at
+/// spawn, cleared by the render pass FUN_80010E90 when off screen; nothing
+/// in the simulation reads it).
+fn same_particle(a: &mr_sim::particles::Particle, b: &mr_sim::particles::Particle) -> bool {
+    let mut a = *a;
+    let mut b = *b;
+    a.flags &= !0x200;
+    b.flags &= !0x200;
+    a == b
+}
+
+fn same_particles(a: &mr_sim::particles::Particles, b: &mr_sim::particles::Particles) -> bool {
+    a.next == b.next && a.list.iter().zip(b.list.iter()).all(|(x, y)| same_particle(x, y))
 }

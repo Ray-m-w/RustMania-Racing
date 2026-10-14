@@ -356,13 +356,13 @@ fn step(i: usize, karts: &mut [KartState], g: &mut RaceGlobals, w: &World, rand:
     let q = crate::ground::WallQuery { heading: 0, probe_top: top, probe_bottom: bottom, vx: p.vel[0], vz: p.vel[2], bounce, dt };
     if let Some(h) = crate::ground::wall_test(t, &w.ter, &q, old, p.pos) {
         // FUN_8003C568: the wall's TER group; a breakable one breaks and
-        // takes the projectile (FUN_80069334, breakables.rs).
+        // takes the projectile (FUN_80069334, breakables.rs). The game then
+        // skips the ground step and the kart hits (0x80069EE0).
         let grp = crate::breakables::wall_group(&w.ter, h.wall);
         if grp != -1 && crate::breakables::hit(g, w, grp, p.pos, p.spin_rate as i32) {
-            p.active = false;
-            if let Some(ow) = karts.get_mut(p.owner as usize) {
-                rumble(ow, g, 0x96);
-            }
+            p = broke(p, karts, g, w);
+            g.items.projectiles[i] = p;
+            return;
         } else if p.flags & 8 == 0 {
             p.active = false;
             g.items.projectiles[i] = p;
@@ -491,6 +491,22 @@ fn step(i: usize, karts: &mut [KartState], g: &mut RaceGlobals, w: &World, rand:
             }
         }
     }
+}
+
+/// A projectile that broke a breakable group (FUN_80069334 returned 1:
+/// it is spent, the owner's pad rumbles 0x96 there): one random byte sets
+/// the owner's +0x4DD event bit (8 below 0x55, 4 below 0xAA, else 2)
+/// (0x80069EE0 / 0x8006A568).
+fn broke(mut p: Projectile, karts: &mut [KartState], g: &mut RaceGlobals, w: &World) -> Projectile {
+    p.active = false;
+    if let Some(ow) = karts.get_mut(p.owner as usize) {
+        rumble(ow, g, 0x96);
+    }
+    let b = rng_next(g, w);
+    if let Some(ow) = karts.get_mut(p.owner as usize) {
+        ow.event_bits |= if b < 0x55 { 8 } else if b < 0xAA { 4 } else { 2 };
+    }
+    p
 }
 
 /// A projectile reached kart `j` (0x8006A948..0x8006AEAC).

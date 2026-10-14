@@ -516,7 +516,9 @@ Known differences (not one-for-one):
 - Lifts and breakables change the TER in place; the session keeps the TER in
   step with its state (`Session::sync_ter`, also after `restore` /
   `load_mem`). A projectile's breakable hit is applied to the TER after the
-  frame's projectile step (the game: at once).
+  frame's projectile step (the game: at once); the breaking projectile
+  itself skips its ground step as in the game (track S), so only another
+  projectile in the same frame could tell.
 - Breakable floor hits (FUN_8003C4D4 paths of FUN_80069648) are not ported
   (walls are); no capture had one.
 - Hooks: FUN_80061BC4 scans all 24 records; the port scans the course's.
@@ -559,3 +561,23 @@ every frame. The code has no recovery for an AI kart: the only ways off a
 spot are the AI's random jump (FUN_80090914) and a full-meter special move
 (FUN_800913F4); +0x4C7 hand-over and the 10-minute limit concern humans.
 So the port keeps the game's behaviour (no recovery added).
+### Free runs to the end of the captures [ORACLE][CODE]
+`MR_HIDDEN=1 mr-course-check` now prints the first differing particle,
+spark, projectile and jet field by field. What it found, in order:
+- Particles flag 0x200 is the drawer's on-screen bit (FUN_80010E90 clears
+  it off screen); not simulation state, the comparison masks it.
+- The projectile ring slot 0x800B07E0 (FUN_80068C6C's round robin) is not
+  reset by the race load: the first weapon of a race takes the slot after
+  the menus' last one. The checker sets it from RAM with the other carried
+  state (session_at_load). A fresh Session starts it at 0 (no menus).
+- A projectile that breaks scenery (FUN_80069334 returns 1, wall path
+  0x8006A9xx -> 0x80069EE0): the game skips its ground step and the kart
+  hits, and draws one random byte: the owner's +0x4DD |= 8 / 4 / 2 (below
+  0x55 / 0xAA / else). The port did the ground step (snapping the spent
+  projectile onto the breakable's floor) and drew no byte. Ported
+  (weapons.rs `broke`); GRAVE, LONDON, GALLERY.
+Result: BASE, BOG, CAPE, GALLERY, GHOST, GLACIER, GRAVE, HAPPY, ISLAND,
+LONDON, NEW_YORK, OVAL, PARK, RALLY, ROCK, SPEEDWAY and DOCK (start_probe)
+exact, every kart, to the end of the capture (1603-1635 frames; DOCK
+834). DISCO parts at 387 (k5's wall contact, below).
+

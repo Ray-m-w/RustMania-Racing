@@ -106,38 +106,46 @@ One capture per course (O, analysis/oracle/courses/NAME, 30 Hz, course menu ->
 countdown, GO at frame ~239, about one lap of the AI field). DOCK: Session 3's
 start_probe (same route).
 `cargo run --release --offline -p mr-sim --bin mr-course-check -- [NAME...]`
-(`--fields`, MR_TRACE=a-b, MR_FREEFIELDS=n, MR_HIDDEN, MR_TFFIELDS=... for
-detail). The session starts from the oracle's BIOS seed and random pointer at
-the first mode-1 VBlank, plus the state the course load / menus leave that a
+(`--fields`, MR_TRACE=a-b, MR_FREEFIELDS=n, MR_HIDDEN (first differing
+particle / spark / projectile / jet, field by field), MR_TFFIELDS=... for
+detail; `--dir DIR NAME` for a capture that starts mid-race, e.g. a poked
+grid state from tools/oracle/capture_poked.py). The session starts from the
+oracle's BIOS seed and random pointer at the first mode-1 VBlank, plus the state the course load / menus leave that a
 race load does not reset (water animation, blink timers, weather drops, lift
 positions, turntable spins, pickup colours, the round-robin counter
-0x800C3058, the camera position, particles / projectiles in flight).
+0x800C3058, the projectile ring slot 0x800B07E0, the camera position,
+particles / projectiles in flight).
 
-| course | race load | teacher forced (motion, every frame) | random state (tf frames off) | free run: first kart divergence (frame; GO = ~239) |
-|---|---|---|---|---|
-| BASE | exact | exact | 0 | 774 |
-| BOG | exact | exact | 1 | 395 |
-| CAPE | exact | exact | 0 | 537 |
-| DISCO | exact | exact but k5 at 387 (wall contact, 1 frame) | 1 | 328 |
-| GALLERY | exact | exact | 1 | 1003 |
-| GHOST | exact | exact | 0 | 689 (player exact to the end) |
-| GLACIER | exact | exact | 0 | 632 |
-| GRAVE | exact | exact | 11 | 556 (player exact) |
-| HAPPY | exact | exact | 0 | 1092 (player exact) |
-| ISLAND | exact | exact | 0 | 726 |
-| LONDON | exact | exact | 2 | 529 (player exact) |
-| NEW_YORK | exact | exact | 0 | 547 |
-| OVAL | exact | exact | 0 | 380 |
-| PARK | exact | exact | 0 | 704 (player exact) |
-| RALLY | exact | exact | 0 | 502 |
-| ROCK | exact | exact | 0 | 485 |
-| SPEEDWAY | exact | exact | 0 | 446 |
-| DOCK (start_probe) | exact | exact | 0 | 456 (player exact) |
+| course | race load | teacher forced (motion, every frame) | random state (tf frames off) | free run: first kart divergence (frame; GO = ~239) | before track S |
+|---|---|---|---|---|---|
+| BASE | exact | exact | 0 | exact to the end (1632) | 774 |
+| BOG | exact | exact | 1 | exact to the end (1603) | 395 |
+| CAPE | exact | exact | 0 | exact to the end (1631) | 537 |
+| DISCO | exact | exact but k5 at 387 (wall contact, 1 frame) | 1 | 387 (k5, the teacher-forced frame; others follow) | 328 |
+| GALLERY | exact | exact | 0 | exact to the end (1630) | 1003 |
+| GHOST | exact | exact | 0 | exact to the end (1631) | 689 |
+| GLACIER | exact | exact | 0 | exact to the end (1635) | 632 |
+| GRAVE | exact | exact | 10 (weather; TER not captured after a break) | exact to the end (1632) | 556 |
+| HAPPY | exact | exact | 0 | exact to the end (1633) | 1092 |
+| ISLAND | exact | exact | 0 | exact to the end (1634) | 726 |
+| LONDON | exact | exact | 0 | exact to the end (1629) | 529 |
+| NEW_YORK | exact | exact | 0 | exact to the end (1632) | 547 |
+| OVAL | exact | exact | 0 | exact to the end (1631) | 380 |
+| PARK | exact | exact | 0 | exact to the end (1633) | 704 |
+| RALLY | exact | exact | 0 | exact to the end (1635) | 502 |
+| ROCK | exact | exact | 0 | exact to the end (1635) | 485 |
+| SPEEDWAY | exact | exact | 0 | exact to the end (1635) | 446 |
+| DOCK (start_probe) | exact | exact | 48 (as before S; start_probe holds 0x40 bytes of the particle list and no sparks [INFER]) | exact to the end (834) | 456 |
 
-Divergences (kart-physics-ledger.md, Session 6 section): the free runs part
-from the oracle when hidden state the comparison does not cover first differs:
-the random pointer by one or two bytes in a frame with no kart difference
-(particle / spark lists differ first: effects whose spawns are not ported, e.g.
-FUN_8006C388 parts); the rare teacher-forced random-state frames are weather
-spawns (GRAVE, LONDON, BOG) and one GALLERY frame; DISCO frame 387 is a wall
-contact near a lift (k5).
+Divergences (kart-physics-ledger.md, Session 6 sections P and S): track S
+found the free runs' first hidden difference was the projectile ring slot
+(0x800B07E0 runs on from the menus like the other carried state; the
+checker now sets it from RAM) and, on GRAVE / LONDON / GALLERY, a
+projectile breaking scenery: the game skips that projectile's ground step
+and kart hits and draws one random byte for the owner's +0x4DD (ported).
+Particles compare without the render pass's on-screen bit (flags 0x200).
+17 of 18 courses now run exact to the end of the capture; DISCO parts at
+frame 387 (k5's wall contact, the one teacher-forced frame). The rare
+teacher-forced random-state frames are weather spawns (GRAVE 273, BOG) and
+GRAVE's gate after a break (the captures do not hold the TER, so a reload
+re-enables the broken group).

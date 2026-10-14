@@ -79,3 +79,6 @@ started"), then the front end.
   kart colour factors (0xB blue, 0xE dark) now tint the models. Still open:
   0xC's ground glow (FUN_800861F0 list, not drawn). effects.md.
 - slab_allocator startup errors: owner says ignore unless they come back.
+- (later 2026-10-14, H) 0xC's ground glow closed: FUN_800861F0 entries of the
+  shadow list are drawn (and effects 4, 7, 0x13, 0x14, 0x17, 0xF); the tint is
+  applied in gamma space. Left: projectile shadows from mr-sim weapons.

@@ -158,13 +158,17 @@ fn first_open(mut pick: ResMut<PickList>) {
     }
 }
 
-fn pause(pick: Res<PickList>, mut time: ResMut<Time<Virtual>>) {
+fn pause(pick: Res<PickList>, mut time: ResMut<Time<Virtual>>, mut paused_here: Local<bool>) {
     // (`--show-picklist` screenshots keep the race running under it.)
     // (the title keeps running under it, as the game's menus)
+    // Only a pause made here is undone here (sim_tick touches PickList every
+    // tick, which used to unpause the --fx-shots pause the next frame).
     if pick.open && !time.is_paused() && !std::env::args().any(|a| a == "--show-picklist") && !crate::title::on_title() {
         time.pause();
-    } else if !pick.open && time.is_paused() && pick.is_changed() {
+        *paused_here = true;
+    } else if !pick.open && *paused_here && time.is_paused() {
         time.unpause();
+        *paused_here = false;
     }
 }
 

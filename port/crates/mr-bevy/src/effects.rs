@@ -959,7 +959,8 @@ pub fn streak_prim(s: &Streak, eye: Vec3) -> FxPrim {
 /// `--fx-shots DIR VB,VB,...` with `--replay-capture` takes a window shot
 /// DIR/b_<VB>.png at the first replayed tick whose VBlank is >= each VB
 /// (time paused while it lands), then exits; `--fx-speed N` replays N times
-/// faster in between. Prints the VBlank each shot landed on. Without a
+/// faster in between (real time within 24 VBlanks of a target). Prints the
+/// VBlank each shot landed on. Without a
 /// capture the numbers are logic ticks of the live session.
 #[derive(Default)]
 struct ShotRun {
@@ -967,6 +968,7 @@ struct ShotRun {
     vbs: Vec<i64>,
     wait: u32,
     init: bool,
+    speed: f32,
 }
 
 fn fx_shots(
@@ -987,13 +989,17 @@ fn fx_shots(
             run.vbs = a.get(i + 2).map(|v| v.split(',').filter_map(|x| x.parse().ok()).collect()).unwrap_or_default();
             run.vbs.sort();
             run.vbs.reverse();
-            if let Some(k) = a.iter().position(|x| x == "--fx-speed").and_then(|k| a.get(k + 1)).and_then(|v| v.parse::<f32>().ok()) {
-                time.set_relative_speed(k);
-            }
+            run.speed = a.iter().position(|x| x == "--fx-speed").and_then(|k| a.get(k + 1)).and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
         }
     }
     let Some(&want) = run.vbs.last() else { return };
     let now = cap.map(|c| c.vb).unwrap_or(p.tick as i64);
+    // fast in between, real time near a target (a frame stall would
+    // otherwise skip `speed` times as many ticks past it)
+    let sp = if want - now > 24 { run.speed } else { 1.0 };
+    if time.relative_speed() != sp {
+        time.set_relative_speed(sp);
+    }
     if run.wait > 0 {
         run.wait -= 1;
         if run.wait == 0 {

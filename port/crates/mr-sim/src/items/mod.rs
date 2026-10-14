@@ -498,6 +498,18 @@ pub fn after_kart_loop(
         None => {}
     }
     blink_timers(g, w);
+}
+
+/// The rest of the item code after FUN_8007A9DC (and its lifts): pickups
+/// FUN_8007BBF0, projectiles FUN_80069648.
+pub fn after_lifts(
+    karts: &mut [crate::kart::KartState],
+    g: &mut crate::globals::RaceGlobals,
+    w: &crate::world::World,
+    cams: &Cameras,
+    items: bool,
+    rand: &mut dyn FnMut() -> i32,
+) {
     if items {
         pickups::frame(karts, g, w, &w.pickups, cams, rand);
         weapons::frame(karts, g, w, rand);

@@ -583,6 +583,17 @@ pub trait CameraEnv {
     fn path_point(&mut self, seg: i16, pt: i16) -> [i32; 3];
     /// `*(*0x800B0BCC)++`: the next byte of the game's random byte stream.
     fn rng_byte(&mut self) -> u8;
+    /// The orbit camera's paths (mode 1): 0 none, 1 the eye path (DAT
+    /// chunk 0x0B, 0x800D1C74) only, 2 also the look path (0x0A,
+    /// 0x800D1C70) (FUN_80070418 sp+0x60).
+    fn orbit_paths(&mut self) -> u8 {
+        0
+    }
+    /// FUN_80081BF4(chunk list, 0, 0, phase, out, 1): the point at `phase`
+    /// (0..0x7FFF) around DAT chunk `chunk`'s closed path (world units).
+    fn orbit_point(&mut self, _chunk: i16, _phase: i32) -> [i32; 3] {
+        [0; 3]
+    }
 }
 
 /// Everything one camera tick reads.
@@ -633,7 +644,8 @@ fn select_mode(cam: &mut CameraState, inp: &CameraInput) -> i16 {
             } else if k.finish_score < 1000 {
                 2
             } else {
-                unreachable_in_scope!("finish orbit camera (mode 1: +0x440 >= 1000)")
+                // 0x80070740: knocked out (race flag 8 / battle): orbit.
+                1
             }
         } else {
             2
@@ -721,6 +733,10 @@ pub fn tick(cam: &mut CameraState, inp: &CameraInput, t: &CameraTables, env: &mu
     };
     let mount = rotate([-(k.mount[0] as i32), lift as i32, -(k.mount[2] as i32)]);
     let look = [0, 1, 2].map(|i| k.pos[i].wrapping_add(mount[i]));
+    // What the aim looks at: sp+0x70 (`look`) for modes 0, 2, 10; the
+    // mode's own point for the orbit.
+    let mut aim_at = look;
+    let mut orbit_paths = 0u8;
 
     let mut follow: i32 = 22400; // sp+0x50: eye height above ground (mode 0)
     match mode {
@@ -857,6 +873,46 @@ pub fn tick(cam: &mut CameraState, inp: &CameraInput, t: &CameraTables, env: &mu
                 yaw_div = 8;
             }
         }
+        1 => {
+            // Orbit (0x800708B0..0x80070B64): the eye runs round DAT chunk
+            // 0x0B's path, looking at chunk 0x0A's a quarter-ish ahead
+            // (behind) of it; direction and offset side from rand() on the
+            // change. FUN_80081DC4 (path length) returns 0, so the speeds
+            // are 0x40000 >> 14 = 16 a VBlank and 0x400 apart.
+            let paths = env.orbit_paths();
+            if changed {
+                cam.orbit_angle = env.rand();
+                let a = if g.game_state == 0x10 {
+                    cam.rand_b = 0;
+                    1
+                } else {
+                    cam.rand_b = (env.rand() >> 14) as u8;
+                    (env.rand() >> 14) as u8
+                };
+                cam.rand_a = a;
+            }
+            let (spd, ahead) = if paths == 0 { (8, 0x200) } else if g.event == 0x1E { (16 << 2, 0x400) } else { (16, 0x400) };
+            if paths != 0 {
+                let a = if cam.rand_a == 0 { cam.orbit_angle.wrapping_add(spd * dt) } else { cam.orbit_angle.wrapping_sub(spd * dt) };
+                cam.orbit_angle = a & 0x7FFF;
+                goal = env.orbit_point(0x0B, cam.orbit_angle);
+                aim_at = if paths == 2 {
+                    let b = if cam.rand_b == 0 { cam.orbit_angle.wrapping_add(ahead) } else { cam.orbit_angle.wrapping_sub(ahead) };
+                    env.orbit_point(0x0A, b & 0x7FFF)
+                } else {
+                    // Only the eye path: the game looks at a stale stack
+                    // value here [INFER]; the port looks at the kart.
+                    k.pos
+                };
+            } else {
+                aim_at = [0; 3];
+                goal = [0, -160000, -160000];
+            }
+            w_target = [128, 128, 128];
+            pitch_div = 8;
+            yaw_div = 8;
+            orbit_paths = paths;
+        }
         12 => {
             // Overhead (0x80070D94): 0x1400 (minus up to 0xA00 while the
             // countdown is above 300) TER units straight above the kart,
@@ -915,9 +971,9 @@ pub fn tick(cam: &mut CameraState, inp: &CameraInput, t: &CameraTables, env: &mu
     }
 
     // Aim (0x80072314..0x80072394).
-    let dx = look[0].wrapping_sub(cam.pos[0]) >> 7;
-    let dz = look[2].wrapping_sub(cam.pos[2]) >> 7;
-    let dy = look[1].wrapping_sub(cam.pos[1]) >> 7;
+    let dx = aim_at[0].wrapping_sub(cam.pos[0]) >> 7;
+    let dz = aim_at[2].wrapping_sub(cam.pos[2]) >> 7;
+    let dy = aim_at[1].wrapping_sub(cam.pos[1]) >> 7;
     let h = t.sqrt0(dx.wrapping_mul(dx).wrapping_add(dz.wrapping_mul(dz)));
     let mut pitch_t = t.ratan2(dy.wrapping_abs(), h);
     if dy < 0 {
@@ -948,7 +1004,23 @@ pub fn tick(cam: &mut CameraState, inp: &CameraInput, t: &CameraTables, env: &mu
 
     // Roll goal (0x8007252C..0x80072708): modes 0 and 10 bank with the
     // kart, mode 2 levels out.
-    let roll_t: i32 = if mode == 2 || mode == 12 || k.watch_target != -1 {
+    let roll_t: i32 = if mode == 1 {
+        // 0x800725A0: bank against the remaining yaw error (no paths, or
+        // events 0x1D / 0x1E: level at once).
+        if orbit_paths == 0 || g.event == 0x1D || g.event == 0x1E {
+            cam.roll = 0;
+            0
+        } else {
+            let e = yaw_t.wrapping_sub(cam.yaw as u16 as i32);
+            let e16 = e as i16 as i32;
+            let e = if e16 > 0x800 { e - 0x1000 } else if e16 < -0x800 { e + 0x1000 } else { e };
+            if cam.rand_a == cam.rand_b {
+                (-((e << 16) >> 14)) & 0xFFF
+            } else {
+                (e & 0x3FF) << 2
+            }
+        }
+    } else if mode == 2 || mode == 12 || k.watch_target != -1 {
         0
     } else if k.roll_mode != 0 {
         // Airborne/spinning: bank against the remaining yaw error.

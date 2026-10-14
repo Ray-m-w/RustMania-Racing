@@ -24,6 +24,11 @@ fn main() {
             for f in &t.faces {
                 *ty.entry(f.kind as u16).or_default() += 1;
             }
+            for (gi, g) in t.groups.iter().enumerate() {
+                let dis = (0..g.face_count.max(0) as usize).filter(|&k| t.faces[g.face_start as usize + k].disabled()).count();
+                let wdis = (0..g.wall_count.max(0) as usize).filter(|&k| t.walls[g.wall_start as usize + k].disabled).count();
+                println!("     group {gi}: verts {} faces {} ({} disabled) walls {} ({} disabled) unk0 {:x} unk16 {:x}", g.vert_count, g.face_count, dis, g.wall_count, wdis, g.unk0, g.unk16);
+            }
             println!("   ter faces {} walls {} path segs {} pts {} no_water_y {} surface kinds {:?}", t.faces.len(), t.walls.len(), t.path_segments.len(), t.path_points.len(), t.no_water_y, ty);
         }
     }

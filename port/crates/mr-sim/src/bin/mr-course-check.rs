@@ -61,6 +61,20 @@ pub fn session_at_load(disc: &mut mr_disc::Disc, info: &CourseInfo, cap: &Captur
     let o = mr_sim::objects::ObjectState::read(&m);
     s.globals.objects.turntable_phase = o.turntable_phase;
     s.globals.objects.turntable_spin = o.turntable_spin;
+    // The pickups' colours / timers come from the course load (before the
+    // capture).
+    if std::env::var("MR_NOPICK").is_err() {
+        s.globals.items.pickups = mr_sim::items::ItemState::read(&m).pickups;
+    }
+    // The lifts run on between races too (and have moved the TER).
+    let po = mr_sim::objects::ObjectState::read(&pre);
+    s.globals.objects.lifts = po.lifts;
+    s.globals.objects.lift_offsets = po.lift_offsets;
+    s.sync_ter();
+    // The weather runs on between races too (drops in flight, next slot).
+    if s.globals.objects.weather.is_some() {
+        s.globals.objects.weather = mr_sim::objects::ObjectState::read(&pre).weather;
+    }
     // The camera's position before the first race frame is the menu's (the
     // jets' smoke and the sounds test against it in the load frame).
     if std::env::var("MR_NOCAM").is_err() {
@@ -166,9 +180,29 @@ fn main() {
                     let _ = ob;
                     let kb: Vec<String> = s.kart_records().map(|(slot, _, _, r)| {
                         let o = cap.read(vb, KART_ARRAY + (RECORD_SIZE * slot) as u32, RECORD_SIZE).unwrap();
-                        format!("{:04X}/{:04X}", u16::from_le_bytes([r[0x44E], r[0x44F]]), u16::from_le_bytes([o[0x44E], o[0x44F]]))
+                        format!("{:04X}/{:04X} cp {}/{}", u16::from_le_bytes([r[0x44E], r[0x44F]]), u16::from_le_bytes([o[0x44E], o[0x44F]]), i16::from_le_bytes([r[0x488], r[0x489]]), i16::from_le_bytes([o[0x488], o[0x489]]))
                     }).collect();
                     println!("      fr {j}: ptr {:+} seed {} cd {} btn {:?}", s.globals.rng.wrapping_sub(m.u32(0x800B_0BCC)) as i32, if s.rand_seed() == m.u32(0x8000_9010) { "=" } else { "X" }, s.countdown(), kb);
+                }
+            }
+            if let Ok(lim) = std::env::var("MR_CAM") {
+                if j < lim.parse::<usize>().unwrap() {
+                    let oc = mr_sim::camera::CameraState::from_bytes(m.slice(0x800C_4F40, mr_sim::camera::CAMERA_SIZE));
+                    println!("      cam fr {j}: port mode {} pos {:?} pyr ({},{},{}) w {:?} | oracle mode {} pos {:?} pyr ({},{},{}) w {:?}", s.camera.mode, s.camera.pos, s.camera.pitch, s.camera.yaw, s.camera.roll, s.camera.weight, oc.mode, oc.pos, oc.pitch, oc.yaw, oc.roll, oc.weight);
+                }
+            }
+            if std::env::var("MR_WEATHER").is_ok() {
+                let ow = mr_sim::objects::ObjectState::read(&m).weather;
+                if ow != s.globals.objects.weather {
+                    let (a, b) = (ow.unwrap(), s.globals.objects.weather.clone().unwrap());
+                    println!("      weather fr {j}: next {} vs {}", b.next, a.next);
+                    for i in 0..16 {
+                        if a.drops[i] != b.drops[i] {
+                            println!("        drop {i}: port {:?}
+                oracle {:?}", b.drops[i], a.drops[i]);
+                        }
+                    }
+                    std::process::exit(0);
                 }
             }
             if let Some(lim) = std::env::var("MR_FREEFIELDS").ok().and_then(|x| x.parse::<usize>().ok()) {
@@ -178,7 +212,8 @@ fn main() {
                         let o = cap.read(vb, KART_ARRAY + (RECORD_SIZE * slot) as u32, RECORD_SIZE).unwrap();
                         for &(nm, off, sz) in FIELD_OFFSETS {
                             if r[off..off + sz] != o[off..off + sz] {
-                                all.push(format!("k{slot}.{nm}"));
+                                let v = |b: &[u8]| match sz { 1 => b[0] as i8 as i64, 2 => i16::from_le_bytes([b[0], b[1]]) as i64, _ => i32::from_le_bytes([b[0], b[1], b[2], b[3]]) as i64 };
+                                all.push(format!("k{slot}.{nm}={}/{}", v(&r[off..off + sz]), v(&o[off..off + sz])));
                             }
                         }
                     }
@@ -235,6 +270,10 @@ fn main() {
                 let o = cap.read(f.ends[j], KART_ARRAY + (RECORD_SIZE * slot) as u32, RECORD_SIZE).unwrap();
                 for &(nm, off, sz) in FIELD_OFFSETS {
                     if r[off..off + sz] != o[off..off + sz] {
+                        if std::env::var("MR_TFFIELDS").ok().map(|f| f.split(',').any(|x| x == nm)).unwrap_or(false) {
+                            let v = |b: &[u8]| match sz { 1 => b[0] as i8 as i64, 2 => i16::from_le_bytes([b[0], b[1]]) as i64, _ => i32::from_le_bytes([b[0], b[1], b[2], b[3]]) as i64 };
+                            println!("      tf {j} k{slot}.{nm} = {} vs {} (x {} z {})", v(&r[off..off + sz]), v(&o[off..off + sz]), i32::from_le_bytes(o[0..4].try_into().unwrap()) >> 5, i32::from_le_bytes(o[8..12].try_into().unwrap()) >> 5);
+                        }
                         let e = counts.entry((slot, nm)).or_insert((0, j));
                         e.0 += 1;
                     }

@@ -200,8 +200,8 @@ pub fn pick_shape(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
 }
 
 /// Morph targets for both channel sets (x, y, z each) over `n` VBlanks,
-/// from the current shape.
-fn morph(k: &mut KartState, a: [i16; 3], b: [i16; 3], n: u8) {
+/// from the current shape (FUN_80060878 with every value given).
+pub fn morph(k: &mut KartState, a: [i16; 3], b: [i16; 3], n: u8) {
     k.shape_t = 0;
     k.shape_n = n;
     k.shape[12] = a[0];

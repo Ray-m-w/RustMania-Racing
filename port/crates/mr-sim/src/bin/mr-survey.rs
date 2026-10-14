@@ -31,7 +31,7 @@ struct Report {
     load: Option<String>,
     panic: Option<(u64, String)>,
     laps: Vec<u8>,
-    finished: Vec<bool>,
+    finished: Vec<u8>,
     player_finish: Option<i32>,
     /// (slot, first second, last second) per stuck episode.
     stuck: Vec<(usize, f64, f64)>,
@@ -115,7 +115,7 @@ fn run(info: &CourseInfo, hz: u8, seed: Option<u32>) -> Report {
             if r.player_finish.is_none() {
                 r.player_finish = Some(s.kart.race_time);
                 r.laps = karts.iter().map(|k| k.lap).collect();
-                r.finished = karts.iter().map(|k| k.finished != 0).collect();
+                r.finished = karts.iter().map(|k| k.finished).collect();
             }
             after_finish += 1;
             // Keep the AI field running a little (trackside camera, results).
@@ -130,7 +130,7 @@ fn run(info: &CourseInfo, hz: u8, seed: Option<u32>) -> Report {
     if r.laps.is_empty() {
         let karts: Vec<&mr_sim::KartState> = std::iter::once(&s.kart).chain(s.others.iter().map(|o| &o.kart)).collect();
         r.laps = karts.iter().map(|k| k.lap).collect();
-        r.finished = karts.iter().map(|k| k.finished != 0).collect();
+        r.finished = karts.iter().map(|k| k.finished).collect();
     }
     r.ticks = s.ticks;
     r.secs = t0.elapsed().as_secs_f64();
@@ -188,7 +188,7 @@ fn main() {
             Some(e) => format!("NO: {e}"),
         };
         let panic = r.panic.as_ref().map(|(t, m)| format!("{} ({t})", m.replace('|', "/"))).unwrap_or_else(|| "-".into());
-        let laps = r.laps.iter().zip(r.finished.iter()).map(|(l, f)| format!("{l}{}", if *f { "F" } else { "" })).collect::<Vec<_>>().join(" ");
+        let laps = r.laps.iter().zip(r.finished.iter()).map(|(l, f)| format!("{l}{}", match *f { 0 => "", 1 => "F", _ => "K" })).collect::<Vec<_>>().join(" ");
         let fin = r.player_finish.map(|t| format!("{}:{:05.2}", t / 18000, (t % 18000) as f64 / 300.0)).unwrap_or_else(|| "-".into());
         let stuck = if r.stuck.is_empty() { "-".to_string() } else { r.stuck.iter().map(|(i, a, b)| format!("{i}@{a:.0}-{b:.0}s")).collect::<Vec<_>>().join(" ") };
         println!("| {} | {} | {}/{} | {} | {} | {} | {} | {} | {} |", r.course, r.id, info.cup, info.slot, r.hz, load, panic, laps, fin, stuck);

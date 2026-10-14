@@ -355,8 +355,15 @@ fn step(i: usize, karts: &mut [KartState], g: &mut RaceGlobals, w: &World, rand:
     };
     let q = crate::ground::WallQuery { heading: 0, probe_top: top, probe_bottom: bottom, vx: p.vel[0], vz: p.vel[2], bounce, dt };
     if let Some(h) = crate::ground::wall_test(t, &w.ter, &q, old, p.pos) {
-        // FUN_8003C568: wall of a sub-object (none on DOCK, 0x800B0F50 = 0).
-        if p.flags & 8 == 0 {
+        // FUN_8003C568: the wall's TER group; a breakable one breaks and
+        // takes the projectile (FUN_80069334, breakables.rs).
+        let grp = crate::breakables::wall_group(&w.ter, h.wall);
+        if grp != -1 && crate::breakables::hit(g, w, grp, p.pos, p.spin_rate as i32) {
+            p.active = false;
+            if let Some(ow) = karts.get_mut(p.owner as usize) {
+                rumble(ow, g, 0x96);
+            }
+        } else if p.flags & 8 == 0 {
             p.active = false;
             g.items.projectiles[i] = p;
             let o = p.owner as usize;
@@ -505,7 +512,26 @@ fn hit(i: usize, j: usize, karts: &mut [KartState], g: &mut RaceGlobals, w: &Wor
         && ((karts[j].player_index as i32) < karts_n || karts.get(o).map(|k| (k.player_index as i32) < karts_n).unwrap_or(false))
     {
         if g.mode == 2 || g.mode == 7 || g.race_flags & 8 != 0 {
-            crate::unreachable_in_scope!("battle-mode projectile damage");
+            // 0x8006AB18: a hit deals 100 damage (race flag 8 / battle).
+            let v = &mut karts[j];
+            let old = v.impact;
+            v.stun = v.stun.wrapping_add(100);
+            v.impact = v.impact.wrapping_add(100);
+            let ko = old < 1000 && 999 < v.impact;
+            v.flash_timer = 10;
+            v.blink_count = 0;
+            v.hit_dir = -100;
+            if let Some(ow) = karts.get_mut(o) {
+                ow.hits_dealt = ow.hits_dealt.wrapping_add(100);
+                ow.flash_timer = 10;
+                ow.blink_count = 0;
+                ow.hit_dir = 100;
+                if ko {
+                    ow.knockouts = ow.knockouts.wrapping_add(1);
+                    ow.flash_timer = 0x10;
+                    ow.blink_count = 0;
+                }
+            }
         }
         if g.mode == 1 {
             if let Some(ow) = karts.get_mut(o) {

@@ -98,6 +98,10 @@ pub struct SessionConfig {
     /// capture, so the records' face pointers are the game's; None: the
     /// standalone stand-in (`world::STANDALONE_FACES`).
     pub faces: Option<u32>,
+    /// 0x800B07E2 race option bits: 8 on DISCO (the menu sets it for
+    /// course 0x1F, 0x80073E44 and siblings): damage from hits and
+    /// contacts, a kart with 1000 is knocked out.
+    pub race_flags: u16,
 }
 
 /// The opponents of the oracle's slot-2 DOCK race (analysis/ai/*): Clifford
@@ -131,6 +135,7 @@ impl SessionConfig {
             items: true,
             logic_hz: 30,
             faces: None,
+            race_flags: 0,
         }
     }
 
@@ -148,6 +153,7 @@ impl SessionConfig {
             laps: 3,
             lap_record: info.lap_record,
             opponents: (info.karts - 1).max(0) as u8,
+            race_flags: if info.id == 0x1F { 8 } else { 0 },
             ..Self::dock_default()
         }
     }
@@ -345,6 +351,23 @@ impl camera::CameraEnv for SessionCameraEnv<'_> {
         [p.x, p.y, p.z]
     }
 
+    fn orbit_paths(&mut self) -> u8 {
+        let c = &self.world.course;
+        if c.path_b.is_empty() {
+            0
+        } else if c.path_a.is_empty() {
+            1
+        } else {
+            2
+        }
+    }
+
+    fn orbit_point(&mut self, chunk: i16, phase: i32) -> [i32; 3] {
+        let c = &self.world.course;
+        let pts = if chunk == 0x0A { &c.path_a } else { &c.path_b };
+        crate::objects::path_lerp(pts, 0, 0, phase, true)
+    }
+
     fn rng_byte(&mut self) -> u8 {
         let b = self.world.rng_byte(*self.rng);
         *self.rng = self.rng.wrapping_add(1);
@@ -428,7 +451,7 @@ impl Session {
         if world.info.mode != 1 {
             return Err(SessionError::OutOfScope(format!("course {} is not a race course (mode {})", world.info.name, world.info.mode)));
         }
-        let setup = RaceSetup { mode: 1, race_type, race_flags: 0, challenge: 0, humans: 1, karts: n as i16 };
+        let setup = RaceSetup { mode: 1, race_type, race_flags: cfg.race_flags, challenge: 0, humans: 1, karts: n as i16 };
         let mut rand_state = cfg.rand_seed;
         let mut globals = RaceGlobals {
             dt: if cfg.logic_hz == 60 { 1 } else { 2 },
@@ -437,7 +460,7 @@ impl Session {
             // FUN_8008C4AC @0x8008DA4C: 300 + 180 VBlanks to GO.
             countdown: crate::race::COUNTDOWN_START,
             countdown_len: 300,
-            race_flags: 0,
+            race_flags: cfg.race_flags,
             challenge: 0,
             race_type,
             race_over: 0,
@@ -463,11 +486,11 @@ impl Session {
             stack: Default::default(),
             fx: Some(Box::new(crate::items::Fx { particles: crate::particles::Particles::from_exe(&exe), sparks: Default::default(), flats: Default::default() })),
             // DOCK's race setup: no rain (0x800B0B9A = 0, 0x800B07E2 = 0).
-            kart_fx_rain: false,
+            kart_fx_rain: race_type == 2 || cfg.race_flags & 9 != 0,
             hz60: crate::globals::Hz60 { on: cfg.logic_hz == 60, ..Default::default() },
             // Course objects at the course load: FUN_800637B8 (jets),
             // FUN_800616A0 (hooks); the turntables' draws below.
-            objects: crate::objects::ObjectState { jets: crate::objects::jets_load(&world), hooks: crate::hooks::load(&world), ..Default::default() },
+            objects: crate::objects::ObjectState { jets: crate::objects::jets_load(&world), hooks: crate::hooks::load(&world), weather: crate::weather::Weather::load(&world), lifts: world.course.objects.lifts.clone(), group_enabled: crate::breakables::race_load(world.info.id, world.ter.groups.len(), &world.course.objects.breakables), ..Default::default() },
         };
         // FUN_8008C4AC: the first human's grid slot (*rng++ % karts), the
         // other karts on the following slots; with no opponents the
@@ -600,6 +623,8 @@ impl Session {
             s.globals.objects.turntable_phase = phase;
             s.globals.objects.turntable_spin = spin;
         }
+        // FUN_80083B08 (race load): the breakable groups' states.
+        s.sync_ter();
         // The records get a render pass for the starting poses (for drawing
         // before the first tick); the karts themselves keep the load state
         // (look point 0 etc.: the game's first render pass is after the first
@@ -683,6 +708,15 @@ impl Session {
         self.camera_peek = s.camera_peek;
         self.rand_state = s.rand_state;
         self.cfg = s.cfg;
+        self.sync_ter();
+    }
+
+    /// Bring the TER's moving groups (lifts.rs) in line with the lift
+    /// state (after `restore` or `load_mem`).
+    pub fn sync_ter(&mut self) {
+        let world = &mut self.world;
+        crate::lifts::sync(&mut world.ter, &mut world.ter_applied, &world.course.objects.lift_objects, &self.globals.objects.lift_offsets);
+        crate::breakables::sync(&mut world.ter, &mut world.groups_applied, &self.globals.objects.group_enabled);
     }
 
     /// The logic rate: 30 (the game) or 60 (the 60 Hz mode).
@@ -910,6 +944,34 @@ impl Session {
             let mut recs: Vec<&mut Vec<u8>> = std::iter::once(&mut self.record).chain(self.others.iter_mut().map(|o| &mut o.record)).collect();
             crate::items::after_kart_loop(ks, &mut recs, g, w, &cams, self.cfg.items, skip, &mut rand);
         }
+        // FUN_8007A9DC's end, FUN_800859EC: the lifts (lifts.rs) move and
+        // carry their TER groups (60 Hz mode: once per pair, the pair's dt:
+        // a lift steps once per game frame).
+        if !g.objects.lifts.is_empty() {
+            if g.hz60.beat() {
+                let dt = g.dt;
+                if g.hz60.on {
+                    g.dt = 2;
+                }
+                crate::lifts::frame(g, &w.course.objects.lift_objects);
+                g.dt = dt;
+            }
+            let world = &mut self.world;
+            crate::lifts::sync(&mut world.ter, &mut world.ter_applied, &world.course.objects.lift_objects, &g.objects.lift_offsets);
+        }
+        let w = &self.world;
+        {
+            let cams = crate::items::Cameras { pos: [self.camera.pos_div32, [0; 3]], n: g.humans.clamp(0, 2) as usize };
+            let seed = &mut self.rand_state;
+            let mut rand = || bios_rand(seed);
+            crate::items::after_lifts(ks, g, w, &cams, self.cfg.items, &mut rand);
+        }
+        // Knocked-down scenery (breakables.rs) stops colliding.
+        if !g.objects.group_enabled.is_empty() {
+            let world = &mut self.world;
+            crate::breakables::sync(&mut world.ter, &mut world.groups_applied, &g.objects.group_enabled);
+        }
+        let w = &self.world;
         crate::sound::character_voices(ks, g, w);
         for (s, k) in ks.iter().enumerate() {
             let rec = if s == 0 { &mut self.record } else { &mut self.others[s - 1].record };
@@ -958,6 +1020,19 @@ impl Session {
                 }
                 fx.flats.skids(s, rec, g.dt, &w.tables);
             }
+        }
+        // FUN_8008650C: falling weather (weather.rs). 60 Hz mode: once per
+        // pair with the pair's dt (spawn rate and draws as the game's).
+        if g.objects.weather.is_some() && g.hz60.beat() {
+            let dt = g.dt;
+            if g.hz60.on {
+                g.dt = 2;
+            }
+            let cams = [crate::weather::WeatherCamera { eye: self.camera.pos, forward: self.camera.forward }];
+            let seed = &mut self.rand_state;
+            let mut rand = || bios_rand(seed);
+            crate::weather::frame(g, w, &cams, &mut rand);
+            g.dt = dt;
         }
         if let Some(fx) = g.fx.as_mut() {
             fx.particles.update(g.dt, &w.tables.sin[..4096]);
@@ -1180,6 +1255,7 @@ impl Session {
         self.pick = (m.u8(0x800C_3058 + n as u32) as usize + 1) % n;
         self.load_frame = false;
         self.rand_state = m.u32(0x8000_9010);
+        self.sync_ter();
     }
 
     /// Analysis: write the race state into memory `m` (the fields the port

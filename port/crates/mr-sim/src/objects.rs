@@ -38,6 +38,12 @@ pub struct CourseObjects {
     /// Chunk 0x02: count & 0x1F == 0; count >> 5 groups of 32 points, at
     /// most 8 (0x800B0E00).
     pub hooks: Vec<[[i32; 3]; 32]>,
+    /// Chunk 0x18 lifts as loaded (lifts.rs) and the course's objects that
+    /// drive them (FUN_80084490's switch).
+    pub lifts: Vec<crate::lifts::Lift>,
+    pub lift_objects: Vec<crate::lifts::LiftObject>,
+    /// FUN_80083B08's breakable groups (breakables.rs).
+    pub breakables: Vec<crate::breakables::Breakable>,
 }
 
 impl CourseObjects {
@@ -105,6 +111,16 @@ pub struct ObjectState {
     pub turntable_spin: Vec<i16>,
     /// GRAVE's hooks (0x800D15A0, 3 per group).
     pub hooks: Vec<crate::hooks::Hook>,
+    /// Falling weather (weather.rs); None when the course has none.
+    pub weather: Option<crate::weather::Weather>,
+    /// Lifts (lifts.rs) and each lift object's accumulated move of its
+    /// TER groups.
+    pub lifts: Vec<crate::lifts::Lift>,
+    pub lift_offsets: Vec<i32>,
+    /// TER group enabled states the race wants (breakables.rs; None = as
+    /// on the disc), and the DAT slots knocked down (render side).
+    pub group_enabled: Vec<Option<bool>>,
+    pub hidden_slots: Vec<(i16, u8)>,
 }
 
 /// |a - b| with the game's SquareRoot0 of the squared sum (wrapping).
@@ -375,6 +391,107 @@ impl ObjectState {
                 }
             })
             .collect();
-        ObjectState { jets, turntable_phase, turntable_spin, hooks }
+        let weather = if m.u8(0x800B_0ACA) != 0 {
+            let course = m.i32(0x800B_0FAC) as u32;
+            let snow = m.u16(0x800A_CB3A + 12 * course) & 0x20 != 0;
+            let drops = std::array::from_fn(|i| {
+                let a = 0x800D_75D0 + 0x2C * i as u32;
+                crate::weather::Drop {
+                    pos: [m.i32(a), m.i32(a + 4), m.i32(a + 8)],
+                    ground: m.i32(a + 0xC),
+                    speed: m.i32(a + 0x10),
+                    timer: m.i16(a + 0x14),
+                    life: m.i16(a + 0x16),
+                    size: [m.u8(a + 0x1A), m.u8(a + 0x1B)],
+                    on_water: m.u8(a + 0x1D),
+                    rgb: [m.u8(a + 0x23), m.u8(a + 0x24), m.u8(a + 0x25)],
+                    base: [m.u8(a + 0x26), m.u8(a + 0x27), m.u8(a + 0x28)],
+                }
+            });
+            Some(crate::weather::Weather { snow, drops, next: m.u8(0x800B_0ECC) })
+        } else {
+            None
+        };
+        let nl = m.i8(0x800B_0E01).max(0) as u32;
+        let lifts: Vec<crate::lifts::Lift> = (0..nl)
+            .map(|i| {
+                let a = 0x800D_D708 + 20 * i;
+                crate::lifts::Lift {
+                    cur: m.i32(a),
+                    min: m.i32(a + 4),
+                    max: m.i32(a + 8),
+                    wait_min: m.i16(a + 0xC),
+                    wait_max: m.i16(a + 0xE),
+                    timer: m.i16(a + 0x10),
+                    speed: m.i8(a + 0x12),
+                    anim: m.u8(a + 0x13),
+                }
+            })
+            .collect();
+        // Each lift object has moved its groups by its lift's travel from
+        // the low end (one object per lift on every race course).
+        let course = m.i32(0x800B_0FAC);
+        let lift_offsets = crate::lifts::objects(course as u8)
+            .iter()
+            .map(|o| if o.lift >= 0 && (o.lift as usize) < lifts.len() && o.group >= 0 { let l = lifts[o.lift as usize]; l.cur - l.min } else { 0 })
+            .collect();
+        // Breakable groups: a listed group is enabled unless its first face
+        // or wall carries the disabled bit in RAM (TER at 0x800B0FA4 /
+        // 0x800B0F5C, group table 0x800B0E44).
+        let ng = m.i16(0x800B_0F50).max(0) as u32;
+        let gt = m.u32(0x800B_0E44);
+        let group_enabled = (0..ng)
+            .map(|gi| {
+                let a = gt + 0x14 * gi;
+                let (fs, fc, ws, wc) = (m.u16(a + 6) as u32, m.i16(a + 0xC), m.u16(a + 8) as u32, m.i16(a + 0xE));
+                if fc > 0 {
+                    Some(m.u8(m.u32(0x800B_0FA4) + fs + 0xE) & 0x20 == 0)
+                } else if wc > 0 {
+                    Some(m.u16(m.u32(0x800B_0F5C) + ws) & 1 == 0)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        ObjectState { jets, turntable_phase, turntable_spin, hooks, weather, lifts, lift_offsets, group_enabled, hidden_slots: Vec::new() }
     }
+}
+
+/// FUN_80081BF4(list, first, last, phase, out, closed): the point at
+/// `phase` (0..0x7FFF) along points first..=last of a DAT point list
+/// (first == last: the whole list); `closed` (param 6) counts the step from
+/// the last point back to the first. Linear between neighbours in 1/64
+/// steps; world units (points << 5).
+pub fn path_lerp(pts: &[[i32; 3]], first: i16, last: i16, phase: i32, closed: bool) -> [i32; 3] {
+    let count = pts.len() as i32;
+    if count == 0 {
+        return [0; 3];
+    }
+    let mut a = (first.max(0)) as i32;
+    let mut b = last as i32;
+    if count <= b {
+        b = count - 1;
+    }
+    if b < a {
+        std::mem::swap(&mut a, &mut b);
+    }
+    let n;
+    if a == b {
+        // The whole list as a loop: count steps (the n of 0x80081C4C
+        // stays the point count; param 6 is not added).
+        a = 0;
+        b = count - 1;
+        n = count;
+    } else {
+        n = b - a + closed as i32;
+    }
+    let v = div_pow2((phase & 0x7FFF).wrapping_mul(n).wrapping_mul(0x40), 15);
+    let i = a + div_pow2(v, 6);
+    let f = v & 0x3F;
+    let mut j = i + 1;
+    if s16(j) == b + 1 {
+        j = a;
+    }
+    let (p, q) = (pts[(i as usize).min(pts.len() - 1)], pts[(j as usize).min(pts.len() - 1)]);
+    [0, 1, 2].map(|c| p[c].wrapping_mul(0x20).wrapping_add((q[c].wrapping_sub(p[c])).wrapping_mul(f) >> 1))
 }

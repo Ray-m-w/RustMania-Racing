@@ -165,8 +165,11 @@ pub fn lap_timing(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
     if g.mode == 2 || g.mode == 7 {
         unreachable_in_scope!("lap timing for modes 2/7");
     }
-    if g.race_flags & 8 != 0 {
-        unreachable_in_scope!("lap timing with race flag 8");
+    if g.race_flags & 8 != 0 && k.finished == 0 && (k.impact >= 1000 || (g.game_state == 0x1E && k.impact >= 0x7D)) {
+        // Race flag 8 (DISCO: the menu sets it for course 0x1F): a kart
+        // with 1000 damage is knocked out (0x8008279C); lap timing goes on
+        // either way (LAB_80082B84).
+        knocked_out(k, g, w);
     }
     if g.race_type == 3 {
         unreachable_in_scope!("lap timing, time trial");
@@ -251,6 +254,27 @@ fn lap_completed(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
         k.flash_timer = (lap - 1) as i8;
         k.blink_count = 0;
     }
+}
+
+/// 0x8008279C (race flag 8): an explosion (FUN_800870E8 kind 0x11 at the
+/// driver, one random byte for its angle), the body squashes (FUN_80060878,
+/// unless an effect runs), +0x4C7 = 2, the AI takes the kart (+0x4F9 0x80,
+/// +0x496 | 1) and it spins (FUN_8007B26C(kart, 1)). An AI kart's voice
+/// bits draw one more byte (a human's knock-out voice is audio only).
+fn knocked_out(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
+    let b = crate::update::rng_next(g, w) as i32;
+    crate::items::particle(g, [k.drv_x, k.ref_y, k.drv_z], [k.vx, k.vy, k.vz], 0, b << 4, 0, 0x11, [0x80; 3], 0x180, 0x180, 0x20);
+    if k.effect == -1 {
+        crate::items::specials::morph(k, [0x400; 3], [0x1000; 3], 0x3C);
+    }
+    k.finished = 2;
+    if !((k.player_index as i32) < g.humans as i32 && g.game_state != 0x1E) {
+        let r = crate::update::rng_next(g, w) as i8;
+        k.event_bits |= if r < 0 { 0x20 } else { 0x10 };
+    }
+    k.pause_bits = 0x80;
+    k.flags |= 1;
+    crate::collide::spin_out(k, g, w, 1);
 }
 
 /// 0x80083004: the kart crossed the line for the last time (its last lap,

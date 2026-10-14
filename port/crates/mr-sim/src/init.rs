@@ -243,9 +243,10 @@ pub fn init_kart(p: &KartInit, rng: &mut u32, rand: &mut dyn FnMut() -> i32) -> 
     } else {
         k = KartState::from_record(&r);
     }
-    // +0x488: FUN_80081170(x >> 5, y >> 5, z >> 5, course, 0x10, 0, 0): the
-    // nearest course point, searched from point 0.
-    if let Some((i, _)) = crate::race::course_point(w, &k, 0) {
+    // +0x488: FUN_80081170(x >> 5, y >> 5, z >> 5, course, 1, 0, 0): the
+    // nearest course point over the whole list (Session 3 searched from
+    // point 0 with mode 0x10's bisection; equal on DOCK, not on SPEEDWAY).
+    if let Some(i) = crate::race::course_point_all(w, &k) {
         k.course_point = i;
     }
     k.to_record(&mut r);

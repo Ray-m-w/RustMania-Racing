@@ -200,7 +200,22 @@ fn pair(a: &mut KartState, b: &mut KartState, g: &mut RaceGlobals, w: &World, r:
             spin_out(lower, g, w, 1);
             if upper.finished == 0 && lower.finished == 0 && ((upper.player_index as i32) < r.karts || (lower.player_index as i32) < r.karts) {
                 if g.mode == 2 || g.mode == 7 || g.race_flags & 8 != 0 {
-                    crate::unreachable_in_scope!("battle-mode damage on kart contact");
+                    // 0x80040A1C: landing on a kart deals 100 damage.
+                    let old = lower.impact;
+                    upper.hits_dealt = upper.hits_dealt.wrapping_add(100);
+                    lower.impact = lower.impact.wrapping_add(100);
+                    lower.stun = lower.stun.wrapping_add(100);
+                    upper.hit_dir = 100;
+                    upper.flash_timer = 10;
+                    upper.blink_count = 0;
+                    lower.hit_dir = -100;
+                    lower.flash_timer = 10;
+                    lower.blink_count = 0;
+                    if old < 1000 && 999 < lower.impact {
+                        upper.flash_timer = 0x10;
+                        upper.blink_count = 0;
+                        upper.knockouts = upper.knockouts.wrapping_add(1);
+                    }
                 }
                 if g.mode == 1 {
                     upper.contacts_from_above = upper.contacts_from_above.wrapping_add(1);
@@ -327,7 +342,33 @@ fn pair(a: &mut KartState, b: &mut KartState, g: &mut RaceGlobals, w: &World, r:
             && loser.finished == 0
             && ((winner.player_index as i32) < r.karts || (loser.player_index as i32) < r.karts)
         {
-            crate::unreachable_in_scope!("battle-mode damage on kart contact");
+            // 0x800410A8: damage (race flag 8 here; battle modes 2 / 7 the
+            // same code): |push difference| >> 5, at least 1.
+            let d = ((push_a - push_b).abs() >> 5).max(1);
+            let old = loser.impact;
+            winner.hits_dealt = winner.hits_dealt.wrapping_add(d as i16);
+            if (winner.max_hit as i32) < d {
+                winner.max_hit = d as i16;
+            }
+            loser.stun = loser.stun.wrapping_add(d as i16);
+            loser.impact = loser.impact.wrapping_add(d as i16);
+            winner.flash_timer = 10;
+            winner.blink_count = 0;
+            winner.hit_dir = d as i16;
+            loser.flash_timer = 10;
+            loser.hit_dir = -d as i16;
+            loser.blink_count = 0;
+            if 0x95 < d {
+                winner.event_bits |= 1;
+                let b = w.rng_byte(g.rng) as i8;
+                g.rng = g.rng.wrapping_add(1);
+                loser.event_bits |= if b < 0 { 0x20 } else { 0x10 };
+            }
+            if old < 1000 && 999 < loser.impact {
+                winner.flash_timer = 0x10;
+                winner.blink_count = 0;
+                winner.knockouts = winner.knockouts.wrapping_add(1);
+            }
         }
         if w.rng_byte(g.rng) < 0x10 {
             let mut bits = winner.event_bits | 2;

@@ -57,6 +57,10 @@ pub struct Course {
     pub has_other_objects: bool,
     /// Jets, turntables, hooks (objects.rs, hooks.rs).
     pub objects: crate::objects::CourseObjects,
+    /// The orbit camera's paths: DAT chunk 0x0A (0x800D1C70, the look
+    /// path) and 0x0B (0x800D1C74, the eye path), world units >> 5.
+    pub path_a: Vec<[i32; 3]>,
+    pub path_b: Vec<[i32; 3]>,
 }
 
 /// Where the game keeps the TER sections in RAM. The kart record stores RAM
@@ -123,6 +127,10 @@ pub struct World {
     pub pickups: crate::items::pickups::CoursePickups,
     /// The course's row of the game's tables (course.rs).
     pub info: crate::course::CourseInfo,
+    /// TER groups' y offsets applied so far by the lifts (lifts::sync)
+    /// and their enabled states (breakables::sync).
+    pub ter_applied: Vec<i32>,
+    pub groups_applied: Vec<Option<bool>>,
 }
 
 impl World {
@@ -208,7 +216,14 @@ impl Course {
             .unwrap_or_default();
         let has_other_objects = chunk::OTHER.iter().any(|&id| find(id).is_some());
         let objects = crate::objects::CourseObjects::from_dat(dat, bytes);
-        Course { grid, look_points, course_points, finish, length, triggers, has_other_objects, objects }
+        let pts = |id: i16| -> Vec<[i32; 3]> {
+            find(id).map(|c| (0..c.count as usize).map(|i| {
+                let o = c.offset + 4 + 12 * i;
+                [le32(o), le32(o + 4), le32(o + 8)]
+            }).collect()).unwrap_or_default()
+        };
+        let (path_a, path_b) = (pts(0x0A), pts(0x0B));
+        Course { grid, look_points, course_points, finish, length, triggers, has_other_objects, objects, path_a, path_b }
     }
 }
 
@@ -233,7 +248,7 @@ impl World {
         let dat = mr_assets::dat::Dat::parse(&dat_bytes).map_err(|x| e(&format!("parse {dp}: {x:?}")))?;
         let kermit = mr_assets::mdl::Mdl::parse(&disc.read("CHARS_A/KERMIT.MDL").map_err(|x| e(&format!("read KERMIT.MDL: {x:?}")))?)
             .map_err(|x| e(&format!("parse KERMIT.MDL: {x:?}")))?;
-        Ok(World {
+        let mut w = World {
             driver: crate::render::DriverModel { part0_pivot: kermit.parts[0].record.pivot },
             tables: Tables::from_exe(&exe),
             exe,
@@ -242,6 +257,12 @@ impl World {
             pickups: crate::items::pickups::CoursePickups::from_dat(&dat, &dat_bytes),
             heap: HeapLayout { faces: STANDALONE_FACES },
             info,
-        })
+            ter_applied: Vec::new(),
+            groups_applied: Vec::new(),
+        };
+        w.course.objects.breakables = crate::breakables::load(w.info.id, &dat);
+        w.course.objects.lift_objects = crate::lifts::objects(w.info.id);
+        w.course.objects.lifts = crate::lifts::load(&w, &dat, &dat_bytes);
+        Ok(w)
     }
 }

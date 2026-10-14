@@ -87,6 +87,25 @@ fn go(g: &mut RaceGlobals, karts: &mut [&mut KartState], best_start: &mut u8, ra
 /// FUN_80081170(x >> 5, y >> 5, z >> 5, course, 0x10, from, 0): the course
 /// point (DAT chunk 5) nearest to the kart, searched around `from`; returns
 /// (index, signed step from `from`, wrapped to the shorter way round).
+/// FUN_80081170 mode 1 (the race load, FUN_800609F4 @0x80061368): the
+/// nearest course point over the whole list (first on ties).
+pub fn course_point_all(w: &World, k: &KartState) -> Option<i16> {
+    let (x, y, z) = ((k.x >> 5) >> 5, (k.y >> 5) >> 5, (k.z >> 5) >> 5);
+    let mut best = u32::MAX;
+    let mut idx = None;
+    for (i, p) in w.course.course_points.iter().enumerate() {
+        let dx = (p[0] >> 5) - x;
+        let dy = (p[1] >> 5) - y;
+        let dz = (p[2] >> 5) - z;
+        let d = dx.wrapping_mul(dx).wrapping_add(dy.wrapping_mul(dy)).wrapping_add(dz.wrapping_mul(dz)) as u32;
+        if d < best {
+            best = d;
+            idx = Some(i as i16);
+        }
+    }
+    idx
+}
+
 pub fn course_point(w: &World, k: &KartState, from: i16) -> Option<(i16, i32)> {
     let pts = &w.course.course_points;
     let n = pts.len() as i32;
@@ -283,10 +302,15 @@ pub fn result(slot: usize, k: &KartState) -> KartResult {
 /// (FUN_8004F688, after the race frame): in mode 1 while the start game
 /// runs (0 < countdown < 0x800B07F8) FUN_8004E8E8 flickers the face button
 /// to copy (+0x4DA, one byte) and jitters the two hand sprites (three bytes
-/// each) [CODE 8004e8e8]. (FUN_80049FD8's three bytes need race flag 8.)
+/// each) [CODE 8004e8e8].
 pub fn hud_draws(g: &mut RaceGlobals, k: &KartState) {
     if g.mode == 1 && g.countdown != 0 && g.countdown < g.countdown_len {
         let n = if (0..4).contains(&k.copy_button) { 7 } else { 6 };
         g.rng = g.rng.wrapping_add(n);
+    }
+    // Race flag 8 (DISCO), racing: FUN_80049FD8 (the damage gauge) jitters
+    // its colour with three bytes while +0x43E is 0x321..0x3E7.
+    if g.mode == 1 && g.countdown == 0 && k.finished == 0 && g.race_flags & 8 != 0 && ((k.stun as u16).wrapping_sub(0x321)) < 199 {
+        g.rng = g.rng.wrapping_add(3);
     }
 }

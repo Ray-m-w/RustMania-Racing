@@ -22,6 +22,7 @@ macro_rules! unreachable_in_scope {
 
 pub mod ai;
 pub mod body;
+pub mod breakables;
 pub mod camera;
 pub mod collide;
 pub mod course;
@@ -33,6 +34,7 @@ pub mod init;
 pub mod items;
 pub mod ground;
 pub mod kart;
+pub mod lifts;
 pub mod mem;
 pub mod objects;
 pub mod oracle;
@@ -46,6 +48,7 @@ pub mod tables;
 pub mod update;
 pub mod vehicle;
 pub mod water;
+pub mod weather;
 pub mod world;
 
 pub use globals::RaceGlobals;

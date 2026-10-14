@@ -529,6 +529,11 @@ fn capture_source(
         }
     }
     crate::kartfx::projectile_decals(&t.kart, &m, &|_| None, &mut out.decals);
+    if std::env::var("MRM_FX_DEBUG").is_ok() {
+        for d in &out.decals {
+            eprintln!("decal vb {} {:?}", cap.vb, d);
+        }
+    }
     if hidden.0 != h {
         hidden.0 = h;
     }
@@ -794,10 +799,17 @@ pub(crate) fn draw(fx: Res<FxFrame>, t: Option<Res<FxTables>>, p: Res<crate::Pla
             let Some(tpage) = rs.tpage else { continue };
             let slot = mr_assets::dat::TexSlot { tpage, clut: rs.clut, fixed_clut: 0 };
             if !d.visible(eye) {
+                if std::env::var("MRM_FX_DEBUG").is_ok() {
+                    eprintln!("decal culled at {:?} eye {:?}", d.origin, eye);
+                }
                 continue;
             }
             let pos = crate::kartshadow::record_corners(d);
-            if let Some((prim, _, _)) = crate::kartshadow::shadow_prim(d, pos, eye, cm, &slot) {
+            let r = crate::kartshadow::shadow_prim(d, pos, eye, cm, &slot);
+            if std::env::var("MRM_FX_DEBUG").is_ok() {
+                eprintln!("decal drawn {} at {:?}", r.is_some(), d.origin);
+            }
+            if let Some((prim, _, _)) = r {
                 prims.list.push(prim);
             }
         }

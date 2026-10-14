@@ -217,7 +217,9 @@ impl Plugin for MoversPlugin {
         app.init_resource::<SceneryShown>()
             .add_systems(Update, place.after(crate::select_objects).after(crate::effects::session_source).before(crate::shot))
             .add_systems(Update, weather.after(crate::effects::session_source).before(crate::effects::draw))
-            .add_systems(Update, look.after(crate::follow_camera).before(crate::follow_sky).before(crate::shot));
+            .add_systems(Update, look.after(crate::follow_camera).before(crate::follow_sky).before(crate::shot))
+            .add_systems(Update, hide_dev.after(place).before(crate::shot))
+            .add_systems(Update, decal_check);
     }
 }
 
@@ -308,6 +310,67 @@ fn look(mut q: Query<&mut Transform, With<crate::ChaseCamera>>) {
     for mut t in q.iter_mut() {
         *t = Transform::from_translation(w(0)).looking_at(w(3), Vec3::Y);
     }
+}
+
+/// dev: MRM_HIDE="a-b,c" hides those DAT objects (which object draws what).
+fn hide_dev(mut q: Query<(&crate::TrackObject, &mut Visibility)>) {
+    let Ok(v) = std::env::var("MRM_HIDE") else { return };
+    let mut set = Vec::new();
+    for part in v.split(',') {
+        let r: Vec<usize> = part.split('-').filter_map(|x| x.trim().parse().ok()).collect();
+        match r.as_slice() {
+            [a] => set.push(*a..=*a),
+            [a, b] => set.push(*a..=*b),
+            _ => {}
+        }
+    }
+    for (o, mut vis) in q.iter_mut() {
+        if set.iter().any(|r| r.contains(&o.0)) && *vis != Visibility::Hidden {
+            *vis = Visibility::Hidden;
+        }
+    }
+}
+
+/// dev: MRM_DECAL_CHECK=FILE (tools/oracle/course_ram.py JSON with
+/// 800DDC50:120, 800B0DCD:1, 800CB058:600, 800B0FA4:4): the projectile
+/// shadows kartfx::projectile_decals builds from the oracle's projectile
+/// table (face normals from this session's TER) against the shadow-list
+/// entries the game built in the same frame. Prints and exits.
+fn decal_check(p: Res<crate::Player>, t: Option<Res<crate::effects::FxTables>>, mut exit: MessageWriter<AppExit>) {
+    let Ok(path) = std::env::var("MRM_DECAL_CHECK") else { return };
+    let (Some(t), crate::Driver::Sim(run)) = (t, &p.driver) else { return };
+    let text = std::fs::read_to_string(&path).expect("decal check json");
+    let hex = |key: &str| -> Vec<u8> {
+        let i = text.find(&format!("\"{key}\": \"")).expect(key) + key.len() + 5;
+        let h = &text[i..i + text[i..].find('"').unwrap()];
+        (0..h.len() / 2).map(|k| u8::from_str_radix(&h[2 * k..2 * k + 2], 16).unwrap()).collect()
+    };
+    let proj = hex("800DDC50:120");
+    let n = hex("800B0DCD:1")[0] as usize;
+    let list = hex("800CB058:600");
+    let fb = hex("800B0FA4:4");
+    let faces = u32::from_le_bytes([fb[0], fb[1], fb[2], fb[3]]);
+    let mut m = mr_sim::mem::Mem::new(vec![0; 0x20_0000], vec![0; 0x400]);
+    m.write(0x800D_DC50, &proj);
+    let w = &run.session.world;
+    let normal = |ptr: u32| w.ter.faces.get(((ptr - faces) / 16) as usize).map(|f| f.normal);
+    let mut mine = Vec::new();
+    crate::kartfx::projectile_decals(&t.kart, &m, &normal, &mut mine);
+    let i32at = |b: &[u8], o: usize| i32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
+    let i16at = |b: &[u8], o: usize| i16::from_le_bytes([b[o], b[o + 1]]);
+    let mut exact = 0;
+    for k in 0..n {
+        let e = &list[0x30 * k..0x30 * k + 0x30];
+        let origin = [i32at(e, 0), i32at(e, 4), i32at(e, 8)];
+        let offs: [[i16; 3]; 4] = std::array::from_fn(|c| std::array::from_fn(|j| i16at(e, 0xC + 6 * c + 2 * j)));
+        let game = (origin, offs, [e[0x24], e[0x26]], [e[0x25], e[0x27]], e[0x28], e[0x29], e[0x2B], e[0x2C] as u16);
+        let found = mine.iter().find(|d| d.origin == origin);
+        let ok = found.is_some_and(|d| (d.origin, d.offs, d.uv0, d.size, d.slot, d.scale, d.intensity, d.tpage_add) == game);
+        exact += ok as usize;
+        eprintln!("decal check: game {:?} port {:?} {}", game, found, if ok { "exact" } else { "DIFF" });
+    }
+    eprintln!("decal check: {exact} of {n} game entries exact; port built {}", mine.len());
+    exit.write(AppExit::Success);
 }
 
 /// FUN_8007E21C's weather loop: the drops into the effects frame.

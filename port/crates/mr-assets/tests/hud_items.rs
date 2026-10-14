@@ -56,12 +56,12 @@ fn state_3800() -> (HudState, ItemHud) {
     }
     let st = HudState { countdown: 0, countdown_start: 300, mode: 1, laps: 3, race_time: 20415, ..HudState::default() }.with_kart(&kart);
     let karts = vec![
-        MapKart { x: 867378, z: 831552, heading: 1652, flags: 2, character: 0 },
-        MapKart { x: 939646, z: 534838, heading: 3534, flags: 1, character: 21 },
-        MapKart { x: 1064337, z: 906466, heading: 4018, flags: 3, character: 14 },
-        MapKart { x: -218181, z: 423576, heading: 2464, flags: 5, character: 23 },
-        MapKart { x: 1103851, z: 902756, heading: 3511, flags: 1, character: 3 },
-        MapKart { x: 890125, z: 500392, heading: 4084, flags: 1, character: 10 },
+        MapKart { x: 867378, z: 831552, heading: 1652, flags: 2, character: 0, damage: 0 },
+        MapKart { x: 939646, z: 534838, heading: 3534, flags: 1, character: 21, damage: 0 },
+        MapKart { x: 1064337, z: 906466, heading: 4018, flags: 3, character: 14, damage: 0 },
+        MapKart { x: -218181, z: 423576, heading: 2464, flags: 5, character: 23, damage: 0 },
+        MapKart { x: 1103851, z: 902756, heading: 3511, flags: 1, character: 3, damage: 0 },
+        MapKart { x: 890125, z: 500392, heading: 4084, flags: 1, character: 10, damage: 0 },
     ];
     let it = ItemHud {
         frame: 4564,

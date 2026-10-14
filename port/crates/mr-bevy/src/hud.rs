@@ -345,6 +345,7 @@ fn items_from_player(
             heading: i16::from_le_bytes([r[0xE], r[0xF]]),
             flags: r[0x496],
             character: r[0x4B2],
+            damage: i16::from_le_bytes([r[0x440], r[0x441]]),
         })
         .collect();
     let mut cam = [[0i16; 3]; 3];
@@ -380,7 +381,7 @@ fn capture_items(m: &mr_sim::mem::Mem) -> ItemHud {
     let karts = (0..n)
         .map(|k| {
             let a = k0 + 0x504 * k;
-            MapKart { x: m.i32(a), z: m.i32(a + 8), heading: m.i16(a + 0xE), flags: m.u8(a + 0x496), character: m.u8(a + 0x4B2) }
+            MapKart { x: m.i32(a), z: m.i32(a + 8), heading: m.i16(a + 0xE), flags: m.u8(a + 0x496), character: m.u8(a + 0x4B2), damage: m.i16(a + 0x440) }
         })
         .collect();
     let mut cam = [[0i16; 3]; 3];
@@ -442,6 +443,7 @@ fn replay_items(p: &crate::Player, pulse: &mut (HudPulse, i32)) -> Option<ItemHu
             heading: i16::from_le_bytes([r[0xE], r[0xF]]),
             flags: r[0x496],
             character: r[0x4B2],
+            damage: i16::from_le_bytes([r[0x440], r[0x441]]),
         }],
         players: 1,
         race_flags: 0,

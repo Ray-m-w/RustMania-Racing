@@ -192,7 +192,15 @@ kartfx.rs, hud_items.rs).
   render ledger. Side by sides: analysis/s6/courses/sbs_NAME_{grid,end}.png
   (oracle left, port right; the port's free run is not the oracle's, so
   karts / camera differ), look_*/pair_* (dev MRM_LOOK views two ticks apart).
-- Seen, not R's scope: DISCO's palette is bluer / purpler in the oracle at
-  the grid and at VB 3400 (static, not an animation: likely the load-time
-  CLUTs, FUN_800441D8 / FUN_80045F1C with course flag 0x10); GLACIER's port
-  frame has no minimap where the oracle draws one.
+- Closed (R, after the lead's follow-up): the "DISCO palette" was not a
+  tint: with the oracle's own camera (eye and view matrix from the capture,
+  dev MRM_LOOK) the port's frame has the oracle's colours on every course
+  (analysis/s6/courses/samecam_NAME_{grid,end}.png, sheets samecam_sheet*);
+  the port's free-run camera / grid line-up simply looks elsewhere. Also
+  checked: the course VRAM after the load = mr-raw's decode (DISCO 99.3%,
+  the rest the scrolled / animated rectangles; tools/oracle/course_vram.py)
+  and 108 of 108 matched oracle GP0 polygons carry the DAT vertex colours.
+  The minimap was missing on RALLY (0x20) and GLACIER (0x21): the HUD read
+  the course flags and map table for courses 0..0x1F only; now 0..0x24, and
+  knocked-out karts (race flag 8, battles) leave the map as FUN_80048A0C
+  does. All 17 maps vs end.png: analysis/s6/courses/minimaps_all.png.

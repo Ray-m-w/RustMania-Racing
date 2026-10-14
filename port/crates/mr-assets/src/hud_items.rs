@@ -134,8 +134,8 @@ impl ItemTables {
         arrow_z.copy_from_slice(&ar[8..]);
         let mut sparkle = [0; 8];
         sparkle.copy_from_slice(&i16s(addr::SPARKLE, 8)?);
-        let course_flags = (0..0x20).map(|c| le::u16(exe, off(addr::COURSE_FLAGS) + 0xC * c + 2)).collect();
-        let maps = exe.get(off(addr::MAP)..off(addr::MAP) + 0x14 * 0x20)?.to_vec();
+        let course_flags = (0..0x25).map(|c| le::u16(exe, off(addr::COURSE_FLAGS) + 0xC * c + 2)).collect();
+        let maps = exe.get(off(addr::MAP)..off(addr::MAP) + 0x14 * 0x25)?.to_vec();
         Some(ItemTables {
             sin,
             anim,
@@ -300,6 +300,8 @@ pub struct MapKart {
     pub flags: u8,
     /// Kart +0x4B2: character.
     pub character: u8,
+    /// Kart +0x440: damage (race flag 8: a kart at 1000 is not shown).
+    pub damage: i16,
 }
 
 /// Everything the item HUD reads, for one player kart.
@@ -643,6 +645,10 @@ pub fn minimap(t: &ItemTables, s: &ItemHud) -> Vec<Prim> {
     let ox = 0x1E0 - w;
     let oy = 0xE1 - h;
     for (i, k) in s.karts.iter().enumerate() {
+        // knocked out (race flag 8, battles): off the map
+        if (s.mode == 2 || s.mode == 7 || s.race_flags & 8 != 0) && k.damage >= 1000 {
+            continue;
+        }
         let mx = ox + w * ((k.x >> 5) - x0) / dx;
         let my = oy - h * ((k.z >> 5) - z0) / dz;
         if k.flags & 0x60 == 0 {

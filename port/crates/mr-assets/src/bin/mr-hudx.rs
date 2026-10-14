@@ -117,7 +117,7 @@ pub fn states(c: &Cap, vb: u32) -> (HudState, ItemHud, [(u16, u16); 32]) {
     let karts = (0..n)
         .map(|k| {
             let r = c.read(vb, KART0 + k * 0x504, 0x504);
-            MapKart { x: le::i32(&r, 0), z: le::i32(&r, 8), heading: le::i16(&r, 0xE), flags: r[0x496], character: r[0x4B2] }
+            MapKart { x: le::i32(&r, 0), z: le::i32(&r, 8), heading: le::i16(&r, 0xE), flags: r[0x496], character: r[0x4B2], damage: le::i16(&r, 0x440) }
         })
         .collect();
     let cm = c.read(vb, 0x800C_4F40, 0x12);

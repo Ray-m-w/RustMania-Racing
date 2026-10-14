@@ -16,10 +16,14 @@ use mr_sim::oracle;
 use mr_sim::scenery;
 use mr_sim::session::{bios_rand, bios_rand_rewind};
 
+fn ram_for(dir: &std::path::Path, name: &str) -> Option<Vec<u8>> {
+    std::fs::read(dir.join(name).join("ram0.bin")).ok()
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let slots = args.iter().any(|a| a == "--slots");
-    let mut names: Vec<String> = args.iter().filter(|a| !a.starts_with("--")).map(|a| a.to_ascii_uppercase()).collect();
+    let mut names: Vec<String> = args.iter().filter(|a| !a.starts_with("--") && !a.contains('.')).map(|a| a.to_ascii_uppercase()).collect();
     let root = oracle::repo_root();
     let dir = root.join("analysis/oracle/courses");
     if names.is_empty() {
@@ -37,6 +41,58 @@ fn main() {
         let objs = mr_sim::objects::CourseObjects::from_dat(&dat, &dat_bytes);
         let breakables = mr_sim::breakables::table(info.id);
         println!("## {name} (course {:#x})", info.id);
+        if let Some(i) = args.iter().position(|a| a == "--ground") {
+            // dev: the TER surfaces under world x, y, z
+            let v: Vec<i32> = args[i + 1].split(':').map(|x| x.parse().unwrap()).collect();
+            let w = mr_sim::world::World::course(&mut disc, info.id).expect("world");
+            let g = w.ter.ground(v[0], v[1], v[2]);
+            println!("   ground at {v:?}: height {} nearest_y {} in grid {}", g.height, g.nearest_y, g.in_grid);
+            continue;
+        }
+        if args.iter().any(|a| a == "--lightsel") {
+            let mut c = std::collections::BTreeMap::new();
+            for o in &dat.objects {
+                *c.entry(dat.desc(o).b_hi & 7).or_insert(0) += 1;
+            }
+            println!("   light-matrix select (b_hi & 7) -> objects: {c:?}");
+            continue;
+        }
+        if args.iter().any(|a| a == "--lit") {
+            // meshes with 12-byte vertices (negative count): FUN_80012390's
+            // GTE-lit path
+            let lit: Vec<usize> = (0..dat.objects.len()).filter(|&i| dat.mesh(&dat.objects[i]).is_some_and(|m| m.raw_count < 0)).collect();
+            let polys: usize = lit.iter().map(|&i| dat.mesh(&dat.objects[i]).map(|m| m.groups.iter().map(|g| g.prims.len()).sum::<usize>()).unwrap_or(0)).sum();
+            println!("   lit meshes: {} objects, {} polygons (of {} objects)", lit.len(), polys, dat.objects.len());
+            if let Some(&i) = lit.first() {
+                let m = dat.mesh(&dat.objects[i]).unwrap();
+                for v in m.vertices.iter().take(4) {
+                    println!("     obj {i} vertex {:?} colour {:#06x} extra {:?}", v.pos, v.color, v.extra);
+                }
+            }
+            continue;
+        }
+        if let Some(i) = args.iter().position(|a| a == "--gp0") {
+            gp0(&mut disc, &exe_bytes, &info, &dat, &args[i + 1]);
+            continue;
+        }
+        if args.iter().any(|a| a == "--colours") {
+            // mesh vertex colours in the oracle's RAM (course menu) vs the disc
+            if let Some(ram) = ram_for(&dir, &name) {
+                let m = Mem::new(ram[..0x20_0000].to_vec(), ram[0x20_0000..0x20_0400].to_vec());
+                let base = m.u32(0x800B_0EE8);
+                let (mut same, mut diff, mut objs) = (0usize, 0usize, std::collections::BTreeSet::new());
+                for (oi, o) in dat.objects.iter().enumerate() {
+                    let Some(mesh) = dat.mesh(o) else { continue };
+                    for (k, v) in mesh.vertices.iter().enumerate() {
+                        let stride = if mesh.raw_count < 0 { 12 } else { 8 };
+                        let a = base + (mesh.offset + 4 + stride * k + 6) as u32;
+                        if m.u16(a) == v.color { same += 1 } else { diff += 1; objs.insert(oi); }
+                    }
+                }
+                println!("   vertex colours in RAM: {same} as on the disc, {diff} differ ({} objects: {:?})", objs.len(), objs.iter().take(12).collect::<Vec<_>>());
+            }
+            continue;
+        }
         let ram = std::fs::read(dir.join(&name).join("ram0.bin")).ok();
         let port = if let Some(ram) = ram.as_ref() {
             let m = Mem::new(ram[..0x20_0000].to_vec(), ram[0x20_0000..0x20_0400].to_vec());
@@ -248,4 +304,103 @@ fn poses(m: &Mem, info: &CourseInfo, dat: &mr_assets::dat::Dat, _port: &[scenery
     if ok + bad > 0 {
         println!("   poses: {ok} moved slots exact, {bad} differ (RAM at the course menu, frame counter {frame})");
     }
+}
+
+/// `--gp0 FILE` (tools/oracle/gp0_polys.py lines): every oracle polygon
+/// matched to the DAT primitive with its texture page, CLUT and UVs; prints
+/// the DAT vertex colours next to the colours the game sent.
+fn gp0(disc: &mut mr_disc::Disc, exe: &[u8], info: &CourseInfo, dat: &mr_assets::dat::Dat, path: &str) {
+    use mr_assets::raw;
+    let rawp = raw::course_raw_path(exe, info.id as u32).unwrap();
+    let env = raw::LoadEnv::from_exe(exe, info.id as u32).unwrap();
+    let dec = raw::decode(&disc.read(&rawp).unwrap(), &env).unwrap();
+    let mut slots = [None; 32];
+    for (k, s) in dec.slots.iter().enumerate() {
+        if let Some(s) = s {
+            if let Some(tp) = s.tpage {
+                slots[k] = Some(mr_assets::dat::TexSlot { tpage: tp, clut: s.clut, fixed_clut: s.mode.unwrap_or(0) });
+            }
+        }
+    }
+    // key: (tpage w/o abr, clut, uvs in GPU order) -> vertex colours
+    let mut map: std::collections::HashMap<(u16, u16, Vec<[u8; 2]>), Vec<([u8; 3], usize)>> = Default::default();
+    let mut keys: std::collections::HashMap<usize, (u16, u16)> = Default::default();
+    for (oi, o) in dat.objects.iter().enumerate() {
+        let Some(mesh) = dat.mesh(o) else { continue };
+        for g in &mesh.groups {
+            if !g.is_textured() {
+                continue;
+            }
+            let Some(slot) = slots[g.tex_slot() as usize] else { continue };
+            let n = if g.is_triangle() { 3 } else { 4 };
+            let ord: &[usize] = if n == 4 { &[0, 1, 3, 2] } else { &[0, 1, 2] };
+            for p in &g.prims {
+                let (tp, cl) = mr_assets::dat::prim_tpage_clut(slot, g, p);
+                let uv: Vec<[u8; 2]> = ord.iter().map(|&k| p.uv[k]).collect();
+                for level in 0..3u8 {
+                    if level > 0 && g.tex_slot() > 3 {
+                        break;
+                    }
+                    let l = mr_assets::dat::lod_uvs(g.tex_slot() as u8, level, p.uv);
+                    let uvl: Vec<[u8; 2]> = ord.iter().map(|&k| l[k]).collect();
+                    let e = map.entry((0, 0, uvl)).or_default();
+                    for &k in ord {
+                        e.push((mesh.vertices[p.idx[k] as usize].rgb(), oi));
+                    }
+                }
+                keys.entry(oi).or_insert((tp, cl));
+            }
+        }
+    }
+    if let Ok(q) = std::env::var("MR_RGBQ") {
+        // dev: DAT prims on CLUT c with a vertex colour within 8 of (r, g, b)
+        let w: Vec<i32> = q.split(',').map(|x| x.parse().unwrap()).collect();
+        let mut n = 0;
+        for ((_, _, uv), d) in map.iter() {
+            let k = keys.get(&d[0].1).copied().unwrap_or_default();
+            if w[3] >= 0 && k.1 as i32 != w[3] {
+                continue;
+            }
+            if d.iter().any(|x| (0..3).all(|c| (x.0[c] as i32 - w[c]).abs() <= 8)) {
+                n += 1;
+                if n < 8 {
+                    println!("   rgbq obj {} layer {} uv {:?} rgb {:?}", d[0].1, if d[0].1 < dat.layer0_count { 0 } else { 1 }, uv, d.iter().take(uv.len()).map(|x| x.0).collect::<Vec<_>>());
+                }
+            }
+        }
+        println!("   rgbq: {n} prims");
+    }
+    if let Ok(q) = std::env::var("MR_UVQ") {
+        // dev: DAT prims containing uv (u, v) on a CLUT
+        let w: Vec<i32> = q.split(',').map(|x| x.parse().unwrap()).collect();
+        for ((_, _, uv), d) in map.iter() {
+            let k = keys.get(&d[0].1).copied().unwrap_or_default();
+            let (u0, u1) = (uv.iter().map(|p| p[0] as i32).min().unwrap(), uv.iter().map(|p| p[0] as i32).max().unwrap());
+            let (v0, v1) = (uv.iter().map(|p| p[1] as i32).min().unwrap(), uv.iter().map(|p| p[1] as i32).max().unwrap());
+            if k.1 as i32 == w[2] && u0 <= w[0] && w[0] <= u1 && v0 <= w[1] && w[1] <= v1 {
+                println!("   uvq obj {} uv {:?} rgb {:?}", d[0].1, uv, d.iter().take(uv.len()).map(|x| x.0).collect::<Vec<_>>());
+            }
+        }
+    }
+    let text = std::fs::read_to_string(path).expect("gp0 lines");
+    let (mut hit, mut miss) = (0, 0);
+    for line in text.lines() {
+        let v: Vec<i32> = line.split_whitespace().map(|x| x.parse().unwrap()).collect();
+        let (tp, cl, n) = (v[0] as u16, v[1] as u16, v[2] as usize);
+        let uv: Vec<[u8; 2]> = (0..n).map(|k| [v[3 + 2 * k] as u8, v[4 + 2 * k] as u8]).collect();
+        let col: Vec<[i32; 3]> = (0..n).map(|k| [v[3 + 2 * n + 3 * k], v[4 + 2 * n + 3 * k], v[5 + 2 * n + 3 * k]]).collect();
+        let xy: Vec<[i32; 2]> = (0..n).map(|k| [v[3 + 5 * n + 2 * k], v[4 + 5 * n + 2 * k]]).collect();
+        match map.get(&(0, 0, uv)) {
+            Some(d) => {
+                hit += 1;
+                let dc: Vec<[u8; 3]> = d.iter().take(n).map(|x| x.0).collect();
+                let k = keys.get(&d[0].1).copied().unwrap_or_default();
+                let cands: std::collections::BTreeSet<usize> = d.iter().map(|x| x.1).collect();
+                println!("   pair {:?} {:?} {}", d.chunks(n).map(|c| c.iter().map(|x| x.0).collect::<Vec<_>>()).collect::<Vec<_>>(), col, cands.len());
+                println!("   obj {} tp/clut dat {:#x}/{:#x} game {:#x}/{:#x} y {:?}: dat {:?} game {:?}", d[0].1, k.0, k.1, tp, cl, xy.iter().map(|p| p[1]).collect::<Vec<_>>(), dc, col);
+            }
+            None => miss += 1,
+        }
+    }
+    println!("   gp0 polygons matched {hit}, unmatched {miss} (LOD UVs, karts, HUD, effects)");
 }

@@ -189,3 +189,9 @@ pick-list opens on START, not at start, and does not pause the title),
 main.rs select_objects uses the game's selection on the title, scene.rs
 update_banners takes Option<BannerState>. S: lap_timing now takes `rand`
 (tests/fixtures.rs updated).
+(2026-10-14, R, follow-up) Closed: DISCO "palette" (no tint: same colours
+with the oracle's camera on all 17 courses; the port's free run looks
+elsewhere), minimap on RALLY / GLACIER (HUD tables were sized for courses
+0..0x1F), projectile shadows exact vs the game's shadow list (OVAL). New
+oracle helpers (lock-held, slot 11 only): tools/oracle/course_gp0.py,
+course_ram.py, course_vram.py, gp0_polys.py.

@@ -1329,6 +1329,26 @@ pub struct DrawParams {
 impl DrawParams {
     /// DOCK, 1-player race (RAM, 2026-10-12): 2386, 2002, 1139.
     pub const DOCK_1P: DrawParams = DrawParams { cd0: 2386, de8: 2002, b00: 1139 };
+
+    /// A 1-player race on a course whose flags (u16 at 0x800ACB3A +
+    /// 12 * course) are `flags`: FUN_8002e2f0 sets cd4 = 0x952 with flag 4,
+    /// else 5000; cd0 = cd4, de8 = cd4 - 0x180, b00 = 0x4AF - DAT_800a8840.
+    /// [CODE 8002e2f0] [RAM: all 18 course captures, cd0 / de8 = 2386 / 2002
+    /// or 5000 / 4616]
+    pub fn race_1p(flags: u16) -> DrawParams {
+        let cd4 = if flags & 4 != 0 { 0x952 } else { 5000 };
+        DrawParams { cd0: cd4, de8: cd4 - 0x180, b00: 1139 }
+    }
+
+    /// The course flags u16 at 0x800ACB3A + 12 * course from the executable.
+    pub fn course_flags(exe: &[u8], course: usize) -> Option<u16> {
+        if exe.len() < 0x800 || &exe[0..8] != b"PS-X EXE" {
+            return None;
+        }
+        let t_addr = u32::from_le_bytes(exe[0x18..0x1C].try_into().ok()?);
+        let off = (0x800A_CB3A - t_addr) as usize + 0x800 + 12 * course;
+        Some(u16::from_le_bytes(exe.get(off..off + 2)?.try_into().ok()?))
+    }
 }
 
 /// Which draw list FUN_80010000 put an object in: 0x800D1DD0 (objects

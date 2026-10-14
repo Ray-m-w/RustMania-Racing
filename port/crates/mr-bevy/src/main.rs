@@ -35,6 +35,7 @@ mod vramtex;
 pub mod courses;
 mod title;
 mod movers;
+mod scenepush;
 
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::prelude::*;
@@ -149,6 +150,8 @@ pub struct TrackVis {
     pub zone: usize,
     /// Layer-1 backdrop vs stand-in, objects the stream ever shows (scene::classify_layers).
     pub info: scene::LayerInfo,
+    /// The course's draw distances (FUN_8002e2f0, 1-player race).
+    pub draw: mr_assets::dat::DrawParams,
 }
 
 fn select_objects(
@@ -202,7 +205,7 @@ fn select_objects(
     };
     let drawn: std::collections::HashSet<usize> = vis
         .dat
-        .drawn(eye, cam, &mask, if title { title::TITLE_DRAW } else { mr_assets::dat::DrawParams::DOCK_1P })
+        .drawn(eye, cam, &mask, if title { title::TITLE_DRAW } else { vis.draw })
         .iter()
         .map(|d| d.object)
         .collect();
@@ -464,6 +467,7 @@ fn main() {
         .add_plugins(animtex::AnimTexPlugin)
         .add_plugins(effects::EffectsPlugin)
         .add_plugins(movers::MoversPlugin)
+        .add_plugins(scenepush::ScenePushPlugin)
         .add_plugins(karts::KartsPlugin)
         .add_plugins(audio::AudioOutPlugin)
         .add_plugins(sfx::SfxPlugin)

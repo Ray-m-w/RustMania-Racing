@@ -51,6 +51,12 @@ pub struct FxSemi(pub Arc<Vec<crate::psxfx::FxPrim>>);
 /// (-1 = the game's ground list, drawn under everything else). None when
 /// there are none.
 pub fn semi_prims(polys: &[PsxPoly], view: u8, bucket: i8, to_bevy: impl Fn([i32; 3]) -> Vec3) -> Option<FxSemi> {
+    semi_prims_pulled(polys, view, bucket, 0.01, to_bevy)
+}
+
+/// `semi_prims` with a depth pull (negative: pushed away from the eye; the
+/// scenery's ordering-table bias, scenepush.rs).
+pub fn semi_prims_pulled(polys: &[PsxPoly], view: u8, bucket: i8, pull: f32, to_bevy: impl Fn([i32; 3]) -> Vec3) -> Option<FxSemi> {
     use crate::psxfx::{Blend, FxPrim, FxVert};
     let mut out = Vec::new();
     for p in polys.iter().filter(|p| p.semi && p.pos.len() >= 3) {
@@ -74,7 +80,7 @@ pub fn semi_prims(polys: &[PsxPoly], view: u8, bucket: i8, to_bevy: impl Fn([i32
             center: center / n as f32,
             // scenery: plain depth test, always; a hair of tolerance for
             // decals coplanar with opaque scenery
-            depth_pull: 0.01,
+            depth_pull: pull,
             view,
             bucket,
             always_depth: true,

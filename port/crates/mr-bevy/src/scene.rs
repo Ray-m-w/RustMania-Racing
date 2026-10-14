@@ -126,6 +126,7 @@ pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut mats: ResMut<Assets<StandardMaterial>>,
+    mut pmats: ResMut<Assets<crate::scenepush::PushMaterial>>,
     mut images: ResMut<Assets<Image>>,
 ) {
     let mut disc = mr_disc::Disc::open_default().expect("open the disc (MRM_DISC or game.toml)");
@@ -147,6 +148,9 @@ pub fn setup(
     let mut ground_cache = psxmesh::MatCache(Default::default(), -2000.0);
     let mut far_cache = psxmesh::MatCache(Default::default(), 0.0);
     let info = classify_layers(&dat, &sin, &dslots);
+    let course_bias = dat::course_depth_bias(&exe, course.id as usize).unwrap_or(0);
+    let mut push_cache = crate::scenepush::PushCache::default();
+    let draw = dat::DrawParams::course_flags(&exe, course.id as usize).map(dat::DrawParams::race_1p).unwrap_or(dat::DrawParams::DOCK_1P);
     if let Some(path) = crate::settings::arg_value("--layer-report") {
         let _ = std::fs::write(&path, layer_report(&dat, &sin, &dslots, &info));
     }
@@ -179,17 +183,37 @@ pub fn setup(
         // Semi-transparent polygons (water, glows): the effects pass, in the
         // far camera's pass for layer 1, under everything for the ground list.
         let view = if far { crate::psxfx::VIEW_FAR } else { crate::psxfx::VIEW_MAIN };
-        let semi = psxmesh::semi_prims(&polys, view, if ground { -1 } else { 0 }, world);
+        // Layer 0: the object's ordering-table bias as a depth push
+        // (scenepush.rs; the ground list a hair further, as its old depth bias)
+        let push = (!far && crate::scenepush::enabled())
+            .then(|| crate::scenepush::push_units(dat::lod_bias(course_bias, dat.desc(o).b_lo)) + if ground { 0.02 } else { 0.0 });
+        // faithful draw distance: the layer-0 renderer's per-polygon far cut
+        let far_cut = if crate::settings::Settings::global().faithful_draw_distance() && !crate::title::on_title() {
+            crate::scenepush::far_cut(o.loaded_flags(), &draw)
+        } else {
+            0.0
+        };
+        let semi = psxmesh::semi_prims_pulled(&polys, view, if ground { -1 } else { 0 }, 0.01 - push.unwrap_or(0.0), world);
+        let parts: Vec<_> = parts
+            .into_iter()
+            .map(|(mesh, mat)| (mesh, push.map(|u| push_cache.get(&mats, &mut pmats, &mat, u, far_cut)).ok_or(mat)))
+            .collect();
         let mut e = commands.spawn((Transform::default(), Visibility::default(), crate::TrackObject(i)));
         if let Some(m) = mover {
             e.insert((crate::movers::pose_transform(&m, None).unwrap_or_default(), m));
         }
         e.with_children(|c| {
             for (mesh, mat) in parts {
-                if far {
-                    c.spawn((Mesh3d(mesh), MeshMaterial3d(mat), RenderLayers::layer(FAR_LAYER)));
-                } else {
-                    c.spawn((Mesh3d(mesh), MeshMaterial3d(mat)));
+                match mat {
+                    Ok(pm) => {
+                        c.spawn((Mesh3d(mesh), MeshMaterial3d(pm)));
+                    }
+                    Err(mat) if far => {
+                        c.spawn((Mesh3d(mesh), MeshMaterial3d(mat), RenderLayers::layer(FAR_LAYER)));
+                    }
+                    Err(mat) => {
+                        c.spawn((Mesh3d(mesh), MeshMaterial3d(mat)));
+                    }
                 }
             }
             if let Some(s) = semi {
@@ -222,7 +246,7 @@ pub fn setup(
         commands.insert_resource(crate::kartshadow::ShadowState::new(SinTable(sin.0.clone()), slot));
     }
 
-    commands.insert_resource(crate::TrackVis { dat, zone: 0, info });
+    commands.insert_resource(crate::TrackVis { dat, zone: 0, info, draw });
 
     // Sky dome (DOCK.AXE): gouraud quads drawn around the eye with zero
     // translation (FUN_80034AE4), i.e. directions only. Rendered as a big

@@ -20,7 +20,7 @@
 # route format, aligned to the oracle's DOCK grid savestate) and
 # <stamp>.bevy.trace.jsonl (the Rust run). Compare with
 # .\tools\compare-drive.ps1 <stamp>.
-param([switch]$Record, [switch]$Demo, [switch]$Leader, [switch]$Hz60,
+param([switch]$Record, [switch]$Demo, [switch]$Leader, [switch]$Hz30,
       [Parameter(ValueFromRemainingArguments = $true)][string[]]$Rest)
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
@@ -33,7 +33,7 @@ $exe = Join-Path $Root "port\target\release\mr-bevy.exe"
 $argv = @()
 if ($Leader) { $argv += "--leader" }
 if ($Demo) { $argv += "--autopilot" }
-if ($Hz60) { $argv += @("--set", "logic_hz=60") }
+if ($Hz30) { $argv += @("--set", "logic_hz=30") }
 if ($Record) {
     $dir = Join-Path $Root "analysis\drives"
     New-Item -ItemType Directory -Force $dir | Out-Null

@@ -39,11 +39,12 @@ use bevy::prelude::*;
 use crate::karts::{KartFeed, KartFrame};
 use crate::{input, Driver, Player, Pose};
 
-/// The logic rate from the settings (30 or 60).
+/// The logic rate from the settings (30 or 60; default 60 since the owner
+/// drove it, 2026-10-14).
 pub fn logic_hz() -> u8 {
     match crate::settings::Settings::global().get("logic_hz") {
-        Some("60") => 60,
-        _ => 30,
+        Some("30") => 30,
+        _ => 60,
     }
 }
 

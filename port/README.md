@@ -40,7 +40,7 @@ line wins; every key with its help: `settings::KNOWN`):
 Logic rate and input latency (Session 5, track G; same settings mechanism):
 | key | default | values | what |
 |---|---|---|---|
-| `logic_hz` | 30 | 30 / 60 | 30 = the game's logic (2 VBlanks per tick, exact against the original); 60 = the 60 Hz mode (1 VBlank per tick, the game's per-tick terms kept at their per-second rates; within the feel tolerance of 30: ../docs/spec/kart-physics-ledger.md section 12). Not the default until the owner has driven it |
+| `logic_hz` | 60 | 30 / 60 | 30 = the game's logic (2 VBlanks per tick, exact against the original); 60 = the 60 Hz mode (1 VBlank per tick, the game's per-tick terms kept at their per-second rates; within the feel tolerance of 30: ../docs/spec/kart-physics-ledger.md section 12). Default 60 since 2026-10-14 (owner drove it); `--oracle-grid` runs always use 30 |
 | `render_latency` | low | low / normal | low = Bevy's pipelined rendering off (each frame rendered right after its update) and at most 1 queued swapchain frame; normal = Bevy's defaults (render thread one frame behind, 2 queued frames) |
 | `low_latency` | true | true/false | the pad is sampled every display frame (a tap between two ticks still counts) and the display shows the coming tick as soon as its buttons are known (it runs that tick on a throw-away copy of the session and interpolates toward it; the simulation is untouched). false = the Session 4 display (interpolated one tick behind) |
 

@@ -322,7 +322,8 @@ impl SimRun {
             // the catch-up the oracle race had (player 6th, leader far ahead).
             // Overrides before the countdown, the ramped value after
             // (mr-standalone --catchup-as-6th).
-            let cfg = mr_sim::session::SessionConfig { logic_hz: pacing::logic_hz(), ..mr_sim::session::SessionConfig::dock_solo() };
+            // Always 30 Hz: the oracle's routes and traces are per 30 Hz tick.
+            let cfg = mr_sim::session::SessionConfig { logic_hz: 30, ..mr_sim::session::SessionConfig::dock_solo() };
             let mut s = mr_sim::session::Session::with_config(&mut disc, cfg).expect("start the mr-sim session");
             if !leader {
                 s.leader_progress_override = Some(1000);

@@ -17,6 +17,17 @@ the `disc = "..."` line of ../game.toml or `$env:MRM_DISC` (a .cue or .bin).
 Keyboard: arrows steer, X accelerate, S brake/reverse, Z jump.
 Gamepad: right trigger / south accelerate, left trigger / east brake, west jump.
 
+The game's title screen comes first (Session 6, track T; ../docs/spec/frontend.md):
+the frontend scene (FRONTEND/OPTIONS.*) with the orbiting camera, the star and
+fruit rings, PRESS START and the title music. START (Enter / pad Start) fades
+out to the course pick-list, then the race. `--skip-title` (or
+`skip_title = true` in settings.txt) starts in the race; the tool flags below
+(--oracle-grid, --route, --replay, --shot, ...) always do. Title check flags:
+`--title-shot F --title-shot-at VB` (window capture of the frozen title at
+frame counter VB, then exit), `--title-t0 T` (the orbit's start parameter;
+5622 = the oracle run from slot 1), `--title-token-colours 2,3,1,..`,
+`--title-press-start VB`, `--title-after-shot F`.
+
 mr-bevy options: `--autopilot` (AI drives Kermit), `--oracle-grid` (solo
 session aligned to the oracle's grid savestate; `--leader` there = no catch-up), `--record-route F` / `--trace-out F` (oracle loop),
 `--route F` (scripted input), `--replay TRACE` (show an oracle trace),

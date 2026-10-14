@@ -811,7 +811,11 @@ fn draw_tokens(st: Res<TitleState>, cam: Query<&Transform, With<TitleCam>>, q: Q
         // texel extent (FUN_80030474's uw / vh + 1)
         let (tw, th) = if tm.0 == STAR { (0x38, 0x38) } else { (tb[2] as i32, tb[3] as i32) };
         let (mut pos, mut uv, mut col) = (Vec::new(), Vec::new(), Vec::new());
-        for (i, t) in st.tokens.iter().enumerate().filter(|(_, t)| t.colour == tm.0) {
+        // tpage flags 0x160: drawn within +-20000 TER units (x, z) of the
+        // camera's pos / 32 (+0x34 / +0x3C)
+        let (cx, cz) = (st.cam.pos[0] >> 5, st.cam.pos[2] >> 5);
+        let near = |t: &Token| ((t.pos[0] >> 5) - cx).unsigned_abs() < 20000 && ((t.pos[2] >> 5) - cz).unsigned_abs() < 20000;
+        for (i, t) in st.tokens.iter().enumerate().filter(|(_, t)| t.colour == tm.0 && near(t)) {
             let c = crate::to_bevy(t.pos[0], t.pos[1], t.pos[2]);
             let spin = if tm.0 == STAR { 0 } else { spins[i % 4] };
             let (sn, cs) = ((spin as f32) * std::f32::consts::TAU / 4096.0).sin_cos();

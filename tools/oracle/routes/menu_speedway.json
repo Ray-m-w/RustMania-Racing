@@ -1,0 +1,81 @@
+{
+ "name": "menu_speedway",
+ "slot": 1,
+ "course": 0,
+ "world": 7,
+ "type": 0,
+ "end_vb": 250,
+ "steps": [
+  [
+   0,
+   ""
+  ],
+  [
+   20,
+   "down"
+  ],
+  [
+   26,
+   ""
+  ],
+  [
+   40,
+   "down"
+  ],
+  [
+   46,
+   ""
+  ],
+  [
+   60,
+   "down"
+  ],
+  [
+   66,
+   ""
+  ],
+  [
+   80,
+   "cross"
+  ],
+  [
+   86,
+   ""
+  ],
+  [
+   120,
+   "cross"
+  ],
+  [
+   126,
+   ""
+  ],
+  [
+   170,
+   "cross"
+  ],
+  [
+   176,
+   ""
+  ],
+  [
+   230,
+   "cross"
+  ],
+  [
+   236,
+   ""
+  ]
+ ],
+ "pokes": [
+  [
+   2148208402,
+   7,
+   1,
+   2
+  ]
+ ],
+ "loaded_vb": 484,
+ "saved_vb": 635,
+ "note": "(world 7, poked) / SPEEDWAY - RACE; from slot 1 (DOCK course menu); course loaded (0x800B0FAC == course, 0x800B0AF4 == -1) at loaded_vb, state saved ~150 VBlanks later (tools/oracle/goto_course.py)"
+}

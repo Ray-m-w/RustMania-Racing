@@ -1,0 +1,90 @@
+{
+ "name": "menu_cape",
+ "slot": 1,
+ "course": 18,
+ "world": 5,
+ "type": 1,
+ "end_vb": 290,
+ "steps": [
+  [
+   0,
+   ""
+  ],
+  [
+   20,
+   "down"
+  ],
+  [
+   26,
+   ""
+  ],
+  [
+   40,
+   "down"
+  ],
+  [
+   46,
+   ""
+  ],
+  [
+   60,
+   "down"
+  ],
+  [
+   66,
+   ""
+  ],
+  [
+   80,
+   "cross"
+  ],
+  [
+   86,
+   ""
+  ],
+  [
+   120,
+   "cross"
+  ],
+  [
+   126,
+   ""
+  ],
+  [
+   160,
+   "down"
+  ],
+  [
+   166,
+   ""
+  ],
+  [
+   190,
+   "cross"
+  ],
+  [
+   196,
+   ""
+  ],
+  [
+   240,
+   "down"
+  ],
+  [
+   246,
+   ""
+  ],
+  [
+   270,
+   "cross"
+  ],
+  [
+   276,
+   ""
+  ]
+ ],
+ "pokes": [],
+ "loaded_vb": 835,
+ "saved_vb": 986,
+ "note": "MUPPETS FROM SPACE / RACE B; from slot 1 (DOCK course menu); course loaded (0x800B0FAC == course, 0x800B0AF4 == -1) at loaded_vb, state saved ~150 VBlanks later (tools/oracle/goto_course.py)"
+}

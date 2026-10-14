@@ -1,0 +1,115 @@
+{
+ "name": "menu_oval",
+ "slot": 1,
+ "course": 26,
+ "world": 6,
+ "type": 0,
+ "end_vb": 290,
+ "steps": [
+  [
+   0,
+   ""
+  ],
+  [
+   20,
+   "down"
+  ],
+  [
+   26,
+   ""
+  ],
+  [
+   40,
+   "down"
+  ],
+  [
+   46,
+   ""
+  ],
+  [
+   60,
+   "down"
+  ],
+  [
+   66,
+   ""
+  ],
+  [
+   80,
+   "cross"
+  ],
+  [
+   86,
+   ""
+  ],
+  [
+   120,
+   "cross"
+  ],
+  [
+   126,
+   ""
+  ],
+  [
+   160,
+   "down"
+  ],
+  [
+   166,
+   ""
+  ],
+  [
+   180,
+   "down"
+  ],
+  [
+   186,
+   ""
+  ],
+  [
+   210,
+   "cross"
+  ],
+  [
+   216,
+   ""
+  ],
+  [
+   270,
+   "cross"
+  ],
+  [
+   276,
+   ""
+  ]
+ ],
+ "pokes": [
+  [
+   2148401750,
+   97,
+   1,
+   1
+  ],
+  [
+   2148401758,
+   97,
+   1,
+   1
+  ],
+  [
+   2148401766,
+   97,
+   1,
+   1
+  ],
+  [
+   2148401774,
+   97,
+   1,
+   1
+  ]
+ ],
+ "loaded_vb": 783,
+ "saved_vb": 934,
+ "note": "SECRET COURSES / STUDIO - RACE; from slot 1 (DOCK course menu); course loaded (0x800B0FAC == course, 0x800B0AF4 == -1) at loaded_vb, state saved ~150 VBlanks later (tools/oracle/goto_course.py)"
+}

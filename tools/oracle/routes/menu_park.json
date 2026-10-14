@@ -1,0 +1,90 @@
+{
+ "name": "menu_park",
+ "slot": 1,
+ "course": 16,
+ "world": 2,
+ "type": 0,
+ "end_vb": 290,
+ "steps": [
+  [
+   0,
+   ""
+  ],
+  [
+   20,
+   "down"
+  ],
+  [
+   26,
+   ""
+  ],
+  [
+   40,
+   "down"
+  ],
+  [
+   46,
+   ""
+  ],
+  [
+   60,
+   "down"
+  ],
+  [
+   66,
+   ""
+  ],
+  [
+   80,
+   "cross"
+  ],
+  [
+   86,
+   ""
+  ],
+  [
+   120,
+   "cross"
+  ],
+  [
+   126,
+   ""
+  ],
+  [
+   160,
+   "up"
+  ],
+  [
+   166,
+   ""
+  ],
+  [
+   180,
+   "up"
+  ],
+  [
+   186,
+   ""
+  ],
+  [
+   210,
+   "cross"
+  ],
+  [
+   216,
+   ""
+  ],
+  [
+   270,
+   "cross"
+  ],
+  [
+   276,
+   ""
+  ]
+ ],
+ "pokes": [],
+ "loaded_vb": 832,
+ "saved_vb": 984,
+ "note": "THE MUPPETS TAKE MANHATTAN / RACE A; from slot 1 (DOCK course menu); course loaded (0x800B0FAC == course, 0x800B0AF4 == -1) at loaded_vb, state saved ~150 VBlanks later (tools/oracle/goto_course.py)"
+}

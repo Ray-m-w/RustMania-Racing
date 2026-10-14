@@ -1,0 +1,90 @@
+{
+ "name": "menu_grave",
+ "slot": 1,
+ "course": 7,
+ "world": 3,
+ "type": 1,
+ "end_vb": 290,
+ "steps": [
+  [
+   0,
+   ""
+  ],
+  [
+   20,
+   "down"
+  ],
+  [
+   26,
+   ""
+  ],
+  [
+   40,
+   "down"
+  ],
+  [
+   46,
+   ""
+  ],
+  [
+   60,
+   "down"
+  ],
+  [
+   66,
+   ""
+  ],
+  [
+   80,
+   "cross"
+  ],
+  [
+   86,
+   ""
+  ],
+  [
+   120,
+   "cross"
+  ],
+  [
+   126,
+   ""
+  ],
+  [
+   160,
+   "up"
+  ],
+  [
+   166,
+   ""
+  ],
+  [
+   190,
+   "cross"
+  ],
+  [
+   196,
+   ""
+  ],
+  [
+   240,
+   "down"
+  ],
+  [
+   246,
+   ""
+  ],
+  [
+   270,
+   "cross"
+  ],
+  [
+   276,
+   ""
+  ]
+ ],
+ "pokes": [],
+ "loaded_vb": 841,
+ "saved_vb": 993,
+ "note": "THE MUPPET CHRISTMAS CAROL / RACE B; from slot 1 (DOCK course menu); course loaded (0x800B0FAC == course, 0x800B0AF4 == -1) at loaded_vb, state saved ~150 VBlanks later (tools/oracle/goto_course.py)"
+}

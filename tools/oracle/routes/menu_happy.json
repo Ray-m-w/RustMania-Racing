@@ -1,0 +1,98 @@
+{
+ "name": "menu_happy",
+ "slot": 1,
+ "course": 9,
+ "world": 1,
+ "type": 0,
+ "end_vb": 310,
+ "steps": [
+  [
+   0,
+   ""
+  ],
+  [
+   20,
+   "down"
+  ],
+  [
+   26,
+   ""
+  ],
+  [
+   40,
+   "down"
+  ],
+  [
+   46,
+   ""
+  ],
+  [
+   60,
+   "down"
+  ],
+  [
+   66,
+   ""
+  ],
+  [
+   80,
+   "cross"
+  ],
+  [
+   86,
+   ""
+  ],
+  [
+   120,
+   "cross"
+  ],
+  [
+   126,
+   ""
+  ],
+  [
+   160,
+   "up"
+  ],
+  [
+   166,
+   ""
+  ],
+  [
+   180,
+   "up"
+  ],
+  [
+   186,
+   ""
+  ],
+  [
+   200,
+   "up"
+  ],
+  [
+   206,
+   ""
+  ],
+  [
+   230,
+   "cross"
+  ],
+  [
+   236,
+   ""
+  ],
+  [
+   290,
+   "cross"
+  ],
+  [
+   296,
+   ""
+  ]
+ ],
+ "pokes": [],
+ "loaded_vb": 832,
+ "saved_vb": 983,
+ "note": "THE GREAT MUPPET CAPER / RACE A; from slot 1 (DOCK course menu); course loaded (0x800B0FAC == course, 0x800B0AF4 == -1) at loaded_vb, state saved ~150 VBlanks later (tools/oracle/goto_course.py)"
+}

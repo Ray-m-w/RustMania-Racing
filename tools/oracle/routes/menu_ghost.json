@@ -1,0 +1,114 @@
+{
+ "name": "menu_ghost",
+ "slot": 1,
+ "course": 2,
+ "world": 0,
+ "type": 1,
+ "end_vb": 350,
+ "steps": [
+  [
+   0,
+   ""
+  ],
+  [
+   20,
+   "down"
+  ],
+  [
+   26,
+   ""
+  ],
+  [
+   40,
+   "down"
+  ],
+  [
+   46,
+   ""
+  ],
+  [
+   60,
+   "down"
+  ],
+  [
+   66,
+   ""
+  ],
+  [
+   80,
+   "cross"
+  ],
+  [
+   86,
+   ""
+  ],
+  [
+   120,
+   "cross"
+  ],
+  [
+   126,
+   ""
+  ],
+  [
+   160,
+   "up"
+  ],
+  [
+   166,
+   ""
+  ],
+  [
+   180,
+   "up"
+  ],
+  [
+   186,
+   ""
+  ],
+  [
+   200,
+   "up"
+  ],
+  [
+   206,
+   ""
+  ],
+  [
+   220,
+   "up"
+  ],
+  [
+   226,
+   ""
+  ],
+  [
+   250,
+   "cross"
+  ],
+  [
+   256,
+   ""
+  ],
+  [
+   300,
+   "down"
+  ],
+  [
+   306,
+   ""
+  ],
+  [
+   330,
+   "cross"
+  ],
+  [
+   336,
+   ""
+  ]
+ ],
+ "pokes": [],
+ "loaded_vb": 906,
+ "saved_vb": 1057,
+ "note": "THE MUPPET MOVIE / GHOST TOWN; from slot 1 (DOCK course menu); course loaded (0x800B0FAC == course, 0x800B0AF4 == -1) at loaded_vb, state saved ~150 VBlanks later (tools/oracle/goto_course.py)"
+}

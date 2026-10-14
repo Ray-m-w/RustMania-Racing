@@ -182,26 +182,54 @@ particles"); effects.rs draws them with the rest.
   - fixed: the karts' colour factors +0x414 / +0x418 / +0x41C (vehicle,
     FUN_80026F3C) and +0x416 / +0x41A / +0x41E (driver, FUN_800276E8), 4.12,
     were ignored by the models; 0xB sets r, g 0x400 / 0x800 and b 0x2000
-    (the frozen kart turns blue), 0xE all 0x400 (dark). mr-bevy karts.rs
-    `tint_rigs` gives each rig its own materials and tints them from the
-    record (the gamma-space factor converted at a typical texel, 0.35).
-    Kart body means at VB 280, oracle vs port: 0xB 13/32/49 vs 13/25/42,
-    0xE 20/21/1 vs 16/12/1, untinted (0x15) 75/88/4 vs 80/91/3.
-  - open: 0xC also draws a pink additive glow on the ground at +0x300 (GP0:
-    FT4 uv (0x68, 0xA8) 0x18 x 0x18, slot 0x14 CLUT 9, every other frame).
-    It is an entry of FUN_800861F0's list 0x800CB058 (32 x 0x30, count
-    DAT_800B0DCD cleared by FUN_800306D0 each frame; flags 2 = this glow,
-    0 = a 0x20 shadow tile (0xA0, 0) subtractive, 1 = slot 0x15 (0x80,
-    0xC0)), filled by FUN_8006C388's effect animations (0xC: at +0x300,
-    size 5, colour +0x310) and by the weapons (projectile shadows). Its
-    drawer was not located; mr-sim marks those calls "render" and nothing
-    draws them. [CODE 800861f0, 8006c388] [GP0 analysis/s6/status/v2/gpu_c]
+    (the frozen kart turns blue), 0xE all 0x400 (dark). mr-bevy karts.rs:
+    each rig has its own `KartMaterial` (ExtendedMaterial, kart_tint.wgsl)
+    that multiplies the gamma-encoded colour by the factors, as the PS1
+    does. Colour-class means at VB 280 (oracle / port): untinted green
+    51/111 vs 55/118, yellow 160/148 vs 170/154; 0xE green 22 vs 26, yellow
+    46/41 vs 52/46; 0xB 38/142/97 vs 39/145/98.
+  - fixed with it: the kart shadow drew over the kart's lower body (its
+    ground exemption took the kart's upward faces near the ground for
+    ground: B - F darkened every kart, and a 0.25 tint went to black). The
+    exemption is now a height above the shadow's own plane (psxfx
+    `FxPrim::ground_normal`, flag PLANE; 0.1 x the half extent), so the kart
+    hides its shadow as the game's ground list does.
+  - fixed: the record's part matrices carry the kart's scale (+0x442: the
+    kart shrinking into effect 7's hole, the pulses and squashes);
+    kartmodel `to_transform` normalised it away. Scale = column lengths.
+  - fixed: the specials' ground decals (next item).
   - not a port error: the "SPECIAL MOVE" banner and icons (FUN_80049440)
     sat ~4 VBlanks ahead in the first side by sides. The oracle's
     `screenshot` at VBlank n shows the frame drawn from the RAM of n - 4
     (GP0: the icon x of the frame drawn at vbt + 1 is the RAM row's own,
     x = (+0x468 << 10) / 300 - 0x100); the side by sides take the port's
     replay at n - 4 (`--fx-shots` VB - 4) and then agree.
+- **Ground decals of the specials** (Session 6, H; kartfx.rs `decal`,
+  `special_decals`). FUN_800861F0(x, y, z, face, size, scale, intensity,
+  flags) fills entry 0xC6 + DAT_800B0DCD of the kart-shadow list 0x800C8B38
+  (= 0x800CB058; FUN_800306D0 clears the counts of entries 0..5 and
+  0xC6..0xE5 and DAT_800B0DCD every frame) and FUN_8002ADA8 draws it with
+  the kart shadows (oracle wtrace of the 0xC glow's GP0 packet: written at
+  pc 0x8002B47C). Entry: position; corners = the table 0x800AC168 (x, z)
+  * size / 16 through FUN_800252A4(b, a) of FUN_8003CCBC's angles of the
+  face's normal (+8..+C; no face = flat); +0x24 u, +0x25 w, +0x26 v,
+  +0x27 h, +0x28 slot, +0x29 scale, +0x2A count 1, +0x2B intensity, +0x2C
+  tpage add. Flags 0: (0xA0, 0) 0x20 slot 0x14, B - F; 1: (0x80, 0xC0)
+  0x10 slot 0x15, B - F; 2: (0x68, 0xA8) 0x18 slot 0x14, B + F. Callers in
+  FUN_8006C388 (switch on +0x4F1 - 1): effects 4, 0x13, 0x14, 0x17 the
+  kart's shadow grown (ground point, face +0x2E0, size 4 / 3 / 3 / 6,
+  scale +0x300 << 3); 7 a slot 0x15 tile (size +0x176 / 0x30, intensity
+  0xFF); 0xC the beam's glow (+0x300, face +0x30C, size 5, intensity +0x310);
+  0xF a shadow at +0x300 while +0x318 (a face) is set (scale +0x30C). The
+  weapons call it too (projectile shadows, weapons.rs "render"): not drawn
+  yet (their records are mr-sim's). mr-bevy builds the entries from each
+  kart record (live: face normals from the session's TER; capture replays:
+  the kart's +0x2D0 stands in) and draws them with `kartshadow::shadow_prim`.
+  Side by sides: analysis/s6/status/sbs_status_c.png (glow), _4 (cheese
+  shadow), _7 (the hole). The oracle's GP0 has the 0xC glow in every other
+  frame (60 Hz present of a 30 Hz game: list filled on alternate frames);
+  the port draws it every frame. [CODE 800861f0, 8002ada8, 800306d0,
+  8003ccbc, 800252a4, 8006c388] [GP0 / wtrace analysis/s6/decal]
 - **Far-kart impostor** FUN_8007D660 (Session 5): not an exhaust flame. The
   kart LOD byte +0x4B4 is (|kart - eye| >> 10)^2 / 0x1200 capped at 0x20
   (FUN_8002976C, recomputed each frame; the port's formula matches the

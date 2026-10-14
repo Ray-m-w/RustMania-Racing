@@ -158,7 +158,7 @@ fn side(px: i32, pz: i32, ax: i32, az: i32, bx: i32, bz: i32) -> i32 {
 }
 
 /// FUN_80082708: lap time accumulation and the finish-line side bits.
-pub fn lap_timing(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
+pub fn lap_timing(k: &mut KartState, g: &mut RaceGlobals, w: &World, rand: &mut dyn FnMut() -> i32) {
     if g.challenge != 0 || g.countdown != 0 || g.mode == 20 {
         return;
     }
@@ -170,6 +170,12 @@ pub fn lap_timing(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
         // with 1000 damage is knocked out (0x8008279C); lap timing goes on
         // either way (LAB_80082B84).
         knocked_out(k, g, w);
+        // The title (course 0x1E): the kart is re-created at once
+        // (0x800828C4; title.rs); with race flag 8 the lap timing below
+        // then runs on the new record.
+        if g.game_state == crate::title::TITLE_COURSE as i32 {
+            crate::title::respawn_in_update(k, g, w, rand);
+        }
     }
     if g.race_type == 3 {
         unreachable_in_scope!("lap timing, time trial");

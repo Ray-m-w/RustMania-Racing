@@ -176,8 +176,26 @@ pub fn race_progress(g: &RaceGlobals, w: &World, karts: &mut [&mut KartState], p
     if g.mode == 0xB || g.mode == 0x14 {
         return None;
     }
-    if g.race_type == 2 || g.race_flags & 1 != 0 || g.race_type == 3 {
-        crate::unreachable_in_scope!("race progress outside a plain race (battle / time trial / flag 1)");
+    if g.race_flags & 1 != 0 || g.race_type == 3 {
+        crate::unreachable_in_scope!("race progress outside a plain race (time trial / flag 1)");
+    }
+    // Race type 2 (battles, the title's frontend course 0x1E): no course
+    // progress; FUN_800834C0(1) ranks by +0x440, lowest first (0x80083A1C).
+    if g.race_type == 2 {
+        let n = karts.len();
+        let mut order: Vec<(i32, usize)> = karts.iter().enumerate().map(|(i, k)| (k.impact as i32, i)).collect();
+        for _ in 0..n.saturating_sub(1) {
+            for j in 0..n - 1 {
+                if order[j + 1].0 < order[j].0 {
+                    order.swap(j, j + 1);
+                }
+            }
+        }
+        for (rank, &(_, i)) in order.iter().enumerate() {
+            karts[i].race_pos = rank as u8 + 1;
+        }
+        position_flash(g, karts);
+        return Some(order[0].1);
     }
     let len = w.course.length? as i32;
     if g.race_clock == 0 {
@@ -214,8 +232,13 @@ pub fn race_progress(g: &RaceGlobals, w: &World, karts: &mut [&mut KartState], p
     for (rank, &(_, i)) in order.iter().enumerate() {
         karts[i].race_pos = rank as u8 + 1;
     }
-    // 0x80083A60: a position change shows for 0x1E VBlanks (+0x4FF), the
-    // shown position +0x4CA follows when the flash starts.
+    position_flash(g, karts);
+    Some(order[0].1)
+}
+
+/// 0x80083A60: a position change shows for 0x1E VBlanks (+0x4FF), the
+/// shown position +0x4CA follows when the flash starts.
+fn position_flash(g: &RaceGlobals, karts: &mut [&mut KartState]) {
     for k in karts.iter_mut() {
         let mut run = k.pos_flash != 0;
         if k.race_pos != k.shown_pos && k.pos_flash == 0 {
@@ -228,7 +251,6 @@ pub fn race_progress(g: &RaceGlobals, w: &World, karts: &mut [&mut KartState], p
             k.pos_flash = if (v as i8) < 0 { 0 } else { v as u8 };
         }
     }
-    Some(order[0].1)
 }
 
 /// Where the race is, for the HUD.

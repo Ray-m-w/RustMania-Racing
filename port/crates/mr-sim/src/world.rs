@@ -131,6 +131,8 @@ pub struct World {
     /// and their enabled states (breakables::sync).
     pub ter_applied: Vec<i32>,
     pub groups_applied: Vec<Option<bool>>,
+    /// The title screen's re-creation data (course 0x1E; title.rs).
+    pub title: Option<Box<crate::title::TitleData>>,
 }
 
 impl World {
@@ -259,6 +261,7 @@ impl World {
             info,
             ter_applied: Vec::new(),
             groups_applied: Vec::new(),
+            title: None,
         };
         w.course.objects.breakables = crate::breakables::load(w.info.id, &dat);
         w.course.objects.lift_objects = crate::lifts::objects(w.info.id);

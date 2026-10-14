@@ -7,11 +7,15 @@
         "PRESS START": every opaque pixel of the port's software render
         (mr-bevy test press_start_render, MR_TITLE_DUMP) against the oracle
         screenshot at the best (dx, dy) within +-8 / +-3: exact-match count.
+    python tools/oracle/title_check.py karts OUTDIR [END_VB]
+        the three title karts per VBlank from the title savestate (slot 11 =
+        analysis/states/title/title_vb430.pst): port check `mr-title OUTDIR`.
     python tools/oracle/title_check.py capture OUTDIR [END_VB]
         per-VBlank capture of the kart heads, camera record, mode, frame
         counter, fade flags, dt (the orbit test in title.rs reads it).
 
-Holds capture.OracleLock; uses savestate slot 1 read-only (no saves).
+Holds capture.OracleLock; uses savestate slot 1 read-only; `karts` writes the
+scratch slot 11 only.
 """
 import os
 import sys
@@ -109,6 +113,23 @@ def music(end_vb=1200):
         print("XA file/channel %s: LBA %d..%d, %d sectors" % (k, r[0], r[1], r[2]))
 
 
+def karts(outdir, end_vb=1760, slot=11):
+    """The title's karts from the title savestate (slot 11 = the archived
+    analysis/states/title/title_vb430.pst, installed if needed): the three
+    kart records, globals 0x800B0700.., the camera, the rand() seed, per
+    VBlank (port check: mr-title OUTDIR)."""
+    import shutil
+    import goto_course as gc
+    src = os.path.join(gc.ROOT, "analysis", "states", "title", "title_vb430.pst")
+    if os.path.exists(src):
+        shutil.copyfile(src, gc.slot_path(slot))
+    regions = [(0x800C30A8, 3 * 0x504), (0x800B0700, 0x900), (0x800C4F40, 0x70), (0x80009010, 4)]
+    route = {"name": "title_idle", "slot": slot, "end_vb": end_vb, "steps": [[0, ""]]}
+    with OracleLock():
+        m = _run(route, outdir, slot=slot, regions=regions)
+    print("captured vb", m["first_vb"], "..", m["last_vb"], "missing", len(m["missing"]))
+
+
 def capture(outdir, end_vb):
     route = {"name": "title_from_slot1", "slot": 1, "end_vb": end_vb, "steps": STEPS}
     with OracleLock():
@@ -124,5 +145,7 @@ if __name__ == "__main__":
         text(sys.argv[2], sys.argv[3], float(sys.argv[4]) if len(sys.argv) > 4 else 0.75)
     elif cmd == "music":
         music(int(sys.argv[2]) if len(sys.argv) > 2 else 1200)
+    elif cmd == "karts":
+        karts(sys.argv[2], int(sys.argv[3]) if len(sys.argv) > 3 else 1760)
     elif cmd == "capture":
         capture(sys.argv[2], int(sys.argv[3]) if len(sys.argv) > 3 else 2300)

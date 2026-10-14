@@ -1076,7 +1076,7 @@ pub fn kart_update_full(k: &mut KartState, others: &mut Others, g: &mut RaceGlob
     // 0x80067E64: lap timing, race end, respawn timer.
     if g.mode != 0x12 {
         if k.finished == 0 {
-            progress::lap_timing(k, g, w);
+            progress::lap_timing(k, g, w, rand);
         } else {
             k.finished_time = k.finished_time.wrapping_add(dt);
         }

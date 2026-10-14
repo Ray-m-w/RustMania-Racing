@@ -87,7 +87,11 @@ pub fn init_kart(p: &KartInit, rng: &mut u32, rand: &mut dyn FnMut() -> i32) -> 
     // 0x80060A3C: grid index. In a mode-1 race of type 0 or 1 (race A / B;
     // only types 2 and 3 offset the index) with no option bits the kart
     // takes grid position `grid`.
-    if s.mode != 1 || !(0..=1).contains(&s.race_type) || s.race_flags & 7 != 0 || s.challenge != 0 || p.flags & 0x60 != 0 {
+    // The title (mode 0x10, race type 2: 0x80060B04 takes 6 + 1 for the
+    // index, then the plain path for flags 0x20 / 0x40 clear and race flags
+    // 1/2/4 clear: index = `grid` again) [CODE 800609f4].
+    let title = s.mode == 0x10 && s.race_type == 2;
+    if !(s.mode == 1 && (0..=1).contains(&s.race_type) || title) || s.race_flags & 7 != 0 || s.challenge != 0 || p.flags & 0x60 != 0 {
         crate::unreachable_in_scope!("grid placement outside a plain one-player race");
     }
     let gi = p.grid as usize;
@@ -170,7 +174,19 @@ pub fn init_kart(p: &KartInit, rng: &mut u32, rand: &mut dyn FnMut() -> i32) -> 
     put16(&mut r, 0x498, -1);
     put16(&mut r, 0x49A, -1);
     put16(&mut r, 0x496, p.flags as i32);
-    r[0x4DF] = ((s.race_flags >> 1) & 1) as u8;
+    if s.mode == 1 {
+        r[0x4DF] = ((s.race_flags >> 1) & 1) as u8;
+    } else {
+        // 0x80061098 (outside mode 1: the title): a random byte's top bit.
+        r[0x4DF] = next_rng() >> 7;
+    }
+    if s.race_type == 2 || s.race_flags & 1 != 0 {
+        // 0x800610C4: battle AI (FUN_80090FAC) bit and its first timer,
+        // (rand() / 5462 + 5) * 60 VBlanks (+0x4A2).
+        put16(&mut r, 0x496, (p.flags | 8) as i32);
+        let t = (crate::fixed::s16(rand() / 0x1556) + 5) * 0x3C;
+        put16(&mut r, 0x4A2, t);
+    }
     // FUN_8009004C: path position.
     {
         let mut k = KartState::from_record(&r);

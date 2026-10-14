@@ -105,7 +105,7 @@ fn track_direction_matches() {
 
 #[test]
 fn lap_timing_matches() {
-    check_kart_fn(0x8008_2708, |k, g, w, _m| mr_sim::progress::lap_timing(k, g, w));
+    check_kart_fn(0x8008_2708, |k, g, w, _m| mr_sim::progress::lap_timing(k, g, w, &mut || 0));
 }
 
 #[test]

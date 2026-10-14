@@ -632,6 +632,11 @@ fn select_mode(cam: &mut CameraState, inp: &CameraInput) -> i16 {
             }
         }
     }
+    // 0x80070554..0x800707A4: the special events pick their mode by game
+    // state; the title (event 0x1E, state 0x10) orbits (mode 1).
+    if g.event == 0x1E && g.game_state == 0x10 {
+        return 1;
+    }
     if g.event == 0x1D || g.event == 0x1E {
         unreachable_in_scope!("special event camera (0x800B0FAC = 0x1D/0x1E)");
     }
@@ -982,7 +987,9 @@ pub fn tick(cam: &mut CameraState, inp: &CameraInput, t: &CameraTables, env: &mu
     let pitch_t = pitch_t & 0xFFF;
     let yaw_t = t.ratan2(dx, dz) & 0xFFF;
 
-    if g.event == 30 {
+    // 0x80072394: event 30 fixes the angles except in modes 1 and 7 (the
+    // title's orbit turns as below: oracle title capture, exact).
+    if g.event == 30 && mode != 1 && mode != 7 {
         unreachable_in_scope!("event 30 fixed camera angles");
     }
     if g.overhead > 6 {

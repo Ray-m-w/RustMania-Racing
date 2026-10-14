@@ -166,6 +166,14 @@ impl SessionConfig {
         }
     }
 
+    /// The title screen (title.rs): course 0x1E, event 0x1E, three AI
+    /// karts in game mode 0x10. `rand_seed` / `rng_start`: the BIOS rand()
+    /// seed and the random pointer at the course load (the game's depend on
+    /// everything before; any values give a valid title).
+    pub fn title(rand_seed: u32, rng_start: u32, logic_hz: u8) -> Self {
+        SessionConfig { course: crate::title::TITLE_COURSE, event: crate::title::TITLE_COURSE as i32, cup: -1, rand_seed, rng_start, opponents: 2, race_flags: crate::title::TITLE_RACE_FLAGS, logic_hz, ..Self::dock_default() }
+    }
+
     /// `dock_default` without opponents: the player alone (analysis; the
     /// oracle's grid slot 5).
     pub fn dock_solo() -> Self {
@@ -454,21 +462,27 @@ impl Session {
         let exe = disc.read("SLUS_012.37").map_err(|e| SessionError::Disc(format!("{e:?}")))?;
         let camera_tables = CameraTables::from_exe(&exe).ok_or_else(|| SessionError::Disc("camera tables".into()))?;
         let template = crate::vehicle::racer_template(&world.tables, &racer);
-        let n = 1 + cfg.opponents as usize;
+        // The title (title.rs): three AI karts in game mode 0x10.
+        let title = cfg.course == crate::title::TITLE_COURSE;
+        let title_data = if title { Some(Box::new(crate::title::TitleData::load(disc, &world).map_err(SessionError::Disc)?)) } else { None };
+        let n = if title { crate::title::TITLE_KARTS } else { 1 + cfg.opponents as usize };
         let race_type = world.info.race_type;
-        if world.info.mode != 1 {
+        if world.info.mode != 1 && !title {
             return Err(SessionError::OutOfScope(format!("course {} is not a race course (mode {})", world.info.name, world.info.mode)));
         }
-        let setup = RaceSetup { mode: 1, race_type, race_flags: cfg.race_flags, challenge: 0, humans: 1, karts: n as i16 };
+        let race_flags = if title { crate::title::TITLE_RACE_FLAGS } else { cfg.race_flags };
+        let mode = if title { crate::title::TITLE_MODE } else { 1 };
+        let setup = RaceSetup { mode, race_type, race_flags, challenge: 0, humans: 1, karts: n as i16 };
         let mut rand_state = cfg.rand_seed;
         let mut globals = RaceGlobals {
             dt: if cfg.logic_hz == 60 { 1 } else { 2 },
-            mode: 1,
+            mode,
             race_clock: 0,
-            // FUN_8008C4AC @0x8008DA4C: 300 + 180 VBlanks to GO.
-            countdown: crate::race::COUNTDOWN_START,
+            // FUN_8008C4AC @0x8008DA4C: 300 + 180 VBlanks to GO (none on
+            // the title: 0x800B0C70 = 0 for course 0x1E).
+            countdown: if title { 0 } else { crate::race::COUNTDOWN_START },
             countdown_len: 300,
-            race_flags: cfg.race_flags,
+            race_flags,
             challenge: 0,
             race_type,
             race_over: 0,
@@ -505,7 +519,18 @@ impl Session {
         // other karts on the following slots; with no opponents the
         // configured slot.
         let grid0 = if n > 1 && cfg.lineup.is_none() { crate::ai::grid_start(&mut globals, &world, n as i16) } else { cfg.grid };
-        let (mut record, mut kart) = {
+        // The title's kart 0 is an AI kart like the others (FUN_8008C4AC
+        // @0x8008DCC4: the same draw for every slot).
+        let mut title_first: Option<(u8, u8)> = None;
+        let (mut record, mut kart) = if let Some(d) = title_data.as_deref() {
+            let mut rand = || bios_rand(&mut rand_state);
+            let (c, v) = crate::ai::pick_opponent(&world.exe, &[], &crate::title::character_loaded, &|v| d.templates.get(v as usize).is_some_and(|t| t.is_some()), &mut rand);
+            let (pivot, _) = d.characters[c as usize].clone().ok_or_else(|| SessionError::Disc(format!("character {c}: no model")))?;
+            let t = d.templates[v as usize].ok_or_else(|| SessionError::Disc(format!("vehicle {v}: no model")))?;
+            title_first = Some((c, v));
+            world.driver = crate::render::DriverModel { part0_pivot: pivot };
+            crate::ai::init_opponent(&world, &t, setup, crate::ai::Opponent { slot: 0, character: c, vehicle: v, grid: grid0 }, pivot[1], &mut globals.rng, &mut rand)
+        } else {
             let mut rand = || bios_rand(&mut rand_state);
             init_kart(
                 &KartInit { world: &world, template: &template, setup, slot: 0, character: cfg.character, vehicle: 0, grid: grid0, flags: 0, character_pivot_y: kermit.parts[0].record.pivot[1] },
@@ -518,13 +543,17 @@ impl Session {
         let mut others = Vec::new();
         if n > 1 {
             let tpl = crate::ai::vehicle_templates(&world.exe, &world.tables).map_err(|e| SessionError::Disc(e.0))?;
-            let mut taken = vec![cfg.character];
+            let mut taken = vec![title_first.map_or(cfg.character, |f| f.0)];
             for s in 1..n {
                 let (c, v) = match cfg.lineup {
                     Some(l) => l[(s - 1) % 5],
                     None => {
                         let mut rand = || bios_rand(&mut rand_state);
-                        crate::ai::pick_opponent(&world.exe, &taken, &|_| true, &|_| true, &mut rand)
+                        if title {
+                            crate::ai::pick_opponent(&world.exe, &taken, &crate::title::character_loaded, &crate::title::vehicle_loaded, &mut rand)
+                        } else {
+                            crate::ai::pick_opponent(&world.exe, &taken, &|_| true, &|_| true, &mut rand)
+                        }
                     }
                 };
                 taken.push(c);
@@ -549,13 +578,16 @@ impl Session {
                     character_model: cpath,
                 });
             }
-            // FUN_8009192C(&kart0, karts): every kart's special-move roll.
-            let mut ks: Vec<KartState> = std::iter::once(kart.clone()).chain(others.iter().map(|o| o.kart.clone())).collect();
-            crate::ai::race_load_roll(&mut ks, &mut globals, &world, n as i16);
-            let mut it = ks.into_iter();
-            kart = it.next().unwrap();
-            for (o, k) in others.iter_mut().zip(it) {
-                o.kart = k;
+            // FUN_8009192C(&kart0, karts): every kart's special-move roll
+            // (not on the title: the course-0x1E branch skips it).
+            if !title {
+                let mut ks: Vec<KartState> = std::iter::once(kart.clone()).chain(others.iter().map(|o| o.kart.clone())).collect();
+                crate::ai::race_load_roll(&mut ks, &mut globals, &world, n as i16);
+                let mut it = ks.into_iter();
+                kart = it.next().unwrap();
+                for (o, k) in others.iter_mut().zip(it) {
+                    o.kart = k;
+                }
             }
         }
         let player_ai = crate::ai::AiState::from_record(&record);
@@ -582,6 +614,11 @@ impl Session {
             cutscene_sync: false,
             scene_center: [0; 3],
         };
+        if let Some(d) = title_data {
+            let chars: Vec<u8> = std::iter::once(record[0x4B2]).chain(others.iter().map(|o| o.character)).collect();
+            *d.chars.lock().unwrap() = chars;
+            world.title = Some(d);
+        }
         let mut s = Session {
             world,
             kart,
@@ -885,6 +922,10 @@ impl Session {
         let leader = self.leader_progress_override.unwrap_or_else(|| ks.iter().find(|x| x.race_pos == 1).map(|x| x.progress).unwrap_or(ks[0].progress));
         let inp = TickInputs { leader_progress: leader, water_normal: wn, alt_normal: an, aim: None, cameras: [self.camera.pos, [0; 3]] };
         for s in 0..n {
+            // The battle AI's chase targets (FUN_80090FAC reads +0x330/
+            // +0x338/+0x340 of the kart it chases, live: the previous
+            // frame's render pass, or a kart re-created this frame).
+            let drivers: Vec<[i32; 3]> = ks.iter().map(|k| [k.drv_x, k.ref_y, k.drv_z]).collect();
             g.field = [(0, 0); 8];
             for (j, x) in ks.iter().enumerate().take(8) {
                 g.field[j] = (x.finished, x.lap);
@@ -893,7 +934,7 @@ impl Session {
                 // An AI kart, or the player's after the finish: FUN_800912F8
                 // picks the buttons, the update runs with player -1. Items
                 // are out of scope: their buttons are dropped.
-                let ctx = crate::ai::AiContext { karts: n as i16, kart0_flags: ks[0].flags, kart0_race_pos: ks[0].race_pos, difficulty: g.difficulty, cup: g.cup, driver_pos: &[] };
+                let ctx = crate::ai::AiContext { karts: n as i16, kart0_flags: ks[0].flags, kart0_race_pos: ks[0].race_pos, difficulty: g.difficulty, cup: g.cup, driver_pos: &drivers };
                 let ai = if s == 0 { &mut self.player_ai } else { &mut self.others[s - 1].ai };
                 let seed = &mut self.rand_state;
                 let mut rand = || bios_rand(seed);
@@ -902,11 +943,29 @@ impl Session {
                     if !self.cfg.items { crate::ai::items_off(b) } else { b }
                 });
                 crate::update::kart_update_at(ks, s, g, w, &inp, b, -1, &mut rand);
+                // The title: a knocked-out kart was re-created inside its
+                // update (FUN_80082708 @0x800828C4; title.rs): its record
+                // and models.
+                if let Some(r) = w.title.as_deref().and_then(|d| d.pending.lock().unwrap().take()) {
+                    if s == 0 {
+                        self.player_ai = crate::ai::AiState::from_record(&r.record);
+                        self.record = r.record;
+                    } else {
+                        let o = &mut self.others[s - 1];
+                        o.ai = crate::ai::AiState::from_record(&r.record);
+                        o.record = r.record;
+                        o.character = r.character;
+                        o.vehicle = r.vehicle;
+                        o.driver = crate::render::DriverModel { part0_pivot: r.pivot };
+                        o.vehicle_model = r.vehicle_model;
+                        o.character_model = r.character_model;
+                    }
+                }
             } else {
                 let seed = &mut self.rand_state;
                 let mut rand = || bios_rand(seed);
                 let b = if s == 0 && self.autopilot {
-                    let ctx = crate::ai::AiContext { karts: n as i16, kart0_flags: ks[0].flags, kart0_race_pos: ks[0].race_pos, difficulty: g.difficulty, cup: g.cup, driver_pos: &[] };
+                    let ctx = crate::ai::AiContext { karts: n as i16, kart0_flags: ks[0].flags, kart0_race_pos: ks[0].race_pos, difficulty: g.difficulty, cup: g.cup, driver_pos: &drivers };
                     let items = self.cfg.items;
                     ai_tick(g, 0, |g| {
                         let b = crate::ai::ai_buttons(&mut ks[0], &mut self.player_ai, g, &ctx, w, &mut rand);
@@ -926,8 +985,10 @@ impl Session {
         //    driver matrices, driver position, look point, wheel and light
         //    positions (FUN_80025D8C).
         for (s, k) in ks.iter_mut().enumerate() {
+            // (the title's kart 0: its current character's model)
+            let title_drv = w.title.as_deref().and_then(|d| d.characters.get(self.record[0x4B2] as usize).cloned().flatten()).map(|(p, _)| crate::render::DriverModel { part0_pivot: p });
             let (rec, ai, drv) = if s == 0 {
-                (&mut self.record, &self.player_ai, &w.driver)
+                (&mut self.record, &self.player_ai, title_drv.as_ref().unwrap_or(&w.driver))
             } else {
                 let o = &mut self.others[s - 1];
                 (&mut o.record, &o.ai, &o.driver)
@@ -1224,6 +1285,13 @@ impl Session {
             cfg = SessionConfig::dock_default();
         }
         cfg.opponents = (n - 1) as u8;
+        let mut world = world;
+        if world.info.id == crate::title::TITLE_COURSE && world.title.is_none() {
+            let d = crate::title::TitleData::load(disc, &world).map_err(SessionError::Disc)?;
+            let chars: Vec<u8> = (0..n).map(|s| m.u8(crate::kart::KART_ARRAY + 0x504 * s as u32 + 0x4B2)).collect();
+            *d.chars.lock().unwrap() = chars;
+            world.title = Some(Box::new(d));
+        }
         let mut s = Session {
             kart: crate::oracle::load_kart(m, 0),
             player_ai: crate::ai::AiState::from_record(&record),

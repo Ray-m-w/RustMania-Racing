@@ -46,6 +46,7 @@ pub mod scenery;
 pub mod session;
 pub mod sound;
 pub mod tables;
+pub mod title;
 pub mod update;
 pub mod vehicle;
 pub mod water;

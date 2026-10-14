@@ -339,6 +339,52 @@ impl PartsModel {
     pub fn record_count(&self) -> usize {
         self.parts.iter().map(|p| p.len()).sum()
     }
+
+    /// Every record as a camera-facing quad of its part (header = the
+    /// part's pivot). [CODE 8002b7f8, 8002c328]
+    pub fn quads(&self) -> Vec<(usize, PartQuad)> {
+        let mut out = Vec::new();
+        for (i, recs) in self.parts.iter().enumerate() {
+            for r in recs {
+                let i16at = |o: usize| i16::from_le_bytes([r[o], r[o + 1]]);
+                out.push((
+                    i,
+                    PartQuad {
+                        xy: std::array::from_fn(|k| [i16at(4 * k), i16at(4 * k + 2)]),
+                        dz: i16at(16),
+                        tex: u16::from_le_bytes([r[18], r[19]]),
+                        uv: std::array::from_fn(|k| [r[20 + 2 * k], r[21 + 2 * k]]),
+                        rgb: std::array::from_fn(|k| [r[28 + 4 * k], r[29 + 4 * k], r[30 + 4 * k]]),
+                    },
+                ));
+            }
+        }
+        out
+    }
+}
+
+/// One 44-byte record of a kind 2/3 parts model: a textured gouraud quad
+/// drawn facing the camera around its part's pivot. FUN_8002b7f8 (kind 2:
+/// the GTE rotation diag(1.6, 1, 0), i.e. offsets in the screen plane) /
+/// FUN_8002c328 (kind 3: camera * Ry(-DAT_800b0f0a) with the z column
+/// zeroed: upright, turned to the camera's heading); translation = the
+/// pivot in view space (camera * object rotation * pivot + the object's
+/// view position; kind 2 adds `dz` to its depth). GPU order of the four
+/// cyclic vertices 0, 1, 3, 2; tpage = slot tpage + (tex & 0x60), opaque when
+/// tex & 0x60 == 0x60; CLUT from uv0 as `prim_tpage_clut`. [CODE 8002b7f8,
+/// 8002c328, 80028010 cases 2 / 3 / 0xA] [GPU: PARK's canopies]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PartQuad {
+    /// +0: four (x, y) offsets (view units; x right, y down).
+    pub xy: [[i16; 2]; 4],
+    /// +16: depth offset (kind 2).
+    pub dz: i16,
+    /// +18: texture slot (bits 0-4) + ABR bits (5-6).
+    pub tex: u16,
+    /// +20: four (u, v).
+    pub uv: [[u8; 2]; 4],
+    /// +28: four colours (r, g, b, GPU code).
+    pub rgb: [[u8; 3]; 4],
 }
 
 fn parse_parts(r: &R, o: usize) -> Result<PartsModel, Error> {
@@ -1080,6 +1126,11 @@ impl Dat {
     /// The object's 8-byte-vertex mesh (None for kind 2/3/5 objects).
     pub fn mesh(&self, o: &Object) -> Option<&Mesh> {
         self.meshes.get(&self.desc(o).mesh)
+    }
+
+    /// The object's kind 2/3 parts model.
+    pub fn parts_model(&self, o: &Object) -> Option<&PartsModel> {
+        self.parts.get(&self.desc(o).mesh)
     }
 
     /// Byte ranges not covered by any section (should be empty).

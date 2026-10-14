@@ -332,3 +332,31 @@ fn dock_banner_matches_gte() {
     assert_eq!(qs[0].uv[0], [0x40, 0x10]);
     assert!(b.visible(0, [-13519, 0, -1112]) && !b.visible(0, [0, 0, 0]));
 }
+
+/// PARK's tree canopies are kind 2 parts models; the oracle's GP0 frame
+/// (grid, VB 300: PolyGT4 colour (82, 80, 72), UVs (191,127) (191,64)
+/// (128,127) (128,64), CLUT = slot CLUT + 6) carries a record's values.
+#[test]
+fn park_parts_records_match_the_oracle_canopies() {
+    let Ok(mut disc) = mr_disc::Disc::open_default() else {
+        eprintln!("SKIP: disc not available");
+        return;
+    };
+    let dat = mr_assets::dat::Dat::parse(&disc.read("COURSE_A/PARK.DAT").unwrap()).unwrap();
+    let mut found = 0;
+    for o in &dat.objects[..dat.layer0_count] {
+        let Some(m) = dat.parts_model(o) else { continue };
+        for (_, q) in m.quads() {
+            let gpu = [q.uv[0], q.uv[1], q.uv[3], q.uv[2]];
+            let mut set = gpu.to_vec();
+            set.sort();
+            if q.rgb[0] == [82, 80, 72] && set == vec![[128, 64], [128, 127], [191, 64], [191, 127]] {
+                // CLUT from uv0: (u >> 6) + 4 (v >> 6) = 6 for every corner
+                // the oracle's packet starts with
+                assert!(gpu.iter().any(|uv| (uv[0] >> 6) as u16 + 4 * (uv[1] >> 6) as u16 == 6));
+                found += 1;
+            }
+        }
+    }
+    assert!(found > 0);
+}

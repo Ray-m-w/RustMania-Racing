@@ -36,6 +36,7 @@ pub mod courses;
 mod title;
 mod movers;
 mod scenepush;
+mod parts;
 
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::prelude::*;
@@ -468,6 +469,7 @@ fn main() {
         .add_plugins(effects::EffectsPlugin)
         .add_plugins(movers::MoversPlugin)
         .add_plugins(scenepush::ScenePushPlugin)
+        .add_plugins(parts::PartsPlugin)
         .add_plugins(karts::KartsPlugin)
         .add_plugins(audio::AudioOutPlugin)
         .add_plugins(sfx::SfxPlugin)

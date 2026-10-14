@@ -163,6 +163,12 @@ pub fn setup(
             polys.retain(|p| p.tex.is_some());
         }
         if polys.is_empty() {
+            // kind 2/3 parts models: camera-facing quads (parts.rs)
+            let far = i >= dat.layer0_count;
+            let push = if !far && crate::scenepush::enabled() { crate::scenepush::push_units(dat::lod_bias(course_bias, dat.desc(o).b_lo)) } else { 0.0 };
+            if let Some(p) = crate::parts::build(&dat, o, &sin, &dslots, push) {
+                commands.spawn((Transform::default(), Visibility::default(), crate::TrackObject(i), p));
+            }
             continue;
         }
         // FUN_80010000 puts layer-0 objects with flag 0x40/0x80 on the

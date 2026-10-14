@@ -222,6 +222,37 @@ impl OrbitCam {
     }
 }
 
+// ---------------------------------------------------------------- B - F
+
+/// The GPU's ABR 2 (B - F) for the title's semi-transparent scenery: a
+/// StandardMaterial drawn in the transparent pass with a reverse-subtract
+/// blend (frame - fragment; in linear light, the race's effects pass does it
+/// in the game's colour space: render-ledger.md "Title").
+#[derive(Asset, bevy::render::render_resource::AsBindGroup, bevy::reflect::TypePath, Clone, Debug, Default)]
+pub struct Subtract {}
+
+pub type SubtractMaterial = bevy::pbr::ExtendedMaterial<StandardMaterial, Subtract>;
+
+impl bevy::pbr::MaterialExtension for Subtract {
+    fn specialize(
+        _pipeline: &bevy::pbr::MaterialExtensionPipeline,
+        descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
+        _layout: &bevy::mesh::MeshVertexBufferLayoutRef,
+        _key: bevy::pbr::MaterialExtensionKey<Self>,
+    ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
+        use bevy::render::render_resource::{BlendComponent, BlendFactor, BlendOperation, BlendState};
+        if let Some(f) = descriptor.fragment.as_mut() {
+            for t in f.targets.iter_mut().flatten() {
+                t.blend = Some(BlendState {
+                    color: BlendComponent { src_factor: BlendFactor::One, dst_factor: BlendFactor::One, operation: BlendOperation::ReverseSubtract },
+                    alpha: BlendComponent { src_factor: BlendFactor::Zero, dst_factor: BlendFactor::One, operation: BlendOperation::Add },
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
 // ---------------------------------------------------------------- fade / text
 
 /// FUN_8007D1C0: the fade level (0x800AFED0) toward its target.
@@ -276,6 +307,38 @@ pub struct TitleTextCam;
 #[derive(Component)]
 struct FadeQuad;
 #[derive(Component)]
+struct TokenMesh(u8);
+
+/// DAT chunk of the turbo tokens and the token sprite table (exe
+/// 0x800AC1B8: u, v, w, h, texture slot, CLUT offset, size divisor; one row
+/// per colour).
+pub const TOKEN_CHUNK: i16 = 0x12;
+/// DAT chunk of the item boxes, drawn as stars; their sprite row in the
+/// token-table layout (u, v, w, h, slot, CLUT offset, divisor 0x40: half
+/// size = 0x80 * 0x80 / 0x40 = 2 * scale) and the colour index used here.
+pub const BOX_CHUNK: i16 = 0x13;
+pub const STAR_SPRITE: [u8; 8] = [0xC0, 0x80, 0x80, 0x80, 0x15, 0xB, 0x40, 0];
+pub const STAR: u8 = 4;
+pub const TOKEN_TABLE: u32 = 0x800A_C1B8;
+
+#[derive(Clone, Copy, Debug)]
+pub struct Token {
+    /// World units.
+    pub pos: [i32; 3],
+    /// +0x1F colour 0..3 (row of the sprite table).
+    pub colour: u8,
+}
+
+/// FUN_8003C5FC's four token spin angles for frame counter `frame` (camera
+/// roll 0 on the title): roll + sin(phase) / 64, phases 0x400 apart.
+pub fn token_spins(sin_raw: &[i16], frame: i32) -> [i32; 4] {
+    let f = (frame & 0x3F) * 0x40;
+    let i1 = (f + 0x400) & 0xFFF;
+    let i2 = (i1 + 0x400) & 0xFFF;
+    let i3 = (i2 + 0x400) & 0xFC0;
+    [f, i1, i2, i3].map(|i| div_pow2(sin_raw[i as usize] as i32, 6) as i16 as i32 & 0xFFF)
+}
+#[derive(Component)]
 struct TextQuad;
 
 #[derive(Resource)]
@@ -283,6 +346,12 @@ pub struct TitleState {
     eye: PathLoop,
     look: PathLoop,
     dat: Dat,
+    tokens: Vec<Token>,
+    token_table: Vec<[u8; 8]>,
+    /// RAW 0x22 strips copied into VRAM every frame (FUN_8007A9DC ->
+    /// FUN_800311AC): (anim slot, x, y, w, h halfwords, frames, shown).
+    strips: Vec<(u32, usize, usize, usize, usize, Vec<Vec<u16>>, Option<usize>)>,
+    sin_raw: Vec<i16>,
     tables: CameraTables,
     hud: HudTables,
     slots: [(u16, u16); 32],
@@ -310,11 +379,12 @@ pub struct TitlePlugin;
 
 impl Plugin for TitlePlugin {
     fn build(&self, app: &mut App) {
-        app.insert_state(first_screen())
+        app.add_plugins(MaterialPlugin::<SubtractMaterial>::default())
+            .insert_state(first_screen())
             .add_systems(OnEnter(Screen::Title), enter)
             .add_systems(OnExit(Screen::Title), leave)
             .add_systems(Update, after_shot.run_if(in_state(Screen::Race)))
-            .add_systems(Update, (tick, place_camera.after(tick), select.after(tick), draw_text.after(tick), quiet_race, fit, shot.after(place_camera)).run_if(in_state(Screen::Title)));
+            .add_systems(Update, (tick, animate.after(tick), place_camera.after(tick), select.after(tick), draw_tokens.after(place_camera), draw_text.after(tick), quiet_race, fit, shot.after(place_camera)).run_if(in_state(Screen::Title)));
     }
 }
 
@@ -336,6 +406,7 @@ fn enter(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut mats: ResMut<Assets<StandardMaterial>>,
+    mut smats: ResMut<Assets<SubtractMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut time: ResMut<Time<Virtual>>,
     settings: Res<crate::settings::Settings>,
@@ -357,6 +428,7 @@ fn enter(
     let world = |p: [i32; 3]| crate::to_bevy(p[0] * 32, p[1] * 32, p[2] * 32);
     let mut cache = psxmesh::MatCache::default();
     let mut semi_mats: std::collections::HashMap<(Option<(u16, u16)>, u8), Handle<StandardMaterial>> = Default::default();
+    let mut sub_mats: std::collections::HashMap<Option<(u16, u16)>, Handle<SubtractMaterial>> = Default::default();
     let layer = RenderLayers::layer(TITLE_LAYER);
     for (oi, o) in dat.objects.iter().enumerate().take(dat.layer0_count) {
         let polys = crate::scene::object_polys(&dat, o, &sin, &dslots);
@@ -388,16 +460,39 @@ fn enter(
                         }
                     }
                 }
+                if abr == 2 {
+                    // B - F: the subtractive material (reverse-subtract blend)
+                    let mat = sub_mats.entry(key.0).or_insert_with(|| {
+                        smats.add(SubtractMaterial {
+                            base: StandardMaterial {
+                                base_color: Color::WHITE,
+                                base_color_texture: key.0.map(|(tp, cl)| tex.get(&mut images, tp, cl)),
+                                unlit: true,
+                                cull_mode: None,
+                                double_sided: true,
+                                alpha_mode: AlphaMode::Add,
+                                ..default()
+                            },
+                            extension: Subtract {},
+                        })
+                    });
+                    let m = meshes.add(mesh);
+                    let mat = mat.clone();
+                    commands.entity(root).with_children(|c| {
+                        c.spawn((Mesh3d(m), MeshMaterial3d(mat), layer.clone()));
+                    });
+                    continue;
+                }
                 let mat = semi_mats.entry((key.0, abr)).or_insert_with(|| {
+                    let page = key.0.map(|(tp, cl)| tex.get(&mut images, tp, cl));
                     mats.add(StandardMaterial {
                         base_color: if abr == 0 { Color::srgba(1.0, 1.0, 1.0, 0.5) } else { Color::WHITE },
-                        base_color_texture: key.0.map(|(tp, cl)| tex.get(&mut images, tp, cl)),
+                        base_color_texture: page,
                         unlit: true,
                         cull_mode: None,
                         double_sided: true,
                         alpha_mode: match abr {
                             0 => AlphaMode::Blend,
-                            2 => AlphaMode::Multiply,
                             _ => AlphaMode::Add,
                         },
                         ..default()
@@ -456,6 +551,73 @@ fn enter(
     let slots = ahud::slot_attrs(&dec.slots);
     let hud = HudTables::from_exe(&exe).expect("HUD tables");
 
+    // The ring of stars and fruit: the course's turbo tokens (DAT chunk 0x12,
+    // placed by FUN_8007B448 at the course load: x, z TER units, y << 5;
+    // colour = rand() >> 13 each) drawn by FUN_8007E21C as sprites.
+    let exe_at = |a: u32| (a - 0x8001_0000) as usize + 0x800;
+    let token_table: Vec<[u8; 8]> = (0..4).map(|k| exe[exe_at(TOKEN_TABLE) + 8 * k..exe_at(TOKEN_TABLE) + 8 * k + 8].try_into().unwrap()).collect();
+    let sin_raw: Vec<i16> = (0..4096).map(|k| i16::from_le_bytes([exe[exe_at(0x800A_88C0) + 2 * k], exe[exe_at(0x800A_88C0) + 2 * k + 1]])).collect();
+    let mut rseed = seed() as u32 ^ 0x2468_ACE1;
+    let tokens: Vec<Token> = dat
+        .chunks
+        .iter()
+        .find(|c| c.id == TOKEN_CHUNK)
+        .and_then(|c| match &c.body {
+            mr_assets::dat::ChunkBody::Points(p) => Some(p.clone()),
+            _ => None,
+        })
+        .unwrap_or_default()
+        .iter()
+        .map(|p| Token { pos: [p[0] << 5, p[1] << 5, p[2] << 5], colour: (mr_sim::session::bios_rand(&mut rseed) >> 13) as u8 & 3 })
+        .collect();
+    // Item boxes (chunk 0x13): FUN_8007E21C draws each as the star sprite
+    // (slot 0x15, CLUT + 0xB, u 0xC0 v 0x80, 0x38 x 0x38 texels, half size
+    // 2 * scale, angle = the camera roll).
+    let mut tokens = tokens;
+    // `--title-token-colours 2,3,1,..`: the colours an oracle run drew
+    // (0x800E2370 + 0x20 i + 0x1F), for side-by-sides.
+    if let Some(v) = crate::settings::arg_value("--title-token-colours") {
+        for (t, c) in tokens.iter_mut().zip(v.split(',').filter_map(|x| x.trim().parse::<u8>().ok())) {
+            t.colour = c & 3;
+        }
+    }
+    if let Some(mr_assets::dat::ChunkBody::Points(p)) = dat.chunks.iter().find(|c| c.id == BOX_CHUNK).map(|c| &c.body) {
+        tokens.extend(p.iter().map(|p| Token { pos: [p[0] << 5, p[1] << 5, p[2] << 5], colour: STAR }));
+    }
+    // Animated strips: the sprite definition *0x800D1B40[slot] (exe table
+    // 0x800ACF40) names the texture slot and frame 0's (u, v) (animtex.rs).
+    let strips = dec
+        .anims
+        .iter()
+        .filter_map(|a| {
+            let def = u32::from_le_bytes(exe[exe_at(0x800A_CF40 + 4 * a.slot)..exe_at(0x800A_CF40 + 4 * a.slot) + 4].try_into().ok()?);
+            if def == 0 {
+                return None;
+            }
+            let o = exe_at(def);
+            let ts = dec.slots.get(u16::from_le_bytes([exe[o], exe[o + 1]]) as usize)?.as_ref()?;
+            let (px, py, _) = mr_assets::vram::tpage(ts.tpage?);
+            Some((a.slot, px + (exe[o + 8] as usize >> 2), py + exe[o + 9] as usize, a.w as usize / 4, a.h as usize, a.frames.clone(), None))
+        })
+        .collect();
+    let mut token_table = token_table;
+    token_table.push(STAR_SPRITE);
+    for t in 0..=STAR {
+        let m = Mesh::new(bevy::mesh::PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default());
+        let tb = token_table[t as usize];
+        let Some(slot) = dec.slots[tb[4] as usize & 31] else { continue };
+        let tp = slot.tpage.unwrap_or(0) & !0x60;
+        let mat = mats.add(StandardMaterial {
+            base_color: Color::WHITE,
+            base_color_texture: Some(tex.get(&mut images, tp, slot.clut.wrapping_add(tb[5] as u16))),
+            unlit: true,
+            cull_mode: None,
+            alpha_mode: psxmesh::cutout_mode(),
+            ..default()
+        });
+        commands.spawn((Mesh3d(meshes.add(m)), MeshMaterial3d(mat), Transform::default(), layer.clone(), TokenMesh(t), TitleEntity));
+    }
+
     // Music: the frontend row's track, looping (no intro clip).
     if let Some(b) = bus.as_ref() {
         let track = mr_audio::xa::exe_course_music(&exe, TITLE_COURSE as u8).unwrap_or(TITLE_TRACK);
@@ -475,6 +637,10 @@ fn enter(
         eye,
         look,
         dat,
+        tokens,
+        token_table,
+        strips,
+        sin_raw,
         tables,
         hud,
         slots,
@@ -627,6 +793,71 @@ fn place_camera(st: Res<TitleState>, mut q: Query<&mut Transform, With<TitleCam>
                 m.base_color = want;
             }
         }
+    }
+}
+
+/// The tokens as camera-facing sprites (FUN_80011E3C: half size scale *
+/// w / div view units, rotated in the screen plane by the group's spin;
+/// token i spins with group i % 4), rebuilt every frame.
+fn draw_tokens(st: Res<TitleState>, cam: Query<&Transform, With<TitleCam>>, q: Query<(&Mesh3d, &TokenMesh)>, mut meshes: ResMut<Assets<Mesh>>) {
+    let Ok(ct) = cam.single() else { return };
+    let (right, up) = (ct.rotation * Vec3::X, ct.rotation * Vec3::Y);
+    let spins = token_spins(&st.sin_raw, st.counter.max(0));
+    let s = 1.0 / crate::UNITS;
+    for (h, tm) in q.iter() {
+        let tb = st.token_table[tm.0 as usize];
+        let div = (tb[6] as i32).max(1);
+        let (hw, hh) = ((0x80 * tb[2] as i32 / div) as f32 * 32.0 * s, (0x80 * tb[3] as i32 / div) as f32 * 32.0 * s);
+        // texel extent (FUN_80030474's uw / vh + 1)
+        let (tw, th) = if tm.0 == STAR { (0x38, 0x38) } else { (tb[2] as i32, tb[3] as i32) };
+        let (mut pos, mut uv, mut col) = (Vec::new(), Vec::new(), Vec::new());
+        for (i, t) in st.tokens.iter().enumerate().filter(|(_, t)| t.colour == tm.0) {
+            let c = crate::to_bevy(t.pos[0], t.pos[1], t.pos[2]);
+            let spin = if tm.0 == STAR { 0 } else { spins[i % 4] };
+            let (sn, cs) = ((spin as f32) * std::f32::consts::TAU / 4096.0).sin_cos();
+            let corner = |dx: f32, dy: f32| c + right * (dx * cs - dy * sn) - up * (dx * sn + dy * cs);
+            let p = [corner(-hw, -hh), corner(hw, -hh), corner(-hw, hh), corner(hw, hh)];
+            let (u0, v0) = (tb[0] as f32 + 0.5, tb[1] as f32 + 0.5);
+            let (u1, v1) = (u0 + tw as f32 - 1.0, v0 + th as f32 - 1.0);
+            let t4 = [[u0, v0], [u1, v0], [u0, v1], [u1, v1]];
+            for k in [0usize, 1, 2, 1, 3, 2] {
+                pos.push(p[k].to_array());
+                uv.push([t4[k][0] / 256.0, t4[k][1] / 256.0]);
+                col.push([1.0f32, 1.0, 1.0, 1.0]);
+            }
+        }
+        if let Some(mut m) = meshes.get_mut(&h.0) {
+            let n = pos.len();
+            m.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
+            m.insert_attribute(Mesh::ATTRIBUTE_UV_0, uv);
+            m.insert_attribute(Mesh::ATTRIBUTE_COLOR, col);
+            m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0f32, 0.0, 1.0]; n]);
+        }
+    }
+}
+
+/// FUN_8007A9DC's strip frames on the frontend course (mode 0x10): 0xA, 0xB,
+/// 0xD as on DOCK, 0xC at (f & 0x3F) >> 4 (course != 3), 0x19 / 0x27 (the
+/// item-box star, texture slot 0x15) at (f & 0x1F) >> 1; f = the frame
+/// counter of the frame before (animtex.rs timing).
+pub fn strip_frame(slot: u32, f: i32) -> Option<usize> {
+    match slot {
+        0xC => Some(((f & 0x3F) >> 4) as usize),
+        _ => crate::animtex::frame_for(slot, f).filter(|_| slot != 0x1E),
+    }
+}
+
+fn animate(mut st: ResMut<TitleState>, mut images: ResMut<Assets<Image>>) {
+    let st = &mut *st;
+    let f = st.counter - 2;
+    for (slot, x, y, w, h, frames, shown) in st.strips.iter_mut() {
+        let Some(k) = strip_frame(*slot, f) else { continue };
+        let k = k.min(frames.len().saturating_sub(1));
+        if *shown == Some(k) || frames.is_empty() || frames[k].len() < *w * *h {
+            continue;
+        }
+        st.vram.write_rect(&mut images, *x, *y, *w, *h, &frames[k]);
+        *shown = Some(k);
     }
 }
 
@@ -804,6 +1035,78 @@ mod tests {
             }
         }
         assert!(n > 800);
+    }
+
+    /// The frontend RAW's texture slot table against the oracle's RAM
+    /// 0x800DFF00 during the title (VB 1000 after BACK TO MAIN MENU from
+    /// slot 1): (tpage, clut, x, y, mode) of the used slots.
+    #[test]
+    fn frontend_slots_match_ram() {
+        let Ok(mut disc) = mr_disc::Disc::open_default() else { return };
+        let exe = disc.read("SLUS_012.37").unwrap();
+        let path = mr_assets::raw::course_raw_path(&exe, TITLE_COURSE).unwrap();
+        let env = mr_assets::raw::LoadEnv::from_exe(&exe, TITLE_COURSE).unwrap();
+        let dec = mr_assets::raw::decode(&disc.read(&path).unwrap(), &env).unwrap();
+        let ram: [(usize, u16, u16, i16, i16, u16); 15] = [
+            (0, 0x0, 0x3070, 0, 0, 0), (1, 0x81, 0x30B0, 64, 0, 1), (2, 0x3, 0x30F0, 192, 0, 0), (5, 0x4, 0x31B0, 256, 0, 0),
+            (7, 0x8C, 0x3E30, 768, 0, 1), (8, 0x8D, 0x3DF0, 832, 0, 1), (9, 0x8E, 0x3DB0, 896, 0, 1), (14, 0x8F, 0x3D70, 960, 0, 1),
+            (15, 0xA, 0x3EB0, 640, 0, 0), (16, 0x5, 0x3FF0, 320, 0, 0), (17, 0x6, 0x3FB0, 384, 0, 0), (18, 0x7, 0x3F70, 448, 0, 0),
+            (19, 0x8, 0x3F30, 512, 0, 0), (20, 0xB, 0x3E70, 704, 0, 0), (21, 0x9, 0x3EF0, 576, 0, 0),
+        ];
+        for (i, tp, cl, x, y, mode) in ram {
+            let s = dec.slots[i].unwrap_or_else(|| panic!("slot {i} missing"));
+            assert_eq!((s.tpage.unwrap_or(0), s.clut, s.x as i16, s.y as i16, s.mode.unwrap_or(0)), (tp, cl, x, y, mode), "slot {i}");
+        }
+    }
+
+    /// Debug: write the token sprite pages (MR_TITLE_DUMP=DIR).
+    #[test]
+    fn dump_token_pages() {
+        let Ok(dir) = std::env::var("MR_TITLE_DUMP") else { return };
+        let mut disc = mr_disc::Disc::open_default().unwrap();
+        let exe = disc.read("SLUS_012.37").unwrap();
+        let (v, _, _) = crate::scene::load_vram(&mut disc, &exe, TITLE_COURSE);
+        let path = mr_assets::raw::course_raw_path(&exe, TITLE_COURSE).unwrap();
+        let env = mr_assets::raw::LoadEnv::from_exe(&exe, TITLE_COURSE).unwrap();
+        let dec = mr_assets::raw::decode(&disc.read(&path).unwrap(), &env).unwrap();
+        let at = |a: u32| (a - 0x8001_0000) as usize + 0x800;
+        for k in 0..4usize {
+            let tb = &exe[at(TOKEN_TABLE) + 8 * k..at(TOKEN_TABLE) + 8 * k + 8];
+            let s = dec.slots[tb[4] as usize].unwrap();
+            let (px, py, d) = mr_assets::vram::tpage(s.tpage.unwrap());
+            let (cx, cy) = mr_assets::vram::clut(s.clut + tb[5] as u16);
+            let mut out = vec![0u8; 256 * 256 * 4];
+            for y in 0..256usize {
+                for x in 0..256usize {
+                    let c = v.texel(d, px, py, cx, cy, x as u8, y as u8);
+                    out[(y * 256 + x) * 4..(y * 256 + x) * 4 + 4].copy_from_slice(&mr_assets::vram::rgba(c));
+                }
+            }
+            std::fs::write(format!("{dir}/token{k}.png"), mr_assets::img::png_rgba(256, 256, &out)).unwrap();
+        }
+    }
+
+    /// "PRESS START" by the HUD software renderer from the frontend VRAM
+    /// (MR_TITLE_DUMP=DIR writes press_start.png, 512 x 240 game pixels, for
+    /// tools/oracle/title_check.py).
+    #[test]
+    fn press_start_render() {
+        let Ok(mut disc) = mr_disc::Disc::open_default() else { return };
+        let exe = disc.read("SLUS_012.37").unwrap();
+        let (v, _, _) = crate::scene::load_vram(&mut disc, &exe, TITLE_COURSE);
+        let path = mr_assets::raw::course_raw_path(&exe, TITLE_COURSE).unwrap();
+        let env = mr_assets::raw::LoadEnv::from_exe(&exe, TITLE_COURSE).unwrap();
+        let dec = mr_assets::raw::decode(&disc.read(&path).unwrap(), &env).unwrap();
+        let t = HudTables::from_exe(&exe).unwrap();
+        let sp = text_sprites(&t, 600, true);
+        assert_eq!(sp.len(), 10, "one sprite per glyph");
+        assert!(text_sprites(&t, 598, true).is_empty() && text_sprites(&t, 650, true).is_empty() && text_sprites(&t, 600, false).is_empty());
+        let mut canvas = vec![[0u8; 4]; 512 * 240];
+        ahud::render(&v, &ahud::slot_attrs(&dec.slots), &sp, &mut canvas, 512, 240);
+        if let Ok(dir) = std::env::var("MR_TITLE_DUMP") {
+            let flat: Vec<u8> = canvas.iter().flatten().copied().collect();
+            std::fs::write(format!("{dir}/press_start.png"), mr_assets::img::png_rgba(512, 240, &flat)).unwrap();
+        }
     }
 
     #[test]

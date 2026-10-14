@@ -278,3 +278,15 @@ pub fn result(slot: usize, k: &KartState) -> KartResult {
         vehicle: k.vehicle,
     }
 }
+
+/// The random bytes the race HUD draws for a human kart each frame
+/// (FUN_8004F688, after the race frame): in mode 1 while the start game
+/// runs (0 < countdown < 0x800B07F8) FUN_8004E8E8 flickers the face button
+/// to copy (+0x4DA, one byte) and jitters the two hand sprites (three bytes
+/// each) [CODE 8004e8e8]. (FUN_80049FD8's three bytes need race flag 8.)
+pub fn hud_draws(g: &mut RaceGlobals, k: &KartState) {
+    if g.mode == 1 && g.countdown != 0 && g.countdown < g.countdown_len {
+        let n = if (0..4).contains(&k.copy_button) { 7 } else { 6 };
+        g.rng = g.rng.wrapping_add(n);
+    }
+}

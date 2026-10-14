@@ -94,6 +94,10 @@ pub struct SessionConfig {
     /// (dt = 1, the 60 Hz mode; docs/spec/kart-physics-ledger.md "60 Hz
     /// mode"). `tick` advances 1/30 s or 1/60 s of game time.
     pub logic_hz: u8,
+    /// Analysis: the game's heap address of TER face 0 (0x800B0FA4) in a
+    /// capture, so the records' face pointers are the game's; None: the
+    /// standalone stand-in (`world::STANDALONE_FACES`).
+    pub faces: Option<u32>,
 }
 
 /// The opponents of the oracle's slot-2 DOCK race (analysis/ai/*): Clifford
@@ -126,6 +130,7 @@ impl SessionConfig {
             lineup: None,
             items: true,
             logic_hz: 30,
+            faces: None,
         }
     }
 
@@ -402,7 +407,10 @@ impl Session {
     }
 
     pub fn with_config(disc: &mut mr_disc::Disc, cfg: SessionConfig) -> Result<Session, SessionError> {
-        let world = World::course(disc, cfg.course).map_err(SessionError::World)?;
+        let mut world = World::course(disc, cfg.course).map_err(SessionError::World)?;
+        if let Some(f) = cfg.faces {
+            world.heap.faces = f;
+        }
         let read_mdl = |disc: &mut mr_disc::Disc, p: &str| -> Result<Mdl, SessionError> {
             let b = disc.read(p).map_err(|e| SessionError::Disc(format!("{p}: {e:?}")))?;
             Mdl::parse(&b).map_err(|e| SessionError::Disc(format!("{p}: {e:?}")))
@@ -562,7 +570,8 @@ impl Session {
             pick: cfg.round_robin_start as usize % n,
             load_frame: true,
             rng_skip_items: None,
-            camera_peek: true,
+            camera_peek: false,
+
             rand_state,
             cfg,
         };
@@ -753,14 +762,15 @@ impl Session {
         // 0. FUN_8005C2EC (main loop, before the race frame): frame counter,
         //    countdown (GO and the start boosts), race clock, one rand().
         if self.load_frame {
-            // The load frame: FUN_8005C2EC's rand() is drawn (oracle: six
-            // rand() calls in that frame), the countdown is not stepped.
-            // 60 Hz mode: the load frame is the first pair (one draw).
+            // The load frame: the countdown is not stepped and FUN_8005C2EC
+            // draws no rand(); the kart loop takes the first rand() after
+            // the load (oracle ROCK / OVAL: the first AI kart's weapon roll)
+            // and the camera's change to the intro mode draws the frame's
+            // last one (none for the overhead camera: oracle SPEEDWAY,
+            // RALLY). Session 3 drew FUN_8005C2EC's rand() first and let the
+            // camera peek; on DOCK the two orders give the same stream.
             if g.hz60.pair_end() {
                 self.load_frame = false;
-            }
-            if g.hz60.beat() {
-                bios_rand(&mut self.rand_state);
             }
         } else {
             let mut karts: Vec<&mut KartState> = ks.iter_mut().collect();
@@ -953,6 +963,19 @@ impl Session {
             fx.particles.update(g.dt, &w.tables.sin[..4096]);
             fx.sparks.update(g.dt);
             fx.flats.update(g.dt);
+        }
+        // 9. The HUD (FUN_80078F38 -> FUN_80051698 -> FUN_8004F688 per
+        //    human): its random draws (race.rs `hud_draws`). FUN_80078F38
+        //    renders the frame again (HUD included) while the camera's cut
+        //    flag +0x6E is set (a camera mode change). 60 Hz mode: once per
+        //    pair (the game's rate).
+        if g.hz60.beat() {
+            let renders = if self.camera.mode_changed != 0 { 2 } else { 1 };
+            for _ in 0..renders {
+                for k in ks.iter().take(g.humans.max(0) as usize) {
+                    crate::race::hud_draws(g, k);
+                }
+            }
         }
     }
 

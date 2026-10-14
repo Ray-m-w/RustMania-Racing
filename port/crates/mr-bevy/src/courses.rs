@@ -112,6 +112,10 @@ impl PickList {
     /// Show the list (results screen START).
     pub fn show(&mut self) {
         self.open = true;
+        // Every button counts as held: the START (or CROSS) that opened the
+        // list must be released before a press can pick a course (it used to
+        // pick the default course in the same frame).
+        self.prev = u16::MAX;
         // (from the title, whose course is not a race: DOCK)
         let here = |id: u8| races().iter().position(|c| c.id == id);
         self.sel = here(info().id).or_else(|| here(mr_sim::course::DOCK)).unwrap_or(0);

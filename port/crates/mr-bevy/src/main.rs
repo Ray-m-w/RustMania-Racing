@@ -33,6 +33,7 @@ mod lighting;
 mod kartshadow;
 mod vramtex;
 pub mod courses;
+mod title;
 
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::prelude::*;
@@ -461,6 +462,7 @@ fn main() {
         .add_plugins(audio::AudioOutPlugin)
         .add_plugins(sfx::SfxPlugin)
         .add_plugins(courses::CoursesPlugin)
+        .add_plugins(title::TitlePlugin)
         .add_systems(FixedUpdate, capture::tick.after(sim_tick).before(karts::feed_player))
         .add_systems(Last, write_outputs)
         .add_systems(PostUpdate, (fit_viewports, fit_bars).before(bevy::camera::CameraUpdateSystems))

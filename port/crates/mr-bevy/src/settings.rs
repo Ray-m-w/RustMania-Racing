@@ -50,6 +50,8 @@ pub const KNOWN: &[Opt] = &[
     Opt { key: "low_latency", default: "true", allowed: "true|false", help: "pad sampled every display frame and the coming tick shown as it is sampled (look-ahead on a throw-away copy; the simulation is unchanged); false = the Session 4 display (interpolated one tick behind)" },
     // --- P courses ---
     Opt { key: "course", default: "", allowed: "", help: "race course: a TER file name of the game's 18 race courses (DOCK, BOG, NEW_YORK, ...; courses.rs) or its index; empty = the pick-list at start (DOCK behind it)" },
+    // --- T title --- (append below)
+    Opt { key: "skip_title", default: "false", allowed: "true|false", help: "start in the race instead of the title screen (tools and tests; --oracle-grid, --route, --replay, --shot and the other tool flags always do)" },
 ];
 
 #[derive(Resource, Clone, Debug)]

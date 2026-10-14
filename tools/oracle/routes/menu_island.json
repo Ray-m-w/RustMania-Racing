@@ -1,0 +1,82 @@
+{
+ "name": "menu_island",
+ "slot": 1,
+ "course": 6,
+ "world": 4,
+ "type": 1,
+ "end_vb": 270,
+ "steps": [
+  [
+   0,
+   ""
+  ],
+  [
+   20,
+   "down"
+  ],
+  [
+   26,
+   ""
+  ],
+  [
+   40,
+   "down"
+  ],
+  [
+   46,
+   ""
+  ],
+  [
+   60,
+   "down"
+  ],
+  [
+   66,
+   ""
+  ],
+  [
+   80,
+   "cross"
+  ],
+  [
+   86,
+   ""
+  ],
+  [
+   120,
+   "cross"
+  ],
+  [
+   126,
+   ""
+  ],
+  [
+   170,
+   "cross"
+  ],
+  [
+   176,
+   ""
+  ],
+  [
+   220,
+   "down"
+  ],
+  [
+   226,
+   ""
+  ],
+  [
+   250,
+   "cross"
+  ],
+  [
+   256,
+   ""
+  ]
+ ],
+ "pokes": [],
+ "loaded_vb": 819,
+ "saved_vb": 971,
+ "note": "MUPPET TREASURE ISLAND / ISLAND - RACE B; from slot 1 (DOCK course menu); course loaded (0x800B0FAC == course, 0x800B0AF4 == -1) at loaded_vb, state saved ~150 VBlanks later (tools/oracle/goto_course.py)"
+}

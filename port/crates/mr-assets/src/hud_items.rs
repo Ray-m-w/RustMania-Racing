@@ -187,13 +187,47 @@ fn s16(v: i32) -> i32 {
 /// bits) are 0 at every call ported here.
 #[allow(clippy::too_many_arguments)]
 pub fn quad(t: &ItemTables, x: i32, y: i32, hw: i32, hh: i32, angle: i32, u: u8, v: u8, uw: i32, vh: i32, rgb: [u8; 3], slot: u8, clut_off: u16, abr: i32) -> Option<Quad> {
+    quad_f(t, x, y, hw, hh, 0, angle, u, v, uw, vh, rgb, slot, clut_off, abr)
+}
+
+/// `quad` with FUN_8002fd04's anchor flags (param 5, low nibble): 1 = top
+/// edge at y (quad below), 4 = bottom edge at y, 2 = left edge at x, 8 =
+/// right edge at x (5 and 10 cancel); the quad then rotates about the
+/// anchor point, corner by corner.
+#[allow(clippy::too_many_arguments)]
+pub fn quad_f(t: &ItemTables, x: i32, y: i32, hw: i32, hh: i32, flags: u32, angle: i32, u: u8, v: u8, uw: i32, vh: i32, rgb: [u8; 3], slot: u8, clut_off: u16, abr: i32) -> Option<Quad> {
     let hw = s16(hw);
     let hh = s16(hh);
-    // l[0..4] x offsets of the corners, l[4..8] y offsets (flags == 0)
-    let mut l = [-hw, hw, hw, -hw, -hh, -hh, hh, hh].map(s16);
+    let mut f = flags & 0xF;
+    if f & 5 == 5 {
+        f ^= 5;
+    }
+    if f & 10 == 10 {
+        f ^= 10;
+    }
+    // l[0..4] x offsets of the corners, l[4..8] y offsets
+    let (ya, yb) = if f & 4 != 0 { (-2 * hh, 0) } else if f & 1 != 0 { (0, 2 * hh) } else { (-hh, hh) };
+    let (xa, xb) = if f & 8 != 0 { (-2 * hw, 0) } else if f & 2 != 0 { (0, 2 * hw) } else { (-hw, hw) };
+    let mut l = [xa, xb, xb, xa, ya, ya, yb, yb].map(s16);
     let angle = s16(angle);
     let (vx, vy);
-    if angle == 0 {
+    if angle != 0 && f != 0 {
+        // every corner rotated about the anchor (x, y)
+        let s = t.sin(angle);
+        let c = t.cos(angle);
+        for k in 0..4 {
+            let (px, py) = (l[k], l[k + 4]);
+            l[k] = s16((sra_tz(px * c - py * s, 14) << 9) / 0x140);
+            l[k + 4] = s16(sra_tz(px * s + py * c, 14));
+        }
+        let xs = [x + l[0], x + l[1], x + l[3], x + l[2]];
+        let ys = [y + l[4], y + l[5], y + l[7], y + l[6]];
+        if xs.iter().all(|&v| v < 0) || xs.iter().all(|&v| v > 0x1FF) || ys.iter().all(|&v| v < 0) || ys.iter().all(|&v| v > 0xEF) {
+            return None;
+        }
+        vx = xs;
+        vy = ys;
+    } else if angle == 0 {
         l[0] = s16((l[3] << 9) / 0x140);
         l[2] = s16((l[2] << 9) / 0x140);
         let x0 = x + l[0];
@@ -248,6 +282,34 @@ pub fn quad(t: &ItemTables, x: i32, y: i32, hw: i32, hh: i32, angle: i32, u: u8,
         semi: abr != 0x60,
         abr: ((abr >> 5) & 3) as u8,
     })
+}
+
+/// FUN_80050F64 after "RACE n LAPS" (1 player, race flag 0x10 clear): the
+/// opponents' faces in a row, kart 1.. at x = 0x100 - (n - 2) * 0x20 + 0x40 * i,
+/// y 0x3C: FUN_8002fd04(x, 0x3C, 0x10, 0x10, flags 4 (hung from the bottom
+/// edge), angle, the character's icon (table 0x800AC218 + c * 0x14: +0x12 u,
+/// +0x13 v, +0x14 slot), 0x2F x 0x2F, 0x80 grey, opaque), swinging by
+/// angle = (sin[((DAT_800B07D4 & 0x1F) << 7) - 0x333 * (i - 1)] / 128) & 0xFFF.
+pub fn intro_faces(t: &ItemTables, s: &ItemHud) -> Vec<Prim> {
+    let mut out = Vec::new();
+    let n = s.karts.len() as i32;
+    if s.players != 1 || s.race_flags & 0x10 != 0 || n < 2 {
+        return out;
+    }
+    let mut x = 0x100 - (n - 2) * 0x20;
+    let mut ph = ((s.strip & 0x1F) << 7) as i32;
+    for k in &s.karts[1..] {
+        let mut a = t.sin(ph);
+        if a < 0 {
+            a += 0x7F;
+        }
+        let ang = (a >> 7) & 0xFFF;
+        let c = k.character;
+        out.extend(quad_f(t, x, 0x3C, 0x10, 0x10, 4, ang, t.chr(c, 0x12), t.chr(c, 0x13), 0x2F, 0x2F, [0x80; 3], t.chr(c, 0x14), 0, 0x60).map(Prim::Ft4));
+        x += 0x40;
+        ph = (ph - 0x333) & 0xFFF;
+    }
+    out
 }
 
 /// FUN_8002f8f4(x, y, u, v, w, h, r, g, b, slot, clut_off, abr): SPRT 0x64
@@ -309,6 +371,10 @@ pub struct MapKart {
 pub struct ItemHud {
     /// DAT_800B0D90: frame counter (dt per game frame).
     pub frame: i32,
+    /// DAT_800B07D4: the animation strip counter (+dt per frame; the intro
+    /// faces swing with it). Live sessions use the frame counter (its phase
+    /// at race load is not modelled, as animtex.rs).
+    pub strip: i32,
     /// DAT_800B0E10 / 0x800B0E12.
     pub pulse: HudPulse,
     /// DAT_800B0A94: race clock (the player's own minimap marker blinks with it).
@@ -723,7 +789,16 @@ pub fn race_hud(ht: &HudTables, t: &ItemTables, st: &crate::hud::HudState, s: &I
     let mut out = Vec::new();
     out.extend(p.icon);
     if !racing {
+        let intro = st.countdown != 0 && st.countdown >= st.countdown_start && st.mode == 1;
+        // FUN_80050F64: on the overhead-camera courses (cup > 6) no intro
+        // text in its last 15 frames
+        if intro && s.e38 > 6 && st.countdown < st.countdown_start + 0xF {
+            return out;
+        }
         out.extend(base);
+        if intro {
+            out.extend(intro_faces(t, s));
+        }
         return out;
     }
     // layout(): [place digit, suffix, LAP, n/m, (timer)] when racing

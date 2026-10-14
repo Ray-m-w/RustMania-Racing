@@ -127,6 +127,7 @@ pub fn states(c: &Cap, vb: u32) -> (HudState, ItemHud, [(u16, u16); 32]) {
     }
     let it = ItemHud {
         frame: d90(prev),
+        strip: le::i32(&c.read(prev, 0x800B_07D4, 4), 0),
         pulse: HudPulse([le::i16(&c.read(prev, 0x800B_0E10, 2), 0), le::i16(&c.read(prev, 0x800B_0E12, 2), 0)]),
         race_time: st.race_time,
         countdown: st.countdown,

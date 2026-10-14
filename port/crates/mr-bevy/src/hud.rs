@@ -277,12 +277,18 @@ fn inset_uvs(uv: &mut [[f32; 2]]) {
 }
 
 /// Default HUD state: the player's kart record + HudGlobals.
-fn state_from_player(p: Res<crate::Player>, g: Res<HudGlobals>, mut input: ResMut<HudInput>) {
+fn state_from_player(
+    p: Res<crate::Player>,
+    g: Res<HudGlobals>,
+    cap: Option<Res<crate::capture::CaptureReplay>>,
+    mut rows: Option<ResMut<crate::effects::CapRows>>,
+    mut input: ResMut<HudInput>,
+) {
     if input.manual {
         return;
     }
     let Some(rec) = p.kart.as_ref() else { return };
-    let base = HudState {
+    let mut base = HudState {
         countdown: g.countdown,
         countdown_start: g.countdown_start,
         mode: g.mode,
@@ -290,6 +296,17 @@ fn state_from_player(p: Res<crate::Player>, g: Res<HudGlobals>, mut input: ResMu
         race_time: g.race_time.unwrap_or_else(|| hud::race_clock_from_kart(rec)),
         ..HudState::default()
     };
+    // `--replay-capture`: the globals from the captured RAM (countdown,
+    // intro, mode, laps, clock), so the replay shows the oracle's HUD phase
+    if let (Some(cap), Some(rows)) = (cap.as_ref(), rows.as_mut()) {
+        if let Some(m) = rows.mem(cap.vb) {
+            base.countdown = m.i32(0x800B_0C70);
+            base.countdown_start = m.i16(0x800B_07F8) as i32;
+            base.mode = m.u8(0x800B_0D46);
+            base.laps = m.i16(0x800B_0DA6) as u8;
+            base.race_time = m.i32(0x800B_0A94);
+        }
+    }
     let mut st = base.with_kart(rec);
     if g.countdown != 0 {
         st.minigame = Some(hud::Minigame {
@@ -356,6 +373,7 @@ fn items_from_player(
     }
     input.state = Some(ItemHud {
         frame: g.frame,
+        strip: g.frame,
         pulse: pulse.0,
         race_time: g.race_clock,
         countdown: g.countdown,
@@ -390,6 +408,7 @@ fn capture_items(m: &mr_sim::mem::Mem) -> ItemHud {
     }
     ItemHud {
         frame: m.i32(0x800B_0D90),
+        strip: m.i32(0x800B_07D4),
         pulse: HudPulse([m.i16(0x800B_0E10), m.i16(0x800B_0E12)]),
         race_time: m.i32(0x800B_0A94),
         countdown: m.i32(0x800B_0C70),
@@ -428,6 +447,7 @@ fn replay_items(p: &crate::Player, pulse: &mut (HudPulse, i32)) -> Option<ItemHu
     let r = &rec[..];
     Some(ItemHud {
         frame,
+        strip: frame,
         pulse: pulse.0,
         race_time: hud::race_clock_from_kart(r),
         countdown: 0,

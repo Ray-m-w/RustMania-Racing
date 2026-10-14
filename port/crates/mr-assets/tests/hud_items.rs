@@ -65,6 +65,7 @@ fn state_3800() -> (HudState, ItemHud) {
     ];
     let it = ItemHud {
         frame: 4564,
+        strip: 4564,
         pulse: HudPulse([22, 22]),
         race_time: 20415,
         countdown: 0,
@@ -157,4 +158,17 @@ fn rival_line_in_results() {
     // lost: "GONZO BEAT YOU" (12 glyphs again)
     let n2 = ht.results(&st, &hud::Results { place: 2, ..base }).len();
     assert_eq!(ht.results(&st, &hud::Results { rival: Some(1), place: 2, ..base }).len(), n2 + 12);
+}
+
+#[test]
+fn quad_hung_from_bottom_edge() {
+    let Some((_, it, _)) = setup() else { return };
+    // flags 4, no rotation: the quad spans y - 2hh .. y, x as flags 0
+    let q = hud_items::quad_f(&it, 0x100, 0x3C, 0x10, 0x10, 4, 0, 0, 0, 0x2F, 0x2F, [0x80; 3], 0x18, 0, 0x60).unwrap();
+    assert_eq!(q.v, [[231, 28], [281, 28], [231, 60], [281, 60]]);
+    // rotated: the bottom edge's centre stays on (x, y)
+    let r = hud_items::quad_f(&it, 0x100, 0x3C, 0x10, 0x10, 4, 0x80, 0, 0, 0x2F, 0x2F, [0x80; 3], 0x18, 0, 0x60).unwrap();
+    let mid = [(r.v[2][0] + r.v[3][0]) as f32 / 2.0, (r.v[2][1] + r.v[3][1]) as f32 / 2.0];
+    assert!((mid[0] - 256.0).abs() <= 1.0 && (mid[1] - 60.0).abs() <= 1.0, "{:?}", r.v);
+    assert!(r.v[0][1] != r.v[1][1]);
 }

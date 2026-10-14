@@ -197,7 +197,8 @@ pub fn sync_rigs(
                 for ((model, part), ms, semi) in parts {
                     c.spawn((Transform::default(), Visibility::default(), RigPart { slot, model, part })).with_children(|c| {
                         for (mesh, mat) in ms {
-                            c.spawn((Mesh3d(mesh), MeshMaterial3d(mat)));
+                            let mat = own_material(&mut mats, &mat);
+                            c.spawn((Mesh3d(mesh), MeshMaterial3d(mat.clone()), RigTint { slot, model, mat }));
                         }
                         // semi-transparent polygons (canopies etc.): the effects pass
                         if let Some(s) = semi {
@@ -209,11 +210,75 @@ pub fn sync_rigs(
                     for (pi, poly) in polys.iter().enumerate() {
                         let id = |p: [i32; 3]| crate::to_bevy(p[0] * 32, p[1] * 32, p[2] * 32);
                         for (mesh, mat) in psxmesh::build(std::slice::from_ref(poly), &mut tex, &mut images, &mut meshes, &mut mats, id) {
-                            c.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mat), Transform::default(), Visibility::default(), RigNeck { slot, neck: ni, poly: pi, mesh }));
+                            c.spawn((
+                                Mesh3d(mesh.clone()),
+                                MeshMaterial3d(mat.clone()),
+                                Transform::default(),
+                                Visibility::default(),
+                                RigNeck { slot, neck: ni, poly: pi, mesh },
+                                RigTint { slot, model: 1, mat },
+                            ));
                         }
                     }
                 }
             });
+    }
+}
+
+/// A rig mesh's own material, tinted by the kart's colour factors.
+#[derive(Component)]
+pub struct RigTint {
+    pub slot: u8,
+    /// 0 vehicle, 1 driver
+    pub model: usize,
+    pub mat: Handle<StandardMaterial>,
+}
+
+fn own_material(mats: &mut Assets<StandardMaterial>, shared: &Handle<StandardMaterial>) -> Handle<StandardMaterial> {
+    match mats.get(shared).cloned() {
+        Some(m) => mats.add(m),
+        None => shared.clone(),
+    }
+}
+
+/// The kart's colour factors (4.12, 0x1000 = 1.0): FUN_80026F3C lights the
+/// vehicle with (+0x414, +0x418, +0x41C), FUN_800276E8 the driver with
+/// (+0x416, +0x41A, +0x41E) (a colour matrix instead of the plain one when
+/// any is not 0x1000). Character specials set them: 0xB (frozen) r, g
+/// 0x400 / 0x800, b 0x2000 (blue); 0xE all 0x400 (dark) [CODE 80026f3c,
+/// 800276e8] [RAM: analysis/s6/status]. The PS1 multiplies gamma-space
+/// colours; the unlit material multiplies linear light, so the factor is
+/// converted at a typical kart texel (`tint_linear`).
+pub fn tint_factors(r: &[u8], model: usize) -> [f32; 3] {
+    let o = if model == 0 { [0x414, 0x418, 0x41C] } else { [0x416, 0x41A, 0x41E] };
+    o.map(|o| i16::from_le_bytes([r[o], r[o + 1]]) as f32 / 4096.0)
+}
+
+/// A gamma-space factor as a linear multiplier, exact for a texel of value
+/// 0.35 (~90 / 255, the karts' body colours): lin(0.35 g) / lin(0.35).
+/// (A pure power g^2.2 makes the dark tints about half as bright as the
+/// oracle's: the sRGB curve is linear near black.)
+pub fn tint_linear(g: f32) -> f32 {
+    let lin = |c: f32| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
+    const C0: f32 = 0.35;
+    lin(C0 * g.max(0.0)) / lin(C0)
+}
+
+/// Tint every rig mesh from its kart's record (only when it changes).
+pub fn tint_rigs(feed: Res<KartFeed>, q: Query<&RigTint>, mut mats: ResMut<Assets<StandardMaterial>>) {
+    for t in q.iter() {
+        let Some(k) = feed.now.iter().find(|k| k.slot == t.slot) else { continue };
+        if k.record.len() < 0x420 {
+            continue;
+        }
+        let f = tint_factors(&k.record, t.model).map(tint_linear);
+        let Some(m) = mats.get(&t.mat) else { continue };
+        let want = Color::linear_rgba(f[0], f[1], f[2], m.base_color.alpha());
+        if m.base_color.to_linear() != want.to_linear() {
+            if let Some(mut m) = mats.get_mut(&t.mat) {
+                m.base_color = want;
+            }
+        }
     }
 }
 
@@ -302,6 +367,6 @@ impl Plugin for KartsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<KartFeed>()
             .add_systems(FixedUpdate, feed_player.after(crate::sim_tick))
-            .add_systems(Update, (sync_rigs, place_rigs.after(sync_rigs)));
+            .add_systems(Update, (sync_rigs, place_rigs.after(sync_rigs), tint_rigs.after(sync_rigs)));
     }
 }

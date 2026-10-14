@@ -489,6 +489,8 @@ pub fn after_kart_loop(
                 if g.hz60.on {
                     g.dt = 2;
                 }
+                // Its first loop: the course's jets (objects.rs).
+                crate::objects::jets_smoke(g, w, cams, rand);
                 kart_fx::frame(&rs, g, w, cams);
                 g.dt = dt;
             }

@@ -187,6 +187,10 @@ kart_fields! {
     /// Driver position (FUN_80025D8C): x, y (`ref_y`), z. Pickups and
     /// projectile hits test it.
     drv_x: i32 @ 0x330,
+    /// +0x334 / +0x33C / +0x344: the driver position before the last
+    /// render pass (FUN_80025D8C copies +0x330.. here first); the jets
+    /// (FUN_80063C24) read them.
+    drv_prev_x: i32 @ 0x334, drv_prev_y: i32 @ 0x33C, drv_prev_z: i32 @ 0x344,
     ref_y: i32 @ 0x338,
     drv_z: i32 @ 0x340,
     /// Suspension bounce: offset, velocity, impulse.

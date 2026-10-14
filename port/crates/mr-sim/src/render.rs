@@ -300,6 +300,9 @@ pub fn after_kart_loop(k: &mut KartState, rec: &mut [u8], w: &World, drv: &Drive
     p32(rec, 0x334, px);
     p32(rec, 0x33C, py);
     p32(rec, 0x344, pz);
+    k.drv_prev_x = px;
+    k.drv_prev_y = py;
+    k.drv_prev_z = pz;
     let d = mvec(g16(rec, 0x182), g16(rec, 0x184), g16(rec, 0x186), &m2);
     let (o0, o1, o2) = (g16(rec, 0x46A), g16(rec, 0x46C), g16(rec, 0x46E));
     let dx = k.x.wrapping_add(o0).wrapping_add(d[0]);

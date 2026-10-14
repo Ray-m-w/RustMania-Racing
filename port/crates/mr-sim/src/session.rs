@@ -457,6 +457,9 @@ impl Session {
             // DOCK's race setup: no rain (0x800B0B9A = 0, 0x800B07E2 = 0).
             kart_fx_rain: false,
             hz60: crate::globals::Hz60 { on: cfg.logic_hz == 60, ..Default::default() },
+            // Course objects at the course load: FUN_800637B8 (jets),
+            // FUN_800616A0 (hooks); the turntables' draws below.
+            objects: crate::objects::ObjectState { jets: crate::objects::jets_load(&world), hooks: crate::hooks::load(&world), ..Default::default() },
         };
         // FUN_8008C4AC: the first human's grid slot (*rng++ % karts), the
         // other karts on the following slots; with no opponents the
@@ -563,16 +566,30 @@ impl Session {
             rand_state,
             cfg,
         };
-        if cfg.items {
-            // FUN_8007B448 ran at the course load, before the race load the
-            // seed above stands for (oracle start_probe: the race load's
-            // 32 rand() calls follow 1-per-frame menu draws, no 92-call burst
-            // for the tokens). Their colours come from the 92 seeds that lead
-            // up to it, which leaves the race-load stream as it was.
-            let n = s.world.pickups.tokens.as_ref().map(|l| l.points.len()).unwrap_or(0) as u32;
+        {
+            // The course load ran before the race load the seed above stands
+            // for (oracle start_probe: the race load's 32 rand() calls follow
+            // 1-per-frame menu draws, no 92-call burst for the tokens). Its
+            // rand() draws, in order: FUN_8007B448 one per turbo token (the
+            // colours), FUN_80084490 two per turntable (phase, spin) and its
+            // per-course switch (render-side phases). They come from the
+            // seeds that lead up to the race-load seed, which leaves the
+            // race-load stream as it was.
+            let n_tok = s.world.pickups.tokens.as_ref().map(|l| l.points.len().min(0x80)).unwrap_or(0) as u32;
+            let n_turn = s.world.course.objects.turntables.len() as u32;
+            let n = n_tok + 2 * n_turn + crate::objects::course_load_switch_rands(s.world.info.id);
             let mut seed = bios_rand_rewind(cfg.rand_seed, n);
             let mut rand = || bios_rand(&mut seed);
-            crate::items::pickups::init(&mut s.globals.items, &s.world.pickups, false, &mut rand);
+            if cfg.items {
+                crate::items::pickups::init(&mut s.globals.items, &s.world.pickups, false, &mut rand);
+            } else {
+                for _ in 0..n_tok {
+                    rand();
+                }
+            }
+            let (phase, spin) = crate::objects::turntables_load(&s.world, &mut rand);
+            s.globals.objects.turntable_phase = phase;
+            s.globals.objects.turntable_spin = spin;
         }
         // The records get a render pass for the starting poses (for drawing
         // before the first tick); the karts themselves keep the load state
@@ -773,6 +790,8 @@ impl Session {
         let rng_world = |a: u32| w.rng_byte(a);
         let (wn, an) = self.water.step(&w.tables, g.dt, &mut g.rng, &rng_world);
         crate::items::token_spins(g, w, self.camera.roll);
+        // FUN_80063A98: the jets switch on and off (objects.rs).
+        crate::objects::jets_frame(g, w);
         if let Some(r) = self.rng_override.take() {
             g.rng = r;
         }
@@ -863,6 +882,11 @@ impl Session {
         }
         if g.hz60.pair_end() {
             self.pick = (self.pick + 1) % n;
+        }
+        // FUN_800617CC: GRAVE's hooks (hooks.rs).
+        if !g.objects.hooks.is_empty() {
+            let drivers: Vec<[i32; 3]> = ks.iter().map(|k| [k.drv_x, k.ref_y, k.drv_z]).collect();
+            crate::hooks::frame(g, w, &drivers);
         }
         // 5b. After the kart loop (FUN_8007916C @0x80079A8C..): effects
         //     FUN_8006C388, FUN_8007F03C (kart particles, items/kart_fx.rs),

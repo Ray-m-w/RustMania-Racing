@@ -197,6 +197,8 @@ fn start_game_matches_oracle() {
         // Model slot numbers (the game's model table order) and the colour
         // of the last token an earlier race left in the record.
         "model_slot", "char_slot", "token_colour", "drv_x", "drv_z",
+        // Their copies from the previous render pass (named since Session 6).
+        "drv_prev_x", "drv_prev_y", "drv_prev_z",
     ];
     let mut presses = 0;
     let mut go = None;

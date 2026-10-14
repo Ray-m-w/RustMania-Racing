@@ -504,7 +504,8 @@ pub fn kart_update_full(k: &mut KartState, others: &mut Others, g: &mut RaceGlob
             let half = (e - (e >> 31)) >> 1;
             k.vy = div_pow2((half + 0x800) * -0x700, 12);
         } else {
-            unreachable_in_scope!("jump while carrying an object");
+            // A jump drops the kart off GRAVE's hook.
+            crate::hooks::drop(k, g);
         }
         crate::sound::jump(k, g, w);
     }

@@ -51,11 +51,12 @@ pub struct Course {
     /// units << 4), used by the catch-up (rubber band) speed.
     pub length: Option<u16>,
     pub triggers: Vec<Trigger>,
-    /// Object lists the DOCK course does not have (0x800D1C68, 0x800D1C8C,
-    /// 0x800D1C98, 0x800D1CA4, count byte 0x800B0C58, flag 0x800B0E00,
-    /// byte 0x800B0C68). If any were present the corresponding code paths
-    /// would be needed; they are `unreachable_in_scope!` instead.
+    /// Object lists only the stunt courses have (chunks 0x08 / 0x17 read by
+    /// FUN_80062E38 at 0x800D1C68 / 0x800D1CA4, chunk 0x14 read by
+    /// FUN_800628FC at 0x800D1C98): their code is `unreachable_in_scope!`.
     pub has_other_objects: bool,
+    /// Jets, turntables, hooks (objects.rs, hooks.rs).
+    pub objects: crate::objects::CourseObjects,
 }
 
 /// Where the game keeps the TER sections in RAM. The kart record stores RAM
@@ -104,9 +105,9 @@ pub mod chunk {
     pub const COURSE: i16 = 0x05;
     pub const LOOK_POINTS: i16 = 0x07;
     pub const TRIGGERS: i16 = 0x15;
-    /// Lists read by FUN_80062E38 (0x800D1C68, 0x800D1CA4), FUN_800632BC
-    /// (0x800D1C8C) and FUN_800628FC (0x800D1C98); absent on DOCK.
-    pub const OTHER: [i16; 4] = [0x08, 0x11, 0x14, 0x17];
+    /// Lists read by FUN_80062E38 (0x800D1C68, 0x800D1CA4) and FUN_800628FC
+    /// (0x800D1C98): stunt courses only.
+    pub const OTHER: [i16; 3] = [0x08, 0x14, 0x17];
 }
 
 pub struct World {
@@ -206,7 +207,8 @@ impl Course {
             })
             .unwrap_or_default();
         let has_other_objects = chunk::OTHER.iter().any(|&id| find(id).is_some());
-        Course { grid, look_points, course_points, finish, length, triggers, has_other_objects }
+        let objects = crate::objects::CourseObjects::from_dat(dat, bytes);
+        Course { grid, look_points, course_points, finish, length, triggers, has_other_objects, objects }
     }
 }
 

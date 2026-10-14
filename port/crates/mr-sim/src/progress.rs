@@ -16,7 +16,7 @@ pub fn contact_phase(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Ti
         crate::ground::kart_ground(k, g, w, inp);
         return;
     }
-    // FUN_800628FC: list at 0x800D1C98 (null on DOCK).
+    // FUN_800628FC: list at 0x800D1C98 (chunk 0x14, stunt courses only).
     if k.effect == -1 && w.course.has_other_objects {
         unreachable_in_scope!("FUN_800628FC object list");
     }
@@ -25,26 +25,21 @@ pub fn contact_phase(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Ti
     }
     // FUN_80061FC0: proximity triggers (list 0x800D1C9C, count 0x800B0DC6).
     teleport(k, g, w);
-    if !(k.pickup == -1 || k.wall_flag != 0) {
-        // In a trigger's transfer the kart is moved by it alone.
-        k.object_f8 = -1;
-        return;
-    }
-    // FUN_80061BC4: flag 0x800B0E00 (0 on DOCK).
-    if k.effect == -1 && w.course.has_other_objects {
-        unreachable_in_scope!("FUN_80061BC4");
-    }
-    if k.carried == -1 {
-        // FUN_800632BC: +0x4E4 = -1; list 0x800D1C8C is null on DOCK.
-        k.object_e4 = -1;
-    } else {
-        unreachable_in_scope!("carrying an object");
-    }
-    crate::ground::kart_ground(k, g, w, inp);
-    // FUN_80063C24: +0x4E3 = -1; count byte 0x800B0C58 is 0 on DOCK.
-    k.object_e3 = -1;
-    if k.flags & 0x40 != 0 && k.item_ee != -1 {
-        unreachable_in_scope!("FUN_800627E0");
+    if k.pickup == -1 || k.wall_flag != 0 {
+        // FUN_80061BC4: GRAVE's hooks (hooks.rs).
+        crate::hooks::kart(k, g);
+        // FUN_800632BC: turntables (objects.rs).
+        if k.carried == -1 {
+            crate::objects::turntable(k, g, w);
+        }
+        crate::ground::kart_ground(k, g, w, inp);
+        // FUN_80063C24: jets (objects.rs).
+        if k.carried == -1 {
+            crate::objects::jet_push(k, g, w);
+        }
+        if k.flags & 0x40 != 0 && k.item_ee != -1 {
+            unreachable_in_scope!("FUN_800627E0");
+        }
     }
     // FUN_80062E38: +0x4F8 = -1; lists 0x800D1C68 / 0x800D1CA4 null on DOCK.
     k.object_f8 = -1;

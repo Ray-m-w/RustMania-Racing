@@ -229,7 +229,7 @@ pub fn dock_world(ram0: &[u8]) -> World {
     assert_eq!(c.triggers.len(), m.u8(course_addr::TRIGGER_COUNT) as usize);
     assert_eq!(c.grid.len(), (m.u16(m.u32(course_addr::GRID_PTR)) >> 1) as usize);
     let other = course_addr::OTHER_LISTS.iter().any(|&a| m.u32(a) != 0) || course_addr::OTHER_BYTES.iter().any(|&a| m.u8(a) != 0);
-    assert_eq!(c.has_other_objects, other);
+    assert_eq!(c.has_other_objects || !c.objects.jets.is_empty() || !c.objects.turntables.is_empty() || !c.objects.hooks.is_empty(), other);
     w
 }
 

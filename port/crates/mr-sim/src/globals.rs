@@ -81,6 +81,9 @@ pub struct RaceGlobals {
     /// Session 5: the 60 Hz logic mode (off = the game's 30 Hz; see
     /// docs/spec/kart-physics-ledger.md "60 Hz mode"). Not game memory.
     pub hz60: Hz60,
+    /// Course objects' run-time state (objects.rs: jets, turntables,
+    /// hooks); empty on DOCK.
+    pub objects: crate::objects::ObjectState,
 }
 
 /// The 60 Hz logic mode: every tick is one VBlank (dt = 1); two ticks make
@@ -203,6 +206,7 @@ impl RaceGlobals {
             kart_fx_rain: m.i16(0x800B_0B9A) == 2 || m.u8(0x800B_07E2) & 9 != 0,
             fx: None,
             hz60: Hz60::default(),
+            objects: crate::objects::ObjectState::read(m),
             lap_record: m.i32(0x800E_0190u32.wrapping_add((8 * m.i8(0x800B_0E32) as i32 + 0x20 * m.i8(0x800B_0E38) as i32) as u32)),
         }
     }

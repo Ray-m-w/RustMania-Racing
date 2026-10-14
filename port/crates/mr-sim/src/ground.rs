@@ -169,9 +169,8 @@ pub fn kart_ground(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
                 crate::items::spark(g, pos, v, 0x18, 0x10, [0xFF, 0x7F, 0]);
             }
         }
-        if k.carried != -1 {
-            unreachable_in_scope!("wall hit while carrying");
-        }
+        // 0x8003EB0C: a wall hit drops a kart off GRAVE's hook.
+        crate::hooks::drop(k, g);
         k.wall_hit = 1;
         k.x = h.x;
         k.z = h.z;
@@ -357,7 +356,8 @@ pub fn kart_ground(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Tick
         return tilt_and_lean(k, g, w, n130);
     }
     if k.carried != -1 {
-        unreachable_in_scope!("carrying");
+        // 0x8003F7AC: on a hook: straight to the tilt (LAB_8003FC1C).
+        return tilt_and_lean(k, g, w, n130);
     }
     // 0x8003F7B8: sink offset.
     if k.status & 1 == 0 {

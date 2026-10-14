@@ -662,8 +662,10 @@ fn select_mode(cam: &mut CameraState, inp: &CameraInput) -> i16 {
     if mode == 0 && g.countdown >= g.countdown_len as i32 {
         mode = 10;
     }
+    // 0x800707B8: cups above 6 (SPEEDWAY, RALLY, GLACIER, the cup-8
+    // arenas) use the overhead camera, mode 12.
     if g.overhead > 6 && mode != 1 {
-        unreachable_in_scope!("overhead camera (0x800B0E38 > 6, mode 12)");
+        mode = 12;
     }
     mode
 }
@@ -855,6 +857,19 @@ pub fn tick(cam: &mut CameraState, inp: &CameraInput, t: &CameraTables, env: &mu
                 yaw_div = 8;
             }
         }
+        12 => {
+            // Overhead (0x80070D94): 0x1400 (minus up to 0xA00 while the
+            // countdown is above 300) TER units straight above the kart,
+            // looking at its position; weights 0x40 during the countdown,
+            // else 0x100. The angles are fixed below.
+            let mut h: i32 = 0x1400;
+            if g.countdown >= g.countdown_len as i32 {
+                h = 0x1400 - ((g.countdown - g.countdown_len as i32).wrapping_mul(0xA00)) / 0xB4;
+            }
+            goal = [k.pos[0], k.pos[1].wrapping_sub(h << 5), k.pos[2]];
+            let w: i16 = if g.countdown > 0 { 0x40 } else { 0x100 };
+            w_target = [w, w, w];
+        }
         m => unreachable_in_scope!(format!("camera mode {m}")),
     }
 
@@ -914,7 +929,12 @@ pub fn tick(cam: &mut CameraState, inp: &CameraInput, t: &CameraTables, env: &mu
     if g.event == 30 {
         unreachable_in_scope!("event 30 fixed camera angles");
     }
-    if changed {
+    if g.overhead > 6 {
+        // 0x800723E8: cups above 6: straight down, no yaw, no roll.
+        cam.pitch = 0x400;
+        cam.yaw = 0;
+        cam.roll = 0;
+    } else if changed {
         cam.pitch = pitch_t as i16;
         cam.yaw = yaw_t as i16;
     } else {
@@ -928,7 +948,7 @@ pub fn tick(cam: &mut CameraState, inp: &CameraInput, t: &CameraTables, env: &mu
 
     // Roll goal (0x8007252C..0x80072708): modes 0 and 10 bank with the
     // kart, mode 2 levels out.
-    let roll_t: i32 = if mode == 2 || k.watch_target != -1 {
+    let roll_t: i32 = if mode == 2 || mode == 12 || k.watch_target != -1 {
         0
     } else if k.roll_mode != 0 {
         // Airborne/spinning: bank against the remaining yaw error.

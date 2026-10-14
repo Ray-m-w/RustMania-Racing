@@ -107,14 +107,13 @@ Paths the solo player does not take on DOCK. Address = the game code skipped.
 |---|---|---|
 | update.rs | nearest-camera search with 2+ humans (0x80064FB0) | multiplayer |
 | update.rs | TRIANGLE look-at when no kart is near / mode 0x14 (FUN_800728C0) | camera lock search, challenge mode |
-| update.rs | jump while carrying an object (+0x4E8 != -1) | items |
 | update.rs | time-trial ghost FUN_8006F64C (race type 3) | not a race |
 | update.rs | 10-minute limit: kart handed to the AI (+0x4C7 = 2) | race clock > 179999 |
-| ground.rs | wall hit while carrying (+0x4E8) | carried objects (none on DOCK) |
 | progress.rs | item +0x4E7 (carried object list) | none on DOCK |
 | progress.rs | paired trigger list 0x800D1C7C (+0x4EF = 2), trigger on course 12 | other courses |
+| camera.rs | orbit (mode 1) with only the eye path (chunk 0x0B, no 0x0A): looks at the kart, the game at a stale stack value [INFER] | no race course: DISCO has both |
 | items | challenge-mode boxes / tokens / objects (0x800B07E6 != 0), battle-mode projectile damage (modes 2 / 7, race flag 8), mode 20 hits | other modes |
-| progress.rs | object lists FUN_800628FC / FUN_80061BC4 / FUN_800632BC / FUN_80063C24 / FUN_80062E38 / FUN_800627E0 with non-empty lists | DOCK has none (pointers 0x800D1C68/8C/98/A4 null, 0x800B0C58/0E00/0C68 zero) |
+| progress.rs | object lists FUN_800628FC (chunk 0x14), FUN_80062E38 (0x08 / 0x17), FUN_800627E0 (challenge) | stunt courses / challenge mode only (Session 6: hooks, jets, turntables ported) |
 | progress.rs | lap timing in modes 2/7/20, race flags 8/2, time trial, 10-minute limit | other modes |
 | progress.rs | challenge win bits at the finish (race flag 0x10) | challenge mode |
 | race.rs | race progress in battle / time trial / race flag 1 | other modes |
@@ -486,3 +485,52 @@ turbo, special moves, hits) within 2 * sqrt(sd_a^2/n + sd_b^2/n). Full table:
 docs/notes/2026-10-13.md, "Session 5, G 60 Hz".
 Open: with items the AI leans slower at 60 Hz (+0.4 to +0.9 % pooled over
 runs; items off +0.2 %), cause not isolated (every item rate in tolerance).
+
+## Session 6 (track P): the other race courses
+Course table, objects and checks: docs/spec/courses.md. Ported from the code
+(each with addresses there): the course table (course.rs), jets, turntables,
+GRAVE-style hooks, lifts moving TER groups, breakable scenery, weather, race
+flag 8 damage / knock-out (DISCO), camera modes 12 (overhead) and 1 (orbit),
+the HUD's random draws.
+Changes that also touch DOCK (all DOCK oracle tests unchanged; the 30 Hz
+fingerprint was identical after the generalisation commit ea1fa61 / 9f0c750
+and changes with these, by design):
+- Start-game HUD (FUN_8004E8E8): 7 random-pointer bytes per human per frame
+  while 0 < countdown < 300, twice when the camera's cut flag makes
+  FUN_80078F38 render the frame again. Explains the countdown-time pointer
+  drift Session 3 listed as "random-pointer driven fields" (start_probe).
+- The load frame: no FUN_8005C2EC rand() before the kart loop; the intro
+  camera's change draws its rand() at its place (the Session 3 "peek" is
+  gone: `camera_peek` stays false). Equal streams on DOCK; ROCK / OVAL (first
+  AI kart's weapon roll) and SPEEDWAY / RALLY (overhead camera: no draw)
+  decide it.
+- Race load +0x488: FUN_80081170 mode 1 (whole-list nearest), not mode 0x10.
+- `drv_prev_x/y/z` (+0x334/+0x33C/+0x344) are named KartState fields (the
+  jets read them); two DOCK tests list them with the other driver fields.
+Known differences (not one-for-one):
+- Course-load rand() draws (token colours, turntable phase / spin, the
+  FUN_80084490 switch's render phases) come from the seeds before the
+  session's race-load seed; the game's course load is earlier (menus), so
+  turntable spin directions differ from any given oracle race unless set from
+  RAM (mr-course-check does).
+- Lifts and breakables change the TER in place; the session keeps the TER in
+  step with its state (`Session::sync_ter`, also after `restore` /
+  `load_mem`). A projectile's breakable hit is applied to the TER after the
+  frame's projectile step (the game: at once).
+- Breakable floor hits (FUN_8003C4D4 paths of FUN_80069648) are not ported
+  (walls are); no capture had one.
+- Hooks: FUN_80061BC4 scans all 24 records; the port scans the course's.
+  No race course has hooks.
+- Weather: the drops' render-side colours / sizes are kept for drawing; the
+  shadow (FUN_800861F0) of hooks is not.
+- DISCO: one teacher-forced frame (387, kart 5) hits a wall the port misses
+  (near a lift); free runs reach it later anyway.
+- Free runs (mr-course-check) part from the oracle 90..850 frames after GO:
+  first in hidden state (particle / spark lists, then the random pointer by
+  1-2 bytes), as on DOCK (456).
+- mr-bevy: moving scenery (lift / turntable / animated DAT objects,
+  FUN_800859EC's render part), the per-course VRAM scrolls of FUN_8007A9DC
+  (FUN_8005E38C cases), falling weather and knocked-down scenery are not
+  drawn yet (render-ledger).
+- AI stuck spots: a rare AI kart jumps in place against a wall (NEW_YORK,
+  HAPPY, seed dependent; the game's AI has no recovery either) [INFER].

@@ -211,10 +211,10 @@ pub struct Session {
     /// Analysis only: for the next tick, step the random pointer by this
     /// many bytes in place of FUN_8007F03C (kart particles); None runs it.
     pub rng_skip_items: Option<u32>,
-    /// The first tick after the race load: the camera's change to the intro
-    /// mode takes its side bit from the next rand() without drawing it
-    /// (oracle start_probe: drawing it puts every later AI decision one
-    /// rand() off; the game enters the intro during the load) [INFER].
+    /// Analysis: the next camera tick reads its rand() without drawing it
+    /// (Session 3's model of the load frame; false since Session 6, which
+    /// found the load frame draws no FUN_8005C2EC rand() before the kart
+    /// loop and the camera draws its own: kart-physics-ledger.md).
     pub camera_peek: bool,
     /// The BIOS rand() seed 0x80009010 (rand_seed() reads it).
     pub rand_state: u32,

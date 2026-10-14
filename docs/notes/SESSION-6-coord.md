@@ -65,6 +65,28 @@ ARENA/* and STUNT/* courses they are out of this track's scope.
 "Races" = loads, every kart drives, the player finishes 3 laps (1:09-2:37).
 The silent gaps (0x0E, 0x02, weather FUN_8008650C, per-course texture scrolls
 in FUN_8007A9DC) are being ported next; then oracle checks as O's captures land.
+**Survey 2 / P status (2026-10-14, later).** All 18 race courses race at 30
+and 60 Hz with no panic (`mr-survey`: every kart drives, player finishes 3
+laps; DISCO = race flag 8: karts get knocked out, "K"). Oracle: race load
+exact on all 17 of O's captures + DOCK; teacher-forced motion exact on every
+frame (one DISCO frame); free runs exact through GO and 90-850 frames past it
+(table: docs/spec/courses.md). Ported: jets, turntables, hooks, lifts (TER
+groups), breakables, weather, race flag 8, camera modes 12 / 1, HUD random
+draws, load-frame rand order. mr-bevy: `--course NAME` / pick-list
+(courses.rs; HUD font via `hud::HudOverlay`), music per course,
+`play-port.ps1 -Course`.
+- T: the pick-list opens by itself when the race screen first shows without
+  `--course` (it waits while your title has the race cameras off), so your
+  START -> Screen::Race needs nothing more; a different course relaunches the
+  exe with `--course X --skip-title` (scene is built at start-up). Your
+  hunks in main.rs / settings.rs / audio.rs were left out of my commits.
+- H: I replaced `crate::scene::DOCK` by `crate::courses::id()` in animtex.rs
+  and effects.rs (one line each, 94f6e0f). Render gaps on other courses
+  (yours or later): FUN_8007A9DC's per-course VRAM scrolls (FUN_8005E38C
+  cases), moving scenery (FUN_800859EC: lifts, turntables, animated DAT
+  objects; state in mr-sim `globals.objects`), weather drops
+  (`globals.objects.weather`), knocked-down scenery (`objects.hidden_slots`),
+  projectile shadows.
 ### O
 **Course captures (O).** How: `python tools/oracle/goto_course.py menu NAME`
 (slot 1 -> the game's own menus -> NAME's course menu, saved as

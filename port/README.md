@@ -2,8 +2,10 @@
 
 A reimplementation of Muppet RaceMania (PS1, SLUS-01237) in Rust, using the
 assets on the owner's disc and verified tick for tick against the psxrecomp
-build of the original (the oracle). Now: a full 3-lap race on DOCK, Kermit in
-the RACER against five AI opponents, countdown and start game to results. Plan and rules: ../docs/SESSION-2.md; results:
+build of the original (the oracle). Now: a full 3-lap race on any of the
+game's 18 race courses (Session 6; ../docs/spec/courses.md), Kermit in the
+RACER against five AI opponents (four on the overhead-camera courses),
+countdown and start game to results. Plan and rules: ../docs/SESSION-2.md; results:
 ../docs/notes/SESSION-2-report.md.
 
 ## Play
@@ -19,7 +21,11 @@ mr-bevy options: `--autopilot` (AI drives Kermit), `--oracle-grid` (solo
 session aligned to the oracle's grid savestate; `--leader` there = no catch-up), `--record-route F` / `--trace-out F` (oracle loop),
 `--route F` (scripted input), `--replay TRACE` (show an oracle trace),
 `--ghost TRACE` (oracle kart as a ghost, drift in the title bar),
-`--shot F --shot-at TICK` (screenshot and exit).
+`--shot F --shot-at TICK` (screenshot and exit),
+`--course NAME` (or `course = NAME` in settings.txt: DOCK, BOG, NEW_YORK, ...
+or the course index; without it a pick-list of the race courses comes first,
+and START on the results brings it back; `--show-picklist` shows it in any
+run, `--no-picklist` never).
 
 View options (Session 5; `settings.txt` beside the exe, one `key = value`
 per line, or `--set key=value`, or `--key-with-dashes [value]`; the command
@@ -100,4 +106,7 @@ cargo test --workspace --offline
 cargo run --release --bin mr-verify     # needs captures in ../analysis/oracle
 cargo run --release -p mr-sim --example feel60            # 60 Hz mode vs 30 Hz: the feel tolerance table (~30 s)
 cargo run --release -p mr-sim --example hz30_fingerprint  # whole-state hashes of long 30 Hz races (diff before / after a sim change)
+cargo run --release -p mr-sim --bin mr-survey             # AI races on every race course at 30 / 60 Hz: panics, laps, stuck karts
+cargo run --release -p mr-sim --bin mr-course-check       # each course capture (../analysis/oracle/courses): race load, free run, teacher forced
+cargo run --release -p mr-sim --example courses           # the course table and each course's objects
 ```

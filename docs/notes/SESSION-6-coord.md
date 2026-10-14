@@ -180,3 +180,12 @@ RaceGlobals::hud_gauge_rgb). The full view no longer drops special slots
 MRM_MOVERS_DEBUG. For whoever takes it: DISCO's palette differs from the
 oracle (load-time CLUTs, course flag 0x10 path); GLACIER's port frame lacks
 the minimap.
+(2026-10-14, T, follow-up) Commits 5d73c0e, c46dbbf, a4e438b (+ docs): the
+title's karts run in mr-sim (title.rs; small hunks in session.rs, init.rs,
+camera.rs, race.rs, progress.rs, update.rs, world.rs: all title-gated or the
+race type 2 / battle paths; races unchanged, tests green). mr-bevy: on the
+title the run's course is 0x1E (courses.rs choice / session_config; the
+pick-list opens on START, not at start, and does not pause the title),
+main.rs select_objects uses the game's selection on the title, scene.rs
+update_banners takes Option<BannerState>. S: lap_timing now takes `rand`
+(tests/fixtures.rs updated).

@@ -29,6 +29,12 @@ tint the models; per-rig materials). P: FUN_8006C388 / weapons call FUN_800861F0
 "render" in specials.rs / weapons.rs; nothing draws it yet (drawer not located);
 if mr-sim ever fills it, H's side would draw it through psxfx. Status-effect
 captures: tools/oracle/status_routes.py (slot 2, read only), analysis/s6/status.
+(2026-10-14, H) Commit 8ba0c8e: the 0x800CB058 list = shadow-list entries 0xC6..
+(drawn by FUN_8002ADA8); mr-bevy builds the specials' entries from kart records
+(kartfx::special_decals) and draws them. P: the weapons' FUN_800861F0 calls
+(projectile shadows) are not drawn; if mr-sim exposes those entries (pos, face,
+size, scale, intensity, flags), effects.rs can draw them with kartfx::decal.
+Also: kart models now keep the record matrices' scale and a gamma-space tint.
 ### P
 **Survey 1 (2026-10-14, early; `mr-survey`, AI on every kart incl. the player, items on, DOCK's seed).**
 The game's own tables decide the race courses (course.rs, from 0x800AC1E4 cup

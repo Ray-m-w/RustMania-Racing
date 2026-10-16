@@ -545,6 +545,35 @@ pub(crate) fn capture_source(
     *fx = out;
 }
 
+/// FUN_8007E21C @0x8007E908 -> FUN_800362D4 (phase 6b): in an ADVENTURE
+/// with the parked Doozer still in the race (kart 1, +0x496 bit 0x40), each
+/// Doozer goal (challenge objects 0x800B0EBC.. 0x800B0B98 of them) within
+/// 20000 view units of the camera shows two additive quads 0x100 x 0x100
+/// (texture slot 0x15 at 0, 0, 0x3F x 0x3F; tpage abr 1), red and blue,
+/// turning with the camera roll and the frame counter, 0x200 apart.
+fn doozer_goals(t: &FxTables, s: &mr_sim::session::Session, cam: FxCamera, frame: i32, out: &mut Vec<Billboard>) {
+    let g = &s.globals;
+    if g.challenge == 0 || s.others.first().is_none_or(|o| o.kart.flags & 0x40 == 0) {
+        return;
+    }
+    let (n, goals) = (g.items.challenge[0] as usize, g.items.challenge[1] as usize);
+    let Some(list) = s.world.pickups.challenge.as_ref() else { return };
+    if n == 0 || goals == 0 {
+        return;
+    }
+    let near = |p: i32, c: i32| (p.wrapping_sub(c >> 5) as u32).wrapping_add(20000) < 0x9C41;
+    let a = (cam.roll - (frame & 0x7F) * 0x20) & 0xFFF;
+    let (tp, cl) = t.slot_attr(0x15, 0, 0x20);
+    for pt in list.points.iter().skip(n).take(goals) {
+        if !(near(pt[0], cam.eye[0]) && near(pt[2], cam.eye[2]) && near(pt[1], cam.eye[1])) {
+            continue;
+        }
+        for (rgb, ang) in [([0x80, 0, 0], a), ([0, 0, 0x80], (a + 0x200) & 0xFFF)] {
+            out.push(Billboard { pos: [pt[0] << 5, pt[1] << 5, pt[2] << 5], hw: 0x100, hh: 0x100, angle: ang, anchor: 0, flat: false, u: 0, v: 0, uw: 0x3F, vh: 0x3F, tpage: tp, clut: cl, rgb, semi: true, abr: 1, bias: 0 });
+        }
+    }
+}
+
 /// What the effects are drawn from at one tick of a live session: the
 /// particle lists, item state, kart records, frame counter and camera.
 #[derive(Clone)]
@@ -744,6 +773,7 @@ pub(crate) fn session_source(
     }
     out.eye = cam.eye;
     items_from_mem(&t, m, cam, src.frame, &mut out.billboards);
+    doozer_goals(&t, s, cam, src.frame, &mut out.billboards);
     let mut h = 0u8;
     for (slot, rec) in &src.recs {
         let w = &s.world;

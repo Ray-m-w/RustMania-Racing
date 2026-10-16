@@ -735,6 +735,13 @@ pub fn meter(t: &ItemTables, s: &ItemHud) -> Vec<Prim> {
 /// sprite (slot 5) last so it is drawn first. Battle/special branches not
 /// ported (07E6 / mode 0x14).
 pub fn minimap(t: &ItemTables, s: &ItemHud) -> Vec<Prim> {
+    minimap_marked(t, s, None)
+}
+
+/// FUN_80048A0C with ADVENTURE's target marker (phase 6b): `marker` = the
+/// target's point (DAT units x, z) and the course (its icon 0x800AC9C0 +
+/// 6 * course, sized with sin(frame % 0x21 * 0x40)), drawn after the karts.
+pub fn minimap_marked(t: &ItemTables, s: &ItemHud, target: Option<(i32, i32)>) -> Vec<Prim> {
     let mut out = Vec::new();
     let c = s.course as usize;
     let use_table = t.course_flags.get(c).is_some_and(|f| f & 2 != 0);
@@ -778,8 +785,25 @@ pub fn minimap(t: &ItemTables, s: &ItemHud) -> Vec<Prim> {
             out.extend(quad(t, s16(mx), s16(my), 10, 10, ang & 0xFFF, t.chr(ch, 0x12), t.chr(ch, 0x13), 0x2F, 0x2F, [0x80; 3], t.chr(ch, 0x14), 0, 0x60).map(Prim::Ft4));
         }
     }
+    if let Some((px, pz)) = target {
+        let mx = ox + w * (px - x0) / dx;
+        let my = oy - h * (pz - z0) / dz;
+        out.extend(target_icon(t, s, mx, my));
+    }
     out.push(Prim::Sprt(sprt(ox, oy, u, v, w, h, [0x80; 3], 5, ((v >> 6) as u16) * 4 + (u >> 6) as u16, 0x60)));
     out
+}
+
+/// ADVENTURE's target marker (FUN_80048A0C / FUN_80047F1C): the course's
+/// target icon (0x800AC9C0 + 6 * course: u, v, w, h, clut, tpage) at (x,
+/// y), its size w * sin(frame % 0x21 * 0x40) >> 16 (the targets counter's
+/// pulse, at full size).
+fn target_icon(t: &ItemTables, s: &ItemHud, x: i32, y: i32) -> Option<Prim> {
+    let c = s.course as usize * 6;
+    let e = |k: usize| t.targets.get(c + k).copied().unwrap_or(1) as i32;
+    let sv = t.sin(s.frame.rem_euclid(0x21) * 0x40);
+    let sz = |v: i32| { let p = v * sv; (if p < 0 { p + 0xFFFF } else { p }) >> 16 };
+    quad(t, s16(x), s16(y), sz(e(2)), sz(e(3)), 0, e(0) as u8, e(1) as u8, e(2) - 1, e(3) - 1, [0x80; 3], e(4) as u8, e(5) as u16, 0x60).map(Prim::Ft4)
 }
 
 /// FUN_800307d4(x, y, heading, r, g, b, a, b): a flat triangle (0, -b),
@@ -850,6 +874,12 @@ fn tile(x: i32, y: i32, w: i32, h: i32, rgb: [u8; 3]) -> Prim {
 /// 0x60), the start banner's mark (black; white with race flag 4), the
 /// finish banner's chequer, then the bar (0x100 x 4, black), in add order.
 pub fn progress_bar(t: &ItemTables, s: &ItemHud, sh: &crate::hud::StuntHud) -> Vec<Prim> {
+    progress_bar_marked(t, s, sh, None)
+}
+
+/// FUN_80047F1C with ADVENTURE's target marker (phase 6b): `marker` = the
+/// target's place on the strip, drawn after the kart's face.
+pub fn progress_bar_marked(t: &ItemTables, s: &ItemHud, sh: &crate::hud::StuntHud, marker: Option<i32>) -> Vec<Prim> {
     let y = 0x1E;
     let mut out = Vec::new();
     let span = (sh.quads as i32) << 7;
@@ -864,6 +894,9 @@ pub fn progress_bar(t: &ItemTables, s: &ItemHud, sh: &crate::hud::StuntHud) -> V
         let ang = (if sh.kart_flags & 0x20 == 0 { -a } else { a }) & 0xFFF;
         let x = (sh.progress * 0x100) / span + 0x80;
         out.extend(quad_f(t, x, y, 10, 10, 0, ang, t.chr(c, 0x12), t.chr(c, 0x13), 0x2F, 0x2F, [0x80; 3], t.chr(c, 0x14), 0, 0x60).map(Prim::Ft4));
+    }
+    if let (Some(p), true) = (marker, span != 0) {
+        out.extend(target_icon(t, s, (p << 8) / span + 0x80, y));
     }
     let mark = |i: usize| if (i as u8) < sh.n_marks && span != 0 { Some((sh.marks[i] << 8) / span + 0x80) } else { None };
     let rev = sh.race_flags & 4 != 0;
@@ -1116,7 +1149,12 @@ pub fn adventure_hud(ht: &HudTables, t: &ItemTables, st: &crate::hud::HudState, 
         }
         return out;
     }
-    out.extend(minimap(t, s));
+    // FUN_80051698: on a stunt course with a strip the progress bar, else
+    // the minimap; each with the target marker (phase 6b)
+    match &a.bar {
+        Some(sh) if a.stunt => out.extend(progress_bar_marked(t, s, sh, a.marker.map(|m| m.2))),
+        _ => out.extend(minimap_marked(t, s, a.marker.map(|m| (m.0, m.1)))),
+    }
     let (cx, cy) = if a.stunt { (0x1C0, 0xD2) } else { (0x100, 0x1E) };
     out.extend(sprites(ht.text(crate::hud::timer_text((a.time_limit - st.race_time).max(0)).as_bytes(), cx, cy, 0, Size::Medium, 4, 0x60)));
     out

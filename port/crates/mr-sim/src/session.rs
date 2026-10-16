@@ -683,6 +683,7 @@ impl Session {
                 bosses: bosses as i16,
                 boss_cam: -1,
                 league: cfg.league,
+                marker: 0,
             },
         };
         // FUN_8008C4AC: the first human's grid slot (*rng++ % karts), the

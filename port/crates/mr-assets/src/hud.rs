@@ -505,6 +505,13 @@ pub struct AdventureHud {
     /// A stunt course (race type 3): the clock at (0x1C0, 0xD2), else
     /// (0x100, 0x1E) (FUN_80050B2C).
     pub stunt: bool,
+    /// Phase 6b: the target 0x800B068F marks while still out (FUN_80048A0C
+    /// / FUN_80047F1C): its point (DAT units x, z) and its place along a
+    /// stunt course's strip (0x800DD698[i], FUN_80070084).
+    pub marker: Option<(i32, i32, i32)>,
+    /// A stunt course's progress bar (FUN_80047F1C in ADVENTURE): the
+    /// strip's quads and banners, the kart's place on it.
+    pub bar: Option<StuntHud>,
 }
 
 /// What a battle's HUD reads (race type 2, game modes 2 and 10): the

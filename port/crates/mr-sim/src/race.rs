@@ -365,6 +365,23 @@ pub fn hud_draws(g: &mut RaceGlobals, w: &World, k: &KartState, bosses: &[KartSt
         g.hud_gauge_rgb = Some([w.rng_byte(g.rng), w.rng_byte(g.rng.wrapping_add(1)), w.rng_byte(g.rng.wrapping_add(2))]);
         g.rng = g.rng.wrapping_add(3);
     }
+    // ADVENTURE's target marker (phase 6b; FUN_80048A0C / FUN_80047F1C,
+    // drawn by FUN_80051698 once racing: the minimap, on a stunt course
+    // with a strip the progress bar): every 0x21 frames 0x800B068F steps to
+    // the next of the 0x800B0EBC targets still out (state != 2), while the
+    // targets are not all found (course flag 4).
+    let racing = g.race_over == 0 && g.countdown == 0 && !matches!(g.mode, 0 | 10 | 0x11 | 0x12) && g.game_state != 0x1E;
+    let drawn = g.race_type != 3 || crate::stunt::strip_quads(w) != 0;
+    let n = g.items.challenge[0] as i32;
+    if g.challenge != 0 && racing && drawn && n > 0 && g.adv.course_flags & 4 == 0 && (g.frame - g.dt).div_euclid(0x21) < g.frame.div_euclid(0x21) {
+        loop {
+            g.adv.marker = ((g.adv.marker as i32 + 1) % n) as i8;
+            let st = g.items.pickups.get(0x30 + g.adv.marker as usize).map_or(2, |p| p.state);
+            if st != 2 || g.items.pickups.iter().skip(0x30).take(n as usize).all(|p| p.state == 2) {
+                break;
+            }
+        }
+    }
     // A BOSS CHALLENGE (mode 7, FUN_8004F688 case 7, phase 6b): the
     // player's gauge whether out or not, then each boss's small gauge
     // (FUN_80049FD8(x, 0xD2, boss, 0)), three bytes each in the same range.

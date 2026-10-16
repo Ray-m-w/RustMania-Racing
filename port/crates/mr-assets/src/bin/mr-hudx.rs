@@ -85,6 +85,11 @@ impl Cap {
         }
         panic!("{addr:#x} not captured")
     }
+
+    /// Whether `addr..addr + n` is in the capture's regions.
+    fn has(&self, addr: u32, n: usize) -> bool {
+        self.regions.iter().any(|&(a, len)| addr >= a && addr + n as u32 <= a + len as u32)
+    }
 }
 
 pub const KART0: u32 = 0x800C_30A8;
@@ -219,6 +224,16 @@ pub fn states(c: &Cap, vb: u32) -> (HudState, ItemHud, [(u16, u16); 32]) {
             time_limit: std::env::var("MR_HUDX_LIMIT").ok().and_then(|v| v.parse().ok()).unwrap_or([72000, 72000, 54000, 180000][rt as usize]),
             done: c.read(vb, 0x800B_0803, 1)[0],
             stunt: rt == 3,
+            // phase 6b: the target marker (0x800B068F; the pickup record
+            // 0x800E1B70 + 0x20 * (0x30 + i): x +0, z +8, state +0x14)
+            marker: {
+                let m = if c.has(0x800B_068F, 1) { c.read(vb, 0x800B_068F, 1)[0] as u32 } else { u32::MAX };
+                let n = c.read(vb, 0x800B_0EBC, 1)[0] as u32;
+                let pk = 0x800E_1B70u32.wrapping_add(0x20u32.wrapping_mul(m.wrapping_add(0x30)));
+                let flags = std::env::var("MR_HUDX_FLAGS").ok().and_then(|v| u16::from_str_radix(v.trim_start_matches("0x"), 16).ok()).unwrap_or(0x101);
+                (m < n && flags & 4 == 0 && le::i16(&c.read(vb, pk + 0x14, 2), 0) == 1).then(|| (le::i32(&c.read(vb, pk, 4), 0), le::i32(&c.read(vb, pk + 8, 4), 0), 0))
+            },
+            bar: None,
         });
         if st.mode == 10 {
             let f88 = c.read(vb, 0x800B_0F88, 1)[0] != 0 || c.read(vb, 0x800B_0EBE, 1)[0] != 0;

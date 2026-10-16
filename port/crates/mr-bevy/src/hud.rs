@@ -549,6 +549,26 @@ pub fn adventure_from_session(s: &mr_sim::session::Session) -> Option<hud::Adven
         time_limit: g.adv.time_limit,
         done: g.adv.done,
         stunt: g.race_type == 3,
+        // phase 6b: the target marker (0x800B068F while that target is out)
+        marker: {
+            let m = g.adv.marker.max(0) as usize;
+            let n = g.items.challenge[0] as usize;
+            let out = n > 0 && g.adv.course_flags & 4 == 0 && g.items.pickups.get(0x30 + m).is_some_and(|p| p.state == 1);
+            s.world.pickups.challenge.as_ref().and_then(|l| l.points.get(m)).filter(|_| out && m < n).map(|p| (p[0], p[2], mr_sim::stunt::strip_progress(&s.world, p[0], p[2])))
+        },
+        bar: (g.race_type == 3 && mr_sim::stunt::strip_quads(&s.world) != 0).then(|| {
+            let mk = mr_sim::stunt::banner_marks(&s.world);
+            hud::StuntHud {
+                progress: k.strip as i32 * 0x80 + k.strip_along as i32,
+                quads: mr_sim::stunt::strip_quads(&s.world),
+                marks: [mk.first().copied().unwrap_or(0), mk.get(1).copied().unwrap_or(0)],
+                n_marks: mk.len() as u8,
+                race_flags: g.race_flags,
+                character: k.character,
+                kart_flags: k.flags,
+                ..Default::default()
+            }
+        }),
     })
 }
 

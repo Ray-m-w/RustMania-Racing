@@ -123,6 +123,10 @@ pub struct Adventure {
     /// 0x800B07E4: a league race (a BATTLE LEAGUE battle ends with
     /// FUN_80082450 once every human is out).
     pub league: bool,
+    /// 0x800B068F: the ADVENTURE target the minimap / progress bar marks
+    /// (FUN_80048A0C / FUN_80047F1C step it to the next one still out
+    /// every 0x21 frames).
+    pub marker: i8,
 }
 
 /// 0x800ACF30: the ADVENTURE time limit per race type (race clock units,
@@ -267,6 +271,7 @@ impl RaceGlobals {
                 bosses: m.i16(0x800B_0C98),
                 boss_cam: m.i8(0x800B_0DCC),
                 league: m.i16(0x800B_07E4) != 0,
+                marker: m.i8(0x800B_068F),
             },
             lap_record: m.i32(0x800E_0190u32.wrapping_add((8 * m.i8(0x800B_0E32) as i32 + 0x20 * m.i8(0x800B_0E38) as i32) as u32)),
         }

@@ -53,6 +53,7 @@ FX_REGIONS = [
     (0x800C84B8, 0x680),             # flat quads: 32 x 0x34 (FUN_800330D4 / FUN_80033440 / FUN_800342B8)
     (0x800C8B38, 0xD20),             # shadow list 0..0x45: karts 0..5, item boxes 6.. (x 0x30)
     (0x800C9858, 0x600),             # shadow list 0x46..0x65: turbo tokens 0..31
+    (0x800B0688, 0x8),               # phase 6b: 0x800B068F (ADVENTURE's target marker)
 ]
 
 

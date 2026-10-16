@@ -88,7 +88,8 @@ Race flow (Session 3, mr-sim race.rs / session.rs):
   at that load, so it is only the solo session's start.
 - The frame that switches to the results (mode 10) runs FUN_800606D0 (not
   ported; sound / results set-up) and is a long frame in the game (dt 4
-  after it); the session switches mode and skips that frame's simulation.
+  after it); it then runs the race simulation as any frame (Session 7: the
+  session used to skip it; oracle tri/DOCK_FINISH, tri/DOCK_TIMEUP).
 - AI start boost at GO (0x8005C538): rand() / (32767 / (best start x
   difficulty / 16 + 1) + 1) as an i16; with no best start yet the divisor
   wraps to -32768 and the AI gets 0. Ported, but not yet seen non-zero
@@ -101,25 +102,52 @@ Race flow (Session 3, mr-sim race.rs / session.rs):
   karts (by progress?) is not ported.
 
 ## 1. Stubbed branches (`unreachable_in_scope!`, panic when reached)
-Paths the solo player does not take on DOCK. Address = the game code skipped.
+Paths the port does not run. Address = the game code skipped.
 
-| where | branch | why out of scope |
+Session 7 (stability) audit, against what the port lets a player do: the
+title (course 0x1E, mode 0x10), the 18 race courses, one player vs AI, any
+button (SELECT, TRIANGLE, L1/L2/R1/R2, START), any duration, the results,
+restarts, 30 and 60 Hz. The port's game modes (0x800B0D46) are 1 (race), 10
+(results) and 0x10 (title); race types 0 (race) and 2 (title); race flags 0,
+8 (DISCO) and the title's; 0x800B0FAC = the course id or 0x1E; one human;
+0x800B07E6 (challenge), 0x800B0BD2 (race over) and 0x800B0CA6 (split screen)
+stay 0; +0x4E7 / +0x4EE are never set (no code sets them); +0x4DF (path
+mode) changes only in battle / time-trial AI. Reachability below follows
+from these (and `mr-fuzz`: 1520 runs, 27.2 M ticks, no panic).
+
+Ported in Session 7 (were stubs a player reached):
+| where | branch | how reached | evidence |
+|---|---|---|---|
+| update.rs / camera.rs | TRIANGLE camera lock FUN_800728C0 (nearest kart; with none near, the nearest look point of DAT chunk 7) and the chase camera watching it (+0x4FE != -1) | any TRIANGLE press after race clock 300 (keyboard A): the owner's "freeze" | camera.md "TRIANGLE: the camera lock" (oracle tri/*) |
+| update.rs | time limit (0x80067EC0): race clock > 179999 with laps to go: +0x4C7 = 2, +0x4F9 = 0x80, AI drives, voice byte, FUN_8009192C | idling 10 minutes | tri/DOCK_TIMEUP (clock poked to 179000 from slot 2): free run and teacher forced exact, 709 frames, all six karts out, results |
+| session.rs | the results switch frame runs the race simulation (was skipped) | every finish / time-up | tri/DOCK_FINISH, tri/DOCK_TIMEUP teacher forced exact through the switch |
+| session.rs | one of two humans finished: the game goes on (0x80079708) | (split screen) | code only |
+
+Remaining stubs (all unreachable in the port today):
+| where | branch | why unreachable |
 |---|---|---|
-| update.rs | nearest-camera search with 2+ humans (0x80064FB0) | multiplayer |
-| update.rs | TRIANGLE look-at when no kart is near / mode 0x14 (FUN_800728C0) | camera lock search, challenge mode |
-| update.rs | time-trial ghost FUN_8006F64C (race type 3) | not a race |
-| update.rs | 10-minute limit: kart handed to the AI (+0x4C7 = 2) | race clock > 179999 |
-| progress.rs | item +0x4E7 (carried object list) | none on DOCK |
-| progress.rs | paired trigger list 0x800D1C7C (+0x4EF = 2), trigger on course 12 | other courses |
-| camera.rs | orbit (mode 1) with only the eye path (chunk 0x0B, no 0x0A): looks at the kart, the game at a stale stack value [INFER] | no race course: DISCO has both |
-| items | challenge-mode boxes / tokens / objects (0x800B07E6 != 0), battle-mode projectile damage (modes 2 / 7, race flag 8), mode 20 hits | other modes |
-| progress.rs | object lists FUN_800628FC (chunk 0x14), FUN_80062E38 (0x08 / 0x17), FUN_800627E0 (challenge) | stunt courses / challenge mode only (Session 6: hooks, jets, turntables ported) |
-| progress.rs | lap timing in modes 2/7/20, race flags 8/2, time trial, 10-minute limit | other modes |
-| progress.rs | challenge win bits at the finish (race flag 0x10) | challenge mode |
-| race.rs | race progress in battle / time trial / race flag 1 | other modes |
-| session.rs | one of two human players finished | split screen |
-| progress.rs | FUN_80090670 path mode (+0x4DF != 0), track direction in modes 2/7/0x14 | other modes |
-| collide.rs | battle-mode damage on contact (modes 2/7, flag 8), challenge tag (0x800B07E6, 0x800B07FE) | other modes |
+| update.rs:107 | BIOS rand() in `kart_update` (the one-kart analysis API) | the session uses `kart_update_at` with a rand source |
+| update.rs | nearest-camera search with 2+ humans (0x80064FB0) | one human |
+| update.rs | time-trial ghost FUN_8006F64C (race type 3) | no time trial |
+| camera.rs | look_at_search: challenge objects (0x800729CC); resolve_watch: targets 10..0x1D, 0x7F | challenge mode / mode 0x14 |
+| camera.rs | special event camera (0x800B0FAC = 0x1D / 0x1E outside the title's mode 0x10) | no such event; the title is always mode 0x10 |
+| camera.rs | pre-race orbit (game state 0 / 17), mode 11 (game state 0x12) | the port's modes are 1, 10, 0x10 |
+| camera.rs | alternate race camera rule (0x800B0BD2 != 0) | race over / pause flag never set |
+| camera.rs | cut-scene sync (modes 3 / 9) | 0x800D1C84 / 0x800D1C88 null |
+| camera.rs | camera with no karts; camera mode outside 0/1/2/10/12 | the mode selection cannot return them |
+| camera.rs | trail shorter than 16 VBlanks | 24-entry ring (camera::TRAIL_LEN) covers 16 VBlanks at dt 1 |
+| camera.rs | event 30 fixed angles outside modes 1 / 7 | event 30 = the title, always mode 1 |
+| camera.rs | orbit (mode 1) with only the eye path (chunk 0x0B, no 0x0A): looks at the kart, the game at a stale stack value [INFER] | no course: DISCO / the title have both |
+| progress.rs | object list FUN_800628FC (chunk 0x14), FUN_80062E38 (0x08 / 0x17) | stunt courses only; no race course has them |
+| progress.rs | item +0x4E7 active; FUN_800627E0 (+0x4EE) | never set |
+| progress.rs | paired trigger list 0x800D1C7C (+0x4EF = 2); trigger on course 12 | +0x4EF is only set to 1; course 12 is not a race course |
+| progress.rs | lap timing in modes 2/7, time trial; finish line with race flag 2; challenge win bits (race flag 0x10) | modes / flags not used |
+| progress.rs | track direction in modes 2/7/0x14; FUN_80090670 path mode (+0x4DF != 0) for a human | +0x4DF of the player changes only under the battle / time-trial AI |
+| race.rs | race progress in time trial / race flag 1 | not used |
+| render.rs | race flag 0x40: aim at the boss | boss races not ported |
+| init.rs | grid placement outside a plain one-player race; grid index past the course's grid | one player; every race course's grid holds its karts (Session 6: all 18 load; mr-fuzz) |
+| items | challenge-mode boxes / tokens / objects (0x800B07E6), mode 20 projectile hits | challenge / mode 0x14 |
+| collide.rs | challenge tag on kart contact (0x800B07E6, 0x800B07FE) | challenge mode |
 
 ## 2. Code not ported (no effect on the kart record the port owns)
 - Sound calls (FUN_8007A620, FUN_8005EECC, FUN_8005F168): ported as events
@@ -289,8 +317,9 @@ Ported, game order per frame (`Session::tick`):
    previous frame's dt (0x800B0AEC is measured after it; oracle: countdown -2
    in a frame whose kart update ran with dt 3). The first frame after the race
    load runs with the countdown held at 480 (oracle start_probe).
-2. FUN_8007916C's start: all humans finished -> mode 10, that frame runs no
-   race simulation.
+2. FUN_8007916C's start: all humans finished -> mode 10 (0x8007975C,
+   FUN_800606D0), and the frame goes on to the race simulation in mode 10
+   (LAB_80079A58 -> 0x80079D50; until Session 7 the session skipped it).
 3. The race frame as before; in the kart update the "Copy the buttons" start
    game (0 < countdown < 300, mode 1): button table exe 0x800B077C (SQUARE,
    TRIANGLE, CIRCLE, CROSS) by +0x4DA; a match adds 1 or 2 (+0x4B8 > 0x1D) to

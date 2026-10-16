@@ -14,7 +14,8 @@ countdown and start game to results. Plan and rules: ../docs/SESSION-2.md; resul
 ```
 or `cargo run --release -p mr-bevy` from this directory. The disc comes from
 the `disc = "..."` line of ../game.toml or `$env:MRM_DISC` (a .cue or .bin).
-Keyboard: arrows steer, X accelerate, S brake/reverse, Z jump.
+Keyboard: arrows steer, X accelerate, S brake/reverse, Z jump, A
+(TRIANGLE) locks the camera on the nearest kart while held (Session 7).
 Gamepad: right trigger / south accelerate, left trigger / east brake, west jump.
 
 The game's title screen comes first (Session 6, track T; ../docs/spec/frontend.md):
@@ -118,5 +119,19 @@ cargo run --release -p mr-sim --example feel60            # 60 Hz mode vs 30 Hz:
 cargo run --release -p mr-sim --example hz30_fingerprint  # whole-state hashes of long 30 Hz races (diff before / after a sim change)
 cargo run --release -p mr-sim --bin mr-survey             # AI races on every race course at 30 / 60 Hz: panics, laps, stuck karts
 cargo run --release -p mr-sim --bin mr-course-check       # each course capture (../analysis/oracle/courses): race load, free run, teacher forced
+cargo run --release -p mr-sim --bin mr-course-check -- --dir ../analysis/oracle/tri/DOCK_A DOCK   # a capture from a grid savestate (tools/oracle/capture_route.py): every kart, the camera, the random state; --seq for one-kart captures
+cargo run --release -p mr-sim --bin mr-fuzz -- --seeds 40 --long 6   # button-mashing fuzz: every race course + the title, 30 / 60 Hz, past the finish and the 10-minute limit (~100 s on 12 threads)
 cargo run --release -p mr-sim --example courses           # the course table and each course's objects
 ```
+
+## If it stops on an error
+The game never hangs on an error: any panic (in the simulation, e.g. a game
+branch the port does not have yet, or anywhere in the app) or a failed
+simulation tick closes the window, shows a message box (Windows) and writes
+`crash.txt` beside the executable: the message, where it was raised, the
+thread, the course, the app and simulation tick, race clock and game mode,
+the command line and a backtrace. Exit code 101. Please send `crash.txt`
+with a report. `MRM_NO_CRASH_DIALOG=1` (and the unattended tool flags
+--shot, --route, --replay, ...) skip the message box. Debug builds only:
+`MRM_TEST_PANIC=N` panics in the simulation system at app tick N
+(`MRM_TEST_PANIC=session:N`: the failed-tick path), to check it.

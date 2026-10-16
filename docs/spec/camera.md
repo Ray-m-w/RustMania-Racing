@@ -51,7 +51,7 @@ Kart record (kart0 = 0x800C30A8):
 | 0x470 | i16 added to yaw_rate>>3 for the roll lean [INFER: slide/lean] |
 | 0x4C7 | nonzero = finished (switches mode) |
 | 0x4D6 | nonzero = "airborne" roll rule (never set in lap1P) |
-| 0x4FE | -1 = look at self; otherwise another kart / object |
+| 0x4FE | watch target (TRIANGLE): -1 = look at self; 0..9 kart; 10..0x1D challenge object; 0x1E.. look point; 0x7F mode-0x14 point (see "TRIANGLE: the camera lock") |
 
 Position history ("trail"), 12 x {i32 x, y, z, count}: the kart update
 FUN_80064B5C @0x80065278..0x80065324 shifts the entries down by one and writes
@@ -234,9 +234,73 @@ The eye is placed at the goal every tick (no easing); the camera pans after
 the kart with /8 steps and levels its roll to 0 by /16 steps. Walks use
 rand() at a branch with several successors (0x800B0A20 is clear here).
 
-Out of scope, panicking via `unreachable_in_scope!`: modes 1, 3, 9, 11, 12,
-events 0x1D/0x1E/30, 0x800B0BD2 != 0, watching another object (0x4FE != -1)
-in mode 0, no karts, trail shorter than 16 VBlanks.
+Out of scope, panicking via `unreachable_in_scope!`: modes 3, 9, 11,
+events 0x1D/0x1E (other than the title's orbit)/30, 0x800B0BD2 != 0, no
+karts, trail shorter than 16 VBlanks, watch targets 10..0x1D / 0x7F
+(challenge objects, mode 0x14). (Modes 1 and 12 were ported in Session 6,
+watching another kart or a look point in Session 7.)
+
+## TRIANGLE: the camera lock (FUN_800728C0; Session 7)
+The kart update (FUN_80064B5C @0x80065118) runs, for a human kart in a race
+that is not over (0x800B0BD2 == 0, +0x4C7 == 0, not race type 3, not mode
+0x12, 0x800B0FAC != 0x1E: never on the title) once the race clock
+0x800B0A94 is past 300: if TRIANGLE is up, or a special move (+0x4D6) or a
+trigger warp (+0x4E6 != -1 with +0x4B3 == 0) runs, +0x4FD = 0 and +0x4FE =
+-1; else on the press (+0x4FD == 0) FUN_800728C0(kart) and +0x4FD = 1.
+Holding keeps the target chosen at the press; releasing clears it.
+```
+FUN_800728C0(kart):
+  mode 0x14: +0x4FE = 0x7F; return                     // point 0x800CB658
+  +0x4FE = +0x4DC (nearest kart, FUN_80040018's contact pass)
+  return if mode 1 and +0x4DC != -1, or mode 2 / 7
+  challenge (0x800B07E6 != 0): nearest live challenge object of 0x800D1C78
+      (12-byte entries, >> 5 vs the driver position >> 10): +0x4FE = 10 + i
+      when nearer than the kart [not ported]; return if +0x4FE != -1
+  list = *0x800D1C64 (DAT chunk 7, the look points); return if null or
+      count >= 96
+  i = FUN_80081170(+0x330 >> 5, +0x338 >> 5, +0x340 >> 5, list, 1, 0, 0)
+      // mode 1: the nearest point over the whole list, both sides >> 5
+      // again, squared distance unsigned, first strict minimum
+  if i != -1: +0x4FE = 0x1E + i
+```
+FUN_80081170 also leaves sqrt(best) << 5 in 0x800C3068 and 0 in 0x800B0EB8:
+dead stores (FUN_800418D8 resets 0x800C3068 before it reads it, FUN_8007BBF0
+reads it only after its own call); the port drops them.
+
+The +0x4DC nearest kart is -1 only when the contact pass skipped every pair
+of the kart (a special move / carried object on either side, every other
+kart out in a race with flags 8 / 9) or the race frame has one kart; with a
+kart near the camera locks on it.
+
+Camera (FUN_80070418 @0x8007091C..0x800709A4): in mode 0, kart not finished,
++0x4FE != -1, the look-at point sp+0x70 is
+- 0..9: kart record n's own look-at point (its position + its mount rotated
+  by its body matrix, exactly as for the camera's kart);
+- 10..0x1D: challenge object n - 10 of 0x800D1C78, (+4, +8, +0xC) << 5;
+- 0x1E..: look point n - 0x1E of *0x800D1C64, (+4, +8, +0xC) << 5;
+- 0x7F: (0x800CB658, 0x800CB65C, 0x800CB660).
+The eye still follows the camera's own kart (trail walk, mount height), and
+the roll target is 0 (0x8007265C: modes 0 / 10 bank only with +0x4FE == -1).
+Port: `camera::look_at_search` (update.rs calls it), `camera::resolve_watch`
+(the caller resolves the target to a kart record or a point,
+`CameraInput::watched`), `camera::nearest_point_all`.
+
+Oracle check (tools/oracle/capture_route.py, routes tools/oracle/routes/
+tri_*.json, captures analysis/oracle/tri/; `mr-course-check --dir DIR
+COURSE`, which compares every kart's motion fields, +0x4FE / +0x4FD, the
+camera record and the random state per frame):
+| capture | what | teacher forced | free run |
+|---|---|---|---|
+| DOCK_A (slot 2, 1714 frames) | TRIANGLE held / tapped next to karts 1-5, driving, idle, reversing | exact (all karts, camera, random state) | camera / targets exact to frame 1199; karts to ~818 (see below) |
+| ISLAND_A (slot 3, 1513) | TRIANGLE in the countdown (a "copy the buttons" face button too), held over GO, driving | exact but frames 509-515 (a capture whose VBlank snapshot fell mid-frame, all karts) | exact to 508 |
+| DOCK_FINISH (slot 2, lap poked to 2, 2591) | taps through the last lap, then every button but START past the line into the results | exact | to ~1062 (see below) |
+| DOCK_SOLO / ISLAND_SOLO (0x800B0DFE poked to 1: no nearest kart) | look points 0x1E..0x22 held / tapped | `--seq` free run over the kart updates (1614 / 1404): exact, kart 0 and camera | |
+The six-kart free runs part where the --dir session's render-side look
+points (+0x324.., the contact pass's distances) drift from the game's: the
+nearest kart of an AI kart differs from frame ~20, then a voice draw
+(random pointer -1) around frame 800-1100; known from Session 6 (the --dir
+session's AI look_* fields are not rebuilt by load_mem), not the camera
+lock: the camera and +0x4FE stay exact until the karts part.
 
 ## Verification (teacher forcing)
 `cargo test -p mr-sim --test camera -- --nocapture`. For each tick: oracle

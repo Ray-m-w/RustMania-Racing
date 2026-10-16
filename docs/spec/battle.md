@@ -155,9 +155,13 @@ track direction points at it. Phase 7 (split screen) is its home.
   best crash, knock-outs, FUN_80082450 ranking the AI left standing, the
   presentation on course 0x1B in mode 0x12): left for a follow-up with
   the league's tie-break / presentation work (frontend.md).
-- Game mode 7 (the ADVENTURE "BEAT x" boss battles on the arenas,
-  0x800B07E8, extra boss karts 0x800B0C98) and DOOZER BATTLE / BATTLE AS
-  BOSS (race flags 0x100 / 0x80): phase 6.
+- Game mode 7 (the arenas' BOSS CHALLENGE from COURSE SECRETS once the
+  arena's ADVENTURE found every box and token, 0x800B07E8, boss karts
+  0x800B0C98: "BEAT SWEETUMS" ...), BATTLE AS BOSS (race flag 0x20) and on
+  ARENA/BATTLE DOGFIGHT / DOOZER BATTLE (race flags 0x80 / 0x100): mapped in
+  docs/spec/adventure.md "COURSE SECRETS", not ported (phase 6 left them).
+  An arena's ADVENTURE and its "BEAT x" battle (race flag 0x10, two karts)
+  run (phase 6).
 - <COURSE> SECRETS; the cup-7 courses' extra modes (race flags 1, 2, 4).
 - The secret screen (course 0x1D) itself: the port lists worlds 7 and 8
   in the world list instead; the cup-8 arenas use the worlds 0..6 course

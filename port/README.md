@@ -60,10 +60,18 @@ frontend.md "Menus"):
   knocked out, the last one standing wins (the clock at the top); the
   result cycles DAMAGE / BEST CRASH / KNOCKOUTS with the place and time; a
   win faster than the course's BEST TIME becomes the record, and the win
-  opens the world's stunt course.
+  opens the world's stunt course;
+- ADVENTURE (phase 6, ../docs/spec/adventure.md): course menu -> GAME MENU
+  -> ADVENTURE -> character select -> the course alone against the clock
+  (4:00; arenas 3:00, stunt courses 10:00) with the Doozer and the course's
+  character parked somewhere: collect every item box (stars), every turbo
+  token (food), the ten targets (tokens) or the movie object, push the
+  Doozer onto its goal, or touch the character for its "BEAT x" race (win:
+  the character is yours); the first find ends the run, the HUD counts what
+  is left; finds and characters go to save.bin.
 Menu keys: arrows move, X (CROSS) selects, A (TRIANGLE) goes back; pad: D-pad,
 south, north. Shown greyed and not selectable (later phases): MEET THE
-MUPPETS, GAME STATUS, ADVENTURE, 2 PLAYER RACE / STUNT RACE / BATTLE,
+MUPPETS, GAME STATUS, 2 PLAYER RACE / STUNT RACE / BATTLE,
 SECRETS, ADJUST SCREEN, MEMORY CARD, VIBRATION, BATTLE LEAGUE, MOVIE / MUSIC.
 Another course (or the title) restarts the program on it (`--course NAME
 --skip-title --menu --character C --vehicle V`, `--league` within a league;

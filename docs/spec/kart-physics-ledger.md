@@ -151,12 +151,24 @@ docs/spec/battle.md; reached from the arenas' course menus):
 | race.rs | the damage gauge's random bytes in mode 2 | free runs exact (random state) |
 | bin/mr-course-check | `--dir`: the karts' own characters / vehicles; teacher forcing keeps the session's history rings (not captured) | the teacher-forced camera now exact on the race captures too |
 
+Ported in Session 7, phase 6 (ADVENTURE, game mode 0xB, and the "BEAT x"
+race, race flag 0x10; docs/spec/adventure.md; reached from GAME MENU ->
+ADVENTURE):
+| where | branch | evidence |
+|---|---|---|
+| init.rs | grid points of the parked karts (+0x496 0x40 / 0x20) and ADVENTURE's random point (12 + rand() / 0x1556), the TER-centre start past the grid list | oracle adventure/dock: race load exact (3 karts, random state) |
+| session.rs | mode 0xB set-up (no countdown, the Doozer and the course's character parked), FUN_8007916C's ADVENTURE branch (a find puts the player out; a tag sets race flag 0x10), the results | adventure/dock, adventure/token: free run / teacher forced exact |
+| items/pickups.rs | ADVENTURE boxes / tokens (counts +0x4AD / +0x4AE, taken with full slots / meter), the challenge objects (targets +0x4AC, movie, Doozer goals), the save bits | adventure/token: exact through the find; flags = the save block |
+| collide.rs | the tag on contact (0x800B07FE, kart 0's event bits 8) | adventure/tag: exact through the tag |
+| progress.rs | FUN_800627E0 (the rescued Doozer onto its goal); the "BEAT x" win bits (race flag 0x10) | code only |
+| camera.rs | TRIANGLE look-at on the challenge objects (0x800729CC); watch targets 10..0x1D | code only |
+
 Remaining stubs (all unreachable in the port today):
 | where | branch | why unreachable |
 |---|---|---|
 | update.rs:107 | BIOS rand() in `kart_update` (the one-kart analysis API) | the session uses `kart_update_at` with a rand source |
 | update.rs | nearest-camera search with 2+ humans (0x80064FB0) | one human |
-| camera.rs | look_at_search: challenge objects (0x800729CC); resolve_watch: targets 10..0x1D, 0x7F | challenge mode / mode 0x14 |
+| camera.rs | resolve_watch: target 0x7F (the chicken) | mode 0x14 (CHICKEN CHASE, two players) |
 | camera.rs | special event camera (0x800B0FAC = 0x1D / 0x1E outside the title's mode 0x10) | no such event; the title is always mode 0x10 |
 | camera.rs | pre-race orbit (game state 0 / 17), mode 11 (game state 0x12) | the port's modes are 1, 10, 0x10 |
 | camera.rs | alternate race camera rule (0x800B0BD2 != 0) | race over / pause flag never set |
@@ -164,14 +176,12 @@ Remaining stubs (all unreachable in the port today):
 | camera.rs | trail shorter than 16 VBlanks | 24-entry ring (camera::TRAIL_LEN) covers 16 VBlanks at dt 1 |
 | camera.rs | event 30 fixed angles outside modes 1 / 7 | event 30 = the title, always mode 1 |
 | camera.rs | orbit (mode 1) with only the eye path (chunk 0x0B, no 0x0A): looks at the kart, the game at a stale stack value [INFER] | no course: DISCO / the title have both |
-| progress.rs | FUN_800627E0 (+0x4EE) | never set |
-| progress.rs | finish line with race flag 2; challenge win bits (race flag 0x10) | flags not used |
+| progress.rs | finish line with race flag 2 | REVERSE RACE (COURSE SECRETS, not ported) |
 | progress.rs | track direction in mode 0x14 (CHICKEN CHASE: toward the chicken); FUN_80090670 path mode (+0x4DF != 0) for a human in mode 1 | CHICKEN CHASE is two-player (phase 7); +0x4DF of a mode-1 human is race flag 2's bit |
 | race.rs | race progress with race flag 1 | not used |
-| render.rs | race flag 0x40: aim at the boss | boss races not ported |
-| init.rs | grid placement outside a plain one-player race, the stunt trial or a battle (race flags 1/2/4, challenge, flags 0x20/0x40); grid index past the course's grid | one player; every race / stunt / arena grid holds its karts (18 + 6 + 10 load; mr-fuzz) |
-| items | challenge-mode boxes / tokens / objects (0x800B07E6), mode 20 projectile hits | challenge / mode 0x14 |
-| collide.rs | challenge tag on kart contact (0x800B07E6, 0x800B07FE) | challenge mode |
+| render.rs | race flag 0x40: aim at the chicken 0x800CB658 (FUN_80041A20; was listed as "the boss": race flag 0x40 is CHICKEN CHASE's) | two players (phase 7) |
+| init.rs | grid placement with race flags 1 / 2 / 4 (BATTLE RACE, REVERSE RACE, the reversed trial) | COURSE SECRETS (not ported) |
+| items | mode 20 projectile hits | mode 0x14 |
 
 ## 2. Code not ported (no effect on the kart record the port owns)
 - Sound calls (FUN_8007A620, FUN_8005EECC, FUN_8005F168): ported as events

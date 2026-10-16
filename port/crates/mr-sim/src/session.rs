@@ -89,6 +89,11 @@ pub struct SessionConfig {
     /// slots 1.., instead of the race loader's random draws; the player then
     /// starts on `grid` (no grid draw). E.g. `ORACLE_LINEUP`.
     pub lineup: Option<[(u8, u8); 5]>,
+    /// With a `lineup`: draw the first kart's grid slot as a plain race
+    /// does (*rng++ % karts, the others on the following slots) instead of
+    /// `grid`: a league race (FUN_8008C4AC @0x8008E3xx: the league's karts,
+    /// the grid drawn).
+    pub draw_grid: bool,
     /// Items, weapons and specials on (the game's race). Off reproduces the
     /// Session 3 items-off runs: the AI's item buttons are masked
     /// (`ai::items_off`) and nobody collects pickups.
@@ -143,6 +148,7 @@ impl SessionConfig {
             rng_start: 0x8001_FC4E,
             round_robin_start: 1,
             lineup: None,
+            draw_grid: false,
             items: true,
             logic_hz: 30,
             faces: None,
@@ -540,7 +546,7 @@ impl Session {
         // FUN_8008C4AC: the first human's grid slot (*rng++ % karts), the
         // other karts on the following slots; with no opponents the
         // configured slot.
-        let grid0 = if n > 1 && cfg.lineup.is_none() { crate::ai::grid_start(&mut globals, &world, n as i16) } else { cfg.grid };
+        let grid0 = if n > 1 && (cfg.lineup.is_none() || cfg.draw_grid) { crate::ai::grid_start(&mut globals, &world, n as i16) } else { cfg.grid };
         // The title's kart 0 is an AI kart like the others (FUN_8008C4AC
         // @0x8008DCC4: the same draw for every slot).
         let mut title_first: Option<(u8, u8)> = None;

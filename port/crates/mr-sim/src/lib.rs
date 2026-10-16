@@ -41,6 +41,7 @@ pub mod oracle;
 pub mod particles;
 pub mod progress;
 pub mod race;
+pub mod save;
 pub mod render;
 pub mod scenery;
 pub mod session;

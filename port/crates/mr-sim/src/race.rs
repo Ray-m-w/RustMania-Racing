@@ -291,6 +291,11 @@ pub struct KartResult {
     pub best_lap: i32,
     pub character: u8,
     pub vehicle: u8,
+    /// +0x492 / +0x494: hits dealt / taken in a race (game mode 1: landing
+    /// on a kart, projectiles, specials); a league race's "most hits"
+    /// point (mr_sim::save::race_points).
+    pub hits: i16,
+    pub hits_taken: i16,
 }
 
 pub fn phase(g: &RaceGlobals, k: &KartState, w: &World) -> RacePhase {
@@ -313,10 +318,12 @@ pub fn result(slot: usize, k: &KartState) -> KartResult {
         place: k.race_pos,
         finished: k.finished != 0,
         race_time: k.race_time,
-        lap_times: k.lap_time[..(k.lap as usize).min(8)].to_vec(),
+        lap_times: k.lap_time[..(k.lap as usize).min(10)].to_vec(),
         best_lap: k.best_lap,
         character: k.character,
         vehicle: k.vehicle,
+        hits: k.contacts_from_above,
+        hits_taken: k.contacts_below,
     }
 }
 

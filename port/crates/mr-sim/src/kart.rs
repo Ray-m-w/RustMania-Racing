@@ -16,8 +16,10 @@ macro_rules! kart_fields {
             /// used: 4 on the RACER; 3 to 6 on other vehicles, e.g. the
             /// TRIKE 3, the M_BUGGY 5, the W_BUGGY 6; AI karts on DOCK).
             pub wheels: [Wheel; MAX_WHEELS],
-            /// +0x35C: lap times, 4 bytes each, indexed by lap (+0x4BF).
-            pub lap_time: [i32; 8],
+            /// +0x35C: lap times, 4 bytes each, indexed by lap (+0x4BF);
+            /// ten (the menus allow 1..10 laps once a course is won), up to
+            /// the best lap at +0x384.
+            pub lap_time: [i32; 10],
             /// +0x3A0..+0x3E8: 18 words, the body-sway spring state stepped
             /// by FUN_80064738 (positions, velocities, targets per axis).
             pub sway: [i32; 18],
@@ -66,7 +68,7 @@ macro_rules! kart_fields {
                 for (i, w) in k.wheels.iter_mut().enumerate() {
                     *w = Wheel::read(r, 0x14 + 0x2C * i);
                 }
-                for i in 0..8 {
+                for i in 0..10 {
                     k.lap_time[i] = i32::from_le_bytes(r[0x35C + 4 * i..0x360 + 4 * i].try_into().unwrap());
                 }
                 for i in 0..18 {
@@ -88,7 +90,7 @@ macro_rules! kart_fields {
                 for (i, w) in self.wheels.iter().enumerate() {
                     w.write(r, 0x14 + 0x2C * i);
                 }
-                for i in 0..8 {
+                for i in 0..10 {
                     r[0x35C + 4 * i..0x360 + 4 * i].copy_from_slice(&self.lap_time[i].to_le_bytes());
                 }
                 for i in 0..18 {
@@ -364,7 +366,7 @@ pub fn diff_records(a: &[u8], b: &[u8]) -> Vec<String> {
     for k in 0..4 {
         arr(&mut out, &format!("wheel{k}.spin"), 0x14 + 0x2C * k + 0x1E, 2, 2);
     }
-    arr(&mut out, "lap_time", 0x35C, 8, 4);
+    arr(&mut out, "lap_time", 0x35C, 10, 4);
     arr(&mut out, "sway", 0x3A0, 18, 4);
     arr(&mut out, "shape", 0x414, 18, 2);
     arr(&mut out, "weapons", 0x4D0, 6, 1);

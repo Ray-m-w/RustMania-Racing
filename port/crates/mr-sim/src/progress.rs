@@ -235,7 +235,9 @@ fn lap_completed(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
     let lt = k.lap_time[lap];
     if (k.player_index as i32) < g.humans as i32 && k.flags & 1 == 0 && g.race_flags & 2 == 0 && lt < g.lap_record {
         // New course lap record: the record table 0x800E0190 (and the
-        // vehicle / character bytes next to it) take this lap.
+        // vehicle / character bytes next to it) take this lap (the save
+        // block outside the simulation: SaveBlock::lap_record from
+        // `lap_record`, mr-bevy save.rs).
         g.lap_record = lt;
     }
     if k.best_lap == 0 || lt < k.best_lap {
@@ -321,7 +323,9 @@ fn race_finished(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
     if let Some(len) = w.course.length {
         k.progress = (len as i32).wrapping_mul(k.lap as i32).wrapping_add(1).wrapping_add(g.karts as i32).wrapping_sub(g.end_mode as i32);
         // 0x800832EC..0x8008339C: the player winning a plain race sets the
-        // course's "won" bit in the save data 0x800E0196 (not modelled).
+        // course's "won" bit in the save block (0x800E0196 + 0x20 * world +
+        // 8 * slot): applied outside the simulation, from the finished
+        // kart (mr_sim::save::SaveBlock::race_won, mr-bevy save.rs).
     }
     g.end_mode = g.end_mode.wrapping_add(1);
 }

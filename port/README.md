@@ -20,6 +20,18 @@ Keyboard: arrows steer, X accelerate, S brake/reverse, Z jump, A
 Enter = START (pause).
 Gamepad: right trigger / south accelerate, left trigger / east brake, west jump.
 
+Two players (phase 7; the course menu's 2 PLAYER RACE / BATTLE / STUNT
+RACE, CHICKEN CHASE): split screen, player 1 on top. The first gamepad
+plays player 1, the second player 2 (with one player every pad plays
+player 1). Player 2 on the keyboard (the fallback with one gamepad or
+none): J / L steer, I / K up / down, N accelerate (CROSS), B brake
+(CIRCLE), M jump (SQUARE), H (TRIANGLE), Backspace = START, U / O = L1 /
+R1, Y / P = L2 / R2. Player 1 keeps the keys above. The character select
+picks in turn (CONTROLLER 1, then CONTROLLER 2; TRIANGLE in player 2's
+turn goes back to player 1's); SET CONTROLLERS sets controller 2's layout
+with pad 2's LEFT / RIGHT (`controller_config_2`). Test runs:
+`mr-bevy --course DOCK --skip-title --players 2 [--race-flags 64]`.
+
 The game's title screen comes first (Session 6, track T; ../docs/spec/frontend.md):
 the frontend course run as the game runs it (the logo scene, three AI karts
 knocking the letters about, the orbiting camera, the title music, PRESS START).

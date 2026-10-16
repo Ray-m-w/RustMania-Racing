@@ -182,8 +182,6 @@ Remaining stubs (all unreachable in the port today):
 | where | branch | why unreachable |
 |---|---|---|
 | update.rs:107 | BIOS rand() in `kart_update` (the one-kart analysis API) | the session uses `kart_update_at` with a rand source |
-| update.rs | nearest-camera search with 2+ humans (0x80064FB0) | one human |
-| camera.rs | resolve_watch: target 0x7F (the chicken) | mode 0x14 (CHICKEN CHASE, two players) |
 | camera.rs | special event camera (0x800B0FAC = 0x1D / 0x1E outside the title's mode 0x10) | no such event; the title is always mode 0x10 |
 | camera.rs | pre-race orbit (game state 0 / 17), mode 11 (game state 0x12) | the port's modes are 1, 10, 0x10 |
 | camera.rs | alternate race camera rule (0x800B0BD2 != 0) | race over / pause flag never set |
@@ -191,9 +189,18 @@ Remaining stubs (all unreachable in the port today):
 | camera.rs | trail shorter than 16 VBlanks | 24-entry ring (camera::TRAIL_LEN) covers 16 VBlanks at dt 1 |
 | camera.rs | event 30 fixed angles outside modes 1 / 7 | event 30 = the title, always mode 1 |
 | camera.rs | orbit (mode 1) with only the eye path (chunk 0x0B, no 0x0A): looks at the kart, the game at a stale stack value [INFER] | no course: DISCO / the title have both |
-| progress.rs | track direction in mode 0x14 (CHICKEN CHASE: toward the chicken) | CHICKEN CHASE is two-player (phase 7) |
-| render.rs | race flag 0x40: aim at the chicken 0x800CB658 (FUN_80041A20; was listed as "the boss": race flag 0x40 is CHICKEN CHASE's) | two players (phase 7) |
-| items | mode 20 projectile hits | mode 0x14 |
+| camera.rs | resolve_watch called with 0x7F (the session passes the chicken as `Watched::World` itself) | the session never calls it with 0x7F |
+
+Ported in Session 7, phase 7 (two players; were the stubs above):
+| where | branch | how reached | evidence |
+|---|---|---|---|
+| update.rs | nearest-camera search with 2+ humans (0x80064FB0): each camera's eye vs camera 0's, >> 9 | AI karts in a split-screen race (a 2-player league: not ported; no 2P mode has AI karts) | code only |
+| session.rs / camera.rs | player 2's camera FUN_80070418(0x800C4FB0, kart 1) after player 1's; watch target 0x7F = the chicken | every 2P race | oracle two/dock, two/chicken: both cameras exact (free run, teacher forced) |
+| progress.rs | track direction in mode 0x14: toward the chicken (0x80086C88) | CHICKEN CHASE | two/chicken exact |
+| render.rs | race flag 0x40: aim at the chicken when nearer (FUN_80041A20) | CHICKEN CHASE | two/chicken exact |
+| items | mode 20 projectile hit: the victim's chickens - 1, flash 0xD, hit -1 | CHICKEN CHASE with weapons | code only (no hit in the capture) |
+| chicken.rs | FUN_8006E564 / FUN_8006EC4C / FUN_8006EA2C | CHICKEN CHASE | two/chicken: chicken exact over 1419 frames, 2 catches |
+| session.rs | one of two humans finished: the game goes on; results once both are out (mode 0x14 too) | 2P race / chicken | two/dock (both race on), chicken test |
 
 ## 2. Code not ported (no effect on the kart record the port owns)
 - Sound calls (FUN_8007A620, FUN_8005EECC, FUN_8005F168): ported as events

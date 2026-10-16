@@ -356,6 +356,46 @@ Port: port/crates/mr-bevy/src/league.rs, menus.rs (`Leagues`, `LeagueMenu`,
 `LeaguePoints`, `LeagueQuit`, `Standings`), mr-sim save.rs (`race_points`,
 `table_order`, `league_end`). Check: save_check.py `league`.
 
+## Phase 7: two players [CODE 8008c4ac, 80074a94, 80073e44, 80073b0c, 80051698, 8004f688, 80050f64, 80050b2c, 80050db8]
+- The course menu's row 1 (2 PLAYER RACE - n LAPS with its own laps
+  0x800E038D = save +0x1FD, LEFT / RIGHT once the course is won; 2 PLAYER
+  BATTLE on an arena; 2 PLAYER STUNT RACE on a stunt course), cup 8's 2
+  PLAYER BATTLE / CHICKEN CHASE (rows 1 / 2), world 7's 2 PLAYER RACE /
+  CHICKEN CHASE (rows 1 / 5), COURSE SECRETS' CHICKEN CHASE and the stunt
+  course's BATTLE set 0x800B07CA = 1 and open the character select for both
+  pads (0x800B07CB = 2). The race load (FUN_8008C4AC) then makes the race
+  split screen: 0x800B0CA6 = 1, 0x800B0E28 = 2, 2 karts (both human; 3 in
+  a 2-player league), no AI.
+- The port (menus.rs): the same rows (no longer greyed); the character
+  select picks in turn (CONTROLLER 1, then CONTROLLER 2 with pad 2; the
+  game shows both pickers at once: not ported); SET CONTROLLERS draws
+  controller 2's column (x 0x180) and pad 2's LEFT / RIGHT switches its
+  layout (0x800E0393, settings `controller_config_2`); either START pauses;
+  the results go back to the course menu once both players are out (mode
+  10).
+- The split HUD (FUN_8004F688 per human with the half's rectangle
+  0x800D7388 / 0x800D7398, mr_assets `hud_items::two_hud`): the place at
+  x 0x30, 0x18 inside the split (y 0x5F / 0x90); "LAP n/m" at x 0x68 (y
+  0x1F / 0xD0); the weapon slots at y 0x2D / 0xC2; the turbo meter at y
+  base 0x30 / 0xC0; SPECIAL MOVE at y 0x3C / 0xB4, the arrow at 0x1C / 0x94
+  (scale 8; 10 overhead), the message at 0x58 / 0xD0 (medium font); the
+  damage gauge at (0x30, place y); the +0x4F9 icon at 0x1C / 0x94 (0x62 /
+  0x8E counting down); the start game's buttons around y 0x3C / 0xB4;
+  CHICKEN CHASE's count and result; the result panels FUN_8004CEA0 /
+  FUN_8004DAE0 (the time only for the winner) / FUN_8004E2A8 (the place
+  above the centre, no COURSE FINISHED) around the half's centre;
+  FUN_80050F64's texts ("2 PLAYER BATTLE", "CATCH %i CHICKENS", READY,
+  ...), the race clock FUN_80050B2C and "PRESS START" (FUN_80050DB8) at y
+  0x78. Not ported in split screen: the minimap, the chicken icon
+  (FUN_8002FD04).
+- Check (tools/oracle/capture_two.py --hud, local
+  analysis/oracle/two/dock_hud: the DOCK 2 PLAYER RACE, GP0 at VB 560,
+  1000, 1600; `hudx_check.py` with mr-hudx's split layout): 140 of 186 port
+  primitives found in the game's frames; the rest: the arrow lines a pixel
+  off, the weapon rings' pulse and the clock's last digit (the sampled
+  row's lag), and at VB 560 the start game's count digit (y 52 / 172, the
+  positions above) which mr-hudx does not lay out.
+
 ## The game's flow [CODE 80074a94, 8008b9ac, 8008baf8, 8008c4ac, 800597cc, 8004eedc, 80050440] [SHOT][GPU]
 - Main menu row 3 -> title sub-state 2 (FUN_80050440): "RACE LEAGUE A - n
   LAPS", "RACE LEAGUE B - n LAPS", "BATTLE LEAGUE", "RANDOM RACE LEAGUE - n

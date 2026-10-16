@@ -271,8 +271,9 @@ analysis/oracle/secrets, routes tools/oracle/routes/*.json):
   against GP0).
 
 ## Not ported (listed)
-- PLAY MOVIE (phase 9), CHICKEN CHASE and the two-player rows / choices
-  (phase 7).
+- PLAY MOVIE (phase 9) and the two-player choices ("- n PLAYERS", LEFT /
+  RIGHT on the 1-player rows); phase 7 opened CHICKEN CHASE and the stunt
+  course's BATTLE (two players) on this page.
 - The secret screen itself (course 0x1D: the credits scene choosing world 7
   / the cup-8 arenas, FUN_80074A94 with 0x800B0F60); its courses' own menus
   are ported (frontend.md "Phase 6b").

@@ -135,7 +135,7 @@ In add order:
   arenas: 10 arenas x 2 rates x 2 seeds, 0.8 M ticks, 0 panics.
 - Window shots (local): analysis/s7/battle/port/lagoon_{60,600}.png.
 
-## CHICKEN CHASE (game mode 0x14; not ported: two players)
+## CHICKEN CHASE (game mode 0x14; ported in phase 7, see below)
 Reached from the cup-8 arenas' menu (sub-state 0xC row 2) and the
 secret screen's course menus (sub-state 0xB row 5; DISCO with flag 4): it
 sets race flag 0x40 and 0x800B07CB = 2 (both pads pick a character),
@@ -184,8 +184,63 @@ track direction points at it. Phase 7 (split screen) is its home.
   - Not ported: the tie-break battle and the presentation on 0x1B (mode
     0x12), as the race leagues'.
 
+## Phase 7: 2 PLAYER BATTLE and CHICKEN CHASE (two players)
+- Set-up (FUN_8008C4AC with 0x800B07CA = 1, split screen 0x800B0CA6 = 1,
+  0x800B0E28 = 2): 0x800B0DFE = 2 (3 in a league) in every split-screen
+  mode, both karts human (FUN_800609F4 flags 0, characters 0x800B0B28[i],
+  vehicles 0x800B0C18[i]), the first grid slot *rng % 6 (modes 2 / 7 /
+  0x14 off a stunt course; else % karts), player 2 on the next one; no AI
+  karts. 0x800B0CD8 = 2 in an arena. 2 PLAYER BATTLE is game mode 2: the
+  last kart standing wins (FUN_8007916C, as one player); the course record
+  and won bit only with one player (0x800B0CA6 == 0).
+- CHICKEN CHASE (mode 0x14, race flag 0x40) [CODE 8006e564, 8006ec4c,
+  8006ea2c, 80069648, 80086b7c, 80041a20, 800728c0, 8004f688, 80050f64]
+  (mr-sim chicken.rs):
+  - FUN_8006E564 (race load, then after each catch): `near` from 0x41
+    down by 1 a try; a random path segment ((rand() / (0x7FFF / n + 1)),
+    not flagged 0x80) and point (rand() / (0x7FFF / count + 1)), << 5 (no
+    path: near kart *rng >> 7 plus three (rand() - 0x4000) * 0x20); retried
+    while within near * 0x1000 of a kart on all three axes, or with no
+    ground; on the surface below (y = it - 0x2000), a flag-0x40 floor above
+    the ground kept; heading = *rng << 4; on a stunt course its strip place.
+  - FUN_8006EC4C (race frame, after the projectiles): with ground under it,
+    dt steps of vy += 0x60, y += vy; landing (ground <= y + 0x2000): a new
+    hop when *rng < 0x20 (vy = ((rng[1] >> 3) + 0x20) * -0x20, sound 0xB)
+    else still. The nearest kart by driver position (+0x330 / +0x338 /
+    +0x340, (d >> 10)^2, first minimum); the heading eases 1/8 per VBlank
+    toward it (the chicken does not move sideways). Within 0x100: a kart
+    still in, after GO, below 0x800B0EBD catches it: +0x4AC + 1, +0x4FC =
+    0xD, +0x4B0 = 0, +0x444 = 1; at 0x800B0EBD it wins: it and the other
+    player (by player index) out (+0x4C7 = 1, +0x4F9 = 0x80, AI-driven;
+    FUN_80060580 voices not modelled), else a voice bit by *rng (8 / 4 / 2).
+    Then rumble 200, sounds 0x14 and 0xB, the burst (FUN_8006EA2C: one puff
+    kind 0x11 and five feathers kind 9, 47 random bytes), a new chicken, a
+    second burst.
+  - A projectile hit costs the victim a chicken (FUN_80069648 mode 0x14).
+    No damage or knock-outs (FUN_80082708 returns), no positions
+    (FUN_800837F8 returns); the time limit is the race clock at 180000; the
+    results once both players are out.
+  - HUD (FUN_8004F688 case 0x14, split screen): the count at (0x50, 0x60 /
+    0x8F), "CATCH 10 CHICKENS" (FUN_80050F64 at y 0x78); the result
+    "WINNER - n" / "LOSER - n" at the player's half centre, "OUT OF TIME".
+    The chicken is a camera-facing sprite (FUN_8007E21C -> FUN_80030AD8:
+    one of 0x800A8848's view frames by its heading against the camera yaw,
+    slot 0x14 CLUT + 7, 0xC0 x 0xC0).
+  - Reached from cup 8's arena menus (row 2), world 7's course menus (row
+    5) and COURSE SECRETS (the chicken row, course flag 4).
+- Oracle (tools/oracle/capture_two.py, local analysis/oracle/two/chicken:
+  VOLCANO, CHICKEN CHASE from the course menu, pad 2 steered live toward
+  the chicken): race load exact (both karts; the random state after the
+  chicken's spawn equal), free run and teacher forced exact over 1419
+  frames incl. two catches, both cameras, the chicken record exact every
+  frame (`mr-course-check --cap analysis/oracle/two/chicken VOLCANO`; the
+  first frame's camera 1 rand fields differ in the free run: the menu
+  camera's carried values, as on one player).
+- Not checked against the oracle: 2 PLAYER BATTLE (the battle rules are
+  one player's, shared), a CHICKEN CHASE win, the chicken's projectile hit.
+
 ## Not ported (listed)
-- 2 PLAYER BATTLE, CHICKEN CHASE (split screen, phase 7).
+- A 2-player league (TOURNAMENT - 2 PLAYERS: 3 karts).
 - The secret screen (course 0x1D) itself: the port lists worlds 7 and 8 in
   the world list instead; their courses' own menus (sub-states 0xB / 0xC:
   CHICKEN CHASE greyed, BACK TO CREDITS = the title here) are ported

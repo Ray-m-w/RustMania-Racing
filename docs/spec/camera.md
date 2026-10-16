@@ -398,7 +398,33 @@ world axes, y down) and `E = cam.pos` (world units).
 - The recomp's widescreen mod (game.toml, default on) can change the
   horizontal projection of the running oracle; H, OFX and OFY above are the
   game's own values (gte_ring_dump showed Hs = H = 160 at the time of the check).
-- Two-player and the other camera modes are not ported.
+- Two-player (phase 7): ported, see "Split screen". The other camera modes
+  are not ported.
+
+## Split screen (phase 7, two players)
+- FUN_8007916C @0x8007A1D4: with 0x800B0CA6 set, FUN_80070418(0x800C4FB0,
+  kart 1) runs right after player 1's camera (same function, its own
+  record; its random draws follow camera 1's). mr-sim `Session::camera2`;
+  oracle two/dock and two/chicken: exact.
+- FUN_80078F38 renders twice: camera 0x800C4FB0 (player 2) with the
+  geometry offset (256, 180) and clip lines 120..239, then 0x800C4F40
+  (player 1) with (256, 60) and lines 0..119 (FUN_80029F40 @0x80029FF8,
+  0x800B0BA8). The view matrix is built as for one player (FUN_8002CEBC),
+  so each half keeps H = 160 over 120 lines: vertical FOV 2 * atan(60 /
+  160) = 41.1 degrees, horizontal unchanged (512 pixels). The viewport
+  tables (FUN_8008FBEC): 0x800D7378 full screen, 0x800D7388 the top half
+  (0, 0)..(0x1FF, 0x77) centre (0x100, 0x3C), 0x800D7398 the bottom half
+  (0, 0x78)..(0x1FF, 0xEF) centre (0x100, 0xB4); 0x800B0EB4 = the top
+  (player 1), 0x800B0EB0 = the bottom (player 2).
+- mr-bevy: player 1's chase camera + far pass in the top half of the view
+  rectangle, `ChaseCamera2` + its far pass (its own sky copy, SKY2_LAYER)
+  in the bottom half, both with that FOV; the aspect option applies to the
+  whole rectangle (each half Hor+). The effects pass sorts the shared
+  primitives from each eye; camera-facing billboards keep player 1's
+  orientation and the faithful draw-distance selection follows player 1's
+  eye (deferred).
+- FUN_80064B5C @0x80064FB0: an AI kart's camera (+0x4F2) is the human
+  camera nearest it (ported; no 2P mode has AI karts).
 
 ## Stunt courses: modes 3 and 9 (Session 7, phase 3)
 With both strip chunks (0x0F / 0x10) the camera is mode 3 in a race and

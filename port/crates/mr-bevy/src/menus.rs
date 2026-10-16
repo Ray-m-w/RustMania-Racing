@@ -772,7 +772,7 @@ impl Front {
     fn rows(&self) -> i8 {
         match self.page {
             Page::Main => 5,
-            Page::Options => 5,
+            Page::Options => 5 + the_end_open() as i8,
             Page::Sound | Page::Confirm(_) => 2,
             Page::Controllers => 2,
             Page::PortSettings => PORT_KEYS.len() as i8,
@@ -843,6 +843,11 @@ pub fn items(t: &MenuTables, list: &[Item], sel: i32, centre: i32, f: i32) -> Ve
         out.extend(t.hud.text_rgb(it.text.as_bytes(), 0x100, y, 0, Size::from_arg(size), colour, it.abr, rgb));
     }
     out
+}
+
+/// "BACK TO MAIN MENU" (THE END's last row, ending.rs).
+pub fn back_to_main_menu(t: &MenuTables) -> String {
+    t.st(sp::BACK_TO_MAIN_MENU).to_string()
 }
 
 /// FUN_80049C70: "t BACK" (or CANCEL) in green (0x10, 0xA4, 0x60).
@@ -964,15 +969,19 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
             }
         }
         Page::Options => {
-            // sub-state 3: four items on five rows' positions (the fifth row
-            // is the port's PORT SETTINGS)
-            let list = [
+            // sub-state 3: four items on five rows' positions; the fifth
+            // THE END once a secret course group is open (0x800E02B9,
+            // phase 8), the port's PORT SETTINGS after them
+            let mut list = vec![
                 Item::new(txt(sp::ADJUST_SOUND)),
                 Item::new(txt(sp::SET_CONTROLLERS)),
                 Item::new(txt(sp::ADJUST_SCREEN)).grey(true),
                 Item::new(txt(sp::MEMORY_CARD)).grey(true),
-                Item::new("PORT SETTINGS"),
             ];
+            if the_end_open() {
+                list.push(Item::new(crate::ending::tables().lines[0].text.clone().unwrap_or_default()));
+            }
+            list.push(Item::new("PORT SETTINGS"));
             sp_out.extend(items(t, &list, sel, 0x78, f));
             sp_out.extend(select_button(t, 0x100, 0xD2, 0, false));
             sp_out.extend(back_button(t, 0x100, 0x1E, 0, false));
@@ -1537,6 +1546,8 @@ pub struct Effects {
     pub relaunch_course: Option<String>,
     /// Restart the program on the title.
     pub relaunch_title: bool,
+    /// Phase 8: restart on THE END (course 0x1D, ending.rs).
+    pub relaunch_ending: bool,
     pub unpause: bool,
     pub volumes: Option<[u8; 2]>,
     /// The restart continues a league (`--league`).
@@ -1616,7 +1627,12 @@ impl Front {
                             self.port = Some(file_settings());
                             self.open(Page::Controllers);
                         }
-                        4 => {
+                        // phase 8: THE END (course 0x1D, ending.rs)
+                        4 if the_end_open() => {
+                            confirm(&mut fx);
+                            fx.relaunch_ending = true;
+                        }
+                        4 | 5 => {
                             confirm(&mut fx);
                             self.port = Some(file_settings());
                             self.open(Page::PortSettings);
@@ -1885,8 +1901,9 @@ impl Front {
                         self.open(Page::CharSelect);
                         self.request = Request::Menu { keep_camera: true };
                     } else if self.row == if w7 { 6 } else { 3 } {
+                        // BACK TO CREDITS: THE END again (phase 8)
                         confirm(&mut fx);
-                        fx.relaunch_title = true;
+                        fx.relaunch_ending = true;
                     }
                 } else if cross {
                     match self.row {
@@ -2254,6 +2271,11 @@ fn apply_saved_volumes(bus: Option<Res<crate::audio::AudioBus>>, front: Res<Fron
     }
 }
 
+/// OPTIONS shows THE END once a secret course group is open (0x800E02B9).
+pub fn the_end_open() -> bool {
+    !tool_run() && crate::save::with(|s| s.block.secrets()) != 0
+}
+
 /// Tool runs (routes, replays, oracle grids, shots) never see the menus.
 pub fn tool_run() -> bool {
     let a: Vec<String> = std::env::args().collect();
@@ -2279,7 +2301,7 @@ fn run(
     // START in a race: the pause menu (not on the results, not before GO's
     // race frames exist, never in tool runs)
     let racing = matches!(&p.driver, crate::Driver::Sim(run) if !matches!(run.session.phase(), mr_sim::race::RacePhase::Finished { .. }));
-    if front.page == Page::None && !crate::title::on_title() && racing && !tool_run() && !crate::demo::active() {
+    if front.page == Page::None && !crate::title::on_title() && racing && !tool_run() && !crate::demo::active() && !crate::ending::on() {
         // (phase 7: either player's START pauses a split-screen race)
         let b = latch.now | if crate::input::two_players() { latch.now2 & START } else { 0 };
         if b & START != 0 && front.prev & START == 0 {
@@ -2313,6 +2335,11 @@ fn run(
         if let Some(bus) = bus.as_ref() {
             bus.music(crate::audio::MusicCmd::Resume);
         }
+    }
+    if fx.relaunch_ending {
+        crate::ending::relaunch(front.character, front.vehicle);
+        exit.write(AppExit::Success);
+        return;
     }
     if fx.relaunch_course.is_some() || fx.relaunch_title {
         // main(): between course sessions the progression check
@@ -2366,7 +2393,7 @@ pub fn relaunch(course: Option<&str>, character: u8, vehicle: u8, league: bool) 
     while i < a.len() {
         match a[i].as_str() {
             "--course" | "--character" | "--vehicle" | "--menu-keys" | "--menu-shots" => i += 2,
-            "--skip-title" | "--menu" | "--league" | "--demo" => i += 1,
+            "--skip-title" | "--menu" | "--league" | "--demo" | "--ending" => i += 1,
             _ => {
                 out.push(a[i].clone());
                 i += 1;

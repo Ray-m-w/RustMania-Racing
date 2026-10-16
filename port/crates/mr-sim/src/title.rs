@@ -75,6 +75,32 @@ pub fn demo_course(w: &World, rng: &mut u32, world6_open: [bool; 4], recent: &mu
     }
 }
 
+/// THE END (course 0x1D): the course whose music plays (FUN_80089B98, the
+/// track of FUN_8008C4AC @0x8008D2xx for course 0x1D and game mode 0xE).
+/// Two random bytes per try: world = b0 % 6, slot = b1 & 3, the slot open
+/// (`open(world, slot)`), its course's track (0x800ACB37 + 0xC * course)
+/// not -1 nor one of the last three (0x800B0A18..1A), which it joins
+/// [CODE 80089b98].
+pub fn credits_track(w: &World, rng: &mut u32, open: &dyn Fn(usize, usize) -> bool, recent: &mut [i8; 3]) -> i8 {
+    loop {
+        let (b0, b1) = (w.rng_byte(*rng), w.rng_byte(rng.wrapping_add(1)));
+        *rng = rng.wrapping_add(2);
+        let (world, slot) = ((b0 % 6) as u32, (b1 & 3) as usize);
+        if !open(world as usize, slot) {
+            continue;
+        }
+        let c = w.exe.u8(WORLD_COURSES + slot as u32 + world * 4) as i8;
+        if c == -1 {
+            continue;
+        }
+        let t = w.exe.u8(0x800A_CB37 + 0xC * c as u32) as i8;
+        if t != -1 && !recent.contains(&t) {
+            *recent = [t, recent[0], recent[1]];
+            return t;
+        }
+    }
+}
+
 /// 0x800C3028[c] != -1: the characters whose models the boot loaded
 /// (0..24 on the oracle, title and race alike) [RAM].
 pub fn character_loaded(c: u8) -> bool {

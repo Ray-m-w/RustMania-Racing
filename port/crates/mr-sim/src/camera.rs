@@ -821,6 +821,10 @@ fn select_mode(cam: &mut CameraState, inp: &CameraInput) -> i16 {
     if g.event == 0x1E && g.game_state == 0xC {
         return 5;
     }
+    // 0x8007055C (phase 8): THE END (course 0x1D, game mode 0x15) orbits.
+    if g.event == 0x1D && g.game_state == 0x15 {
+        return 1;
+    }
     if g.event == 0x1D || g.event == 0x1E {
         unreachable_in_scope!("special event camera (0x800B0FAC = 0x1D/0x1E)");
     }

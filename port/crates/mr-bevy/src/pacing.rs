@@ -172,8 +172,9 @@ fn predict(mut p: ResMut<Player>, mut feed: ResMut<KartFeed>, latch: Res<PadLatc
     if !latch.low_latency {
         return;
     }
-    // the course menu / character select run `menu_tick`, not the race
-    if front.is_some_and(|f| f.page.course_menu()) {
+    // the course menu / character select (and THE END) run `menu_tick`,
+    // not the race
+    if front.is_some_and(|f| f.page.course_menu()) || crate::ending::on() {
         la.key = None;
         if let Some(f) = fx_la.as_mut() {
             f.0 = None;

@@ -33,6 +33,11 @@ fn choice() -> &'static Choice {
             eprintln!("course {w}: not a race course of the game's table; DOCK instead (races: {})", races.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(" "));
         }
         let explicit = found.is_some();
+        // Phase 8: THE END (ending.rs), course 0x1D
+        if crate::ending::asked() {
+            let info = CourseInfo::read(&exe, crate::ending::COURSE).expect("THE END row");
+            return Choice { info, explicit: false, races };
+        }
         // The title (title.rs) is the frontend course 0x1E run as the game
         // runs it; the pick-list comes with START.
         if crate::title::first_screen() == crate::title::Screen::Title {
@@ -90,6 +95,12 @@ pub fn session_config(logic_hz: u8, character: u8, vehicle: u8) -> mr_sim::sessi
     let alt_controls = crate::settings::Settings::global().get("controller_config") == Some("B");
     let p2_alt_controls = crate::settings::Settings::global().get("controller_config_2") == Some("B");
     let mut cfg = mr_sim::session::SessionConfig { logic_hz, character, vehicle, alt_controls, p2_alt_controls, ..base };
+    // phase 8: THE END (ending.rs): no karts in the game; the session's
+    // parked kart is not drawn and only the camera runs
+    if crate::ending::on() {
+        cfg.opponents = 0;
+        return cfg;
+    }
     // phase 8: the attract demo (demo.rs): six AI karts, no save
     if crate::demo::active() {
         cfg.demo = true;

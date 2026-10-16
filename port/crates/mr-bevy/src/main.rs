@@ -35,6 +35,7 @@ mod kartshadow;
 mod vramtex;
 pub mod courses;
 mod demo;
+mod ending;
 mod menus;
 mod save;
 mod league;
@@ -196,7 +197,9 @@ fn select_objects(
     // The title always uses the game's selection: its frontend course holds
     // every menu's scenery (title.rs).
     let title = title::on_title();
-    if !settings.faithful_draw_distance() && !title {
+    // (phase 8: THE END, the frontend course 0x1D, too)
+    let frontend = title || ending::on();
+    if !settings.faithful_draw_distance() && !frontend {
         if !*full_done {
             for (o, mut v) in q.iter_mut() {
                 *v = if scene::full_view_object(&vis.dat, &vis.info, o.0) { Visibility::Inherited } else { Visibility::Hidden };
@@ -225,7 +228,7 @@ fn select_objects(
     };
     let drawn: std::collections::HashSet<usize> = vis
         .dat
-        .drawn(eye, cam, &mask, if title { title::TITLE_DRAW } else { vis.draw })
+        .drawn(eye, cam, &mask, if frontend { title::TITLE_DRAW } else { vis.draw })
         .iter()
         .map(|d| d.object)
         .collect();
@@ -531,6 +534,7 @@ fn main() {
         .add_plugins(menus::MenusPlugin)
         .add_plugins(title::TitlePlugin)
         .add_plugins(demo::DemoPlugin)
+        .add_plugins(ending::EndingPlugin)
         .add_systems(FixedUpdate, capture::tick.after(sim_tick).before(karts::feed_player))
         .add_systems(Last, write_outputs)
         .add_systems(PostUpdate, (fit_viewports, fit_bars).before(bevy::camera::CameraUpdateSystems))
@@ -837,7 +841,11 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
             // The title's course select: the camera on the film strips
             // (game state 0xC, mode 5).
             run.session.camera_menu = (front.page == menus::Page::CourseSelect).then_some((0xC, front.row));
-            if front.page.course_menu() {
+            // phase 8: THE END (game mode 0x15): the orbit, no karts
+            if ending::on() {
+                run.session.camera_menu = Some((ending::MODE, 0));
+            }
+            if front.page.course_menu() || ending::on() {
                 // the course menu / character select: the race does not run
                 let vpt = run.session.vblanks_per_tick();
                 run.session.menu_tick(vpt);

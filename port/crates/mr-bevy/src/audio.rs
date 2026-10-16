@@ -505,6 +505,8 @@ pub struct MusicDirector {
     started: bool,
     last_ticks: u64,
     intro_played: bool,
+    /// Phase 8: THE END's track drawn.
+    started_end: bool,
     finished: bool,
     clips_seen: u64,
     /// A clip ended on the thread; the device still plays its tail.
@@ -564,6 +566,17 @@ fn direct_music(p: Res<crate::Player>, bus: Res<AudioBus>, mut dir: ResMut<Music
             // Race load (a restart in the port = the game's menu round trip).
             dir.started = true;
             dir.finished = false;
+            // Phase 8: THE END plays a random open course's track
+            // (FUN_80089B98; course 0x1D's row has none).
+            if crate::ending::on() && !dir.started_end {
+                dir.started_end = true;
+                let mut rng = s.globals.rng;
+                let open = |w: usize, t: usize| crate::save::with(|st| st.block.course_open(w, t));
+                let tr = mr_sim::title::credits_track(&s.world, &mut rng, &open, &mut [-1; 3]);
+                let mut t = dir.tables();
+                t.music = (tr >= 0).then_some(tr as u16);
+                dir.tables = Some(t);
+            }
             let t = dir.tables();
             // (the attract demo loads straight into the race: no intro clip,
             // FUN_8008C4AC plays it in game mode 0 only)

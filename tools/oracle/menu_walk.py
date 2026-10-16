@@ -42,11 +42,15 @@ os.makedirs(out_dir, exist_ok=True)
 
 def globals_(o):
     r = o.read(0x800B0D46, 2) + o.read(0x800B0E8A, 2) + o.read(0x800B0E24, 2) + \
-        o.read(0x800B0FAC, 2) + o.read(0x800B07AB, 1) + o.read(0x800B0EA2, 2) +         o.read(0x800B07E6, 2)
-    return "mode %#x sub %d cursor %d,%d course %d rows %d csub %d adv %d" % (
+        o.read(0x800B0FAC, 2) + o.read(0x800B07AB, 1) + o.read(0x800B0EA2, 2) +         o.read(0x800B07E6, 2) +         o.read(0x800B0DFE, 2) + o.read(0x800B0D90, 4) + o.read(0x800B0F60, 2)
+    return "mode %#x sub %d cursor %d,%d course %d rows %d csub %d adv %d karts %d frame %d f60 %d" % (
         int.from_bytes(r[0:2], "little"), int.from_bytes(r[2:4], "little", signed=True),
         r[4], r[5], int.from_bytes(r[6:8], "little"), r[8],
-        int.from_bytes(r[9:11], "little", signed=True), int.from_bytes(r[11:13], "little"))
+        int.from_bytes(r[9:11], "little", signed=True), int.from_bytes(r[11:13], "little"),
+        int.from_bytes(r[13:15], "little", signed=True), int.from_bytes(r[15:19], "little", signed=True),
+        int.from_bytes(r[19:21], "little", signed=True)) + (
+        " cam %s" % [int.from_bytes(o.read(0x800C4F68 + 4 * i, 4), "little", signed=True) for i in range(3)] +
+        " ang %d" % int.from_bytes(o.read(0x800C4F8C, 4), "little", signed=True) if os.environ.get("MR_WALK_CAM") else "")
 
 
 with OracleLock():

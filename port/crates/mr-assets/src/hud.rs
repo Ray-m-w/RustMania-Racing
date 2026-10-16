@@ -75,6 +75,12 @@ pub mod addr {
     pub const PTR_COURSE_FINISHED: u32 = 0x800B_0580;
     pub const PTR_OUT_OF_TIME: u32 = 0x800B_0258;
     pub const PTR_TIME: u32 = 0x800B_0264;
+    /// Battles (phase 4): the intro "BATTLE THE MUPPETS", the result's
+    /// "DAMAGE", "BEST CRASH", "KNOCKOUTS".
+    pub const PTR_BATTLE_THE_MUPPETS: u32 = 0x800B_034C;
+    pub const PTR_DAMAGE: u32 = 0x800B_021C;
+    pub const PTR_BEST_CRASH: u32 = 0x800B_05BC;
+    pub const PTR_KNOCKOUTS: u32 = 0x800B_05B8;
     /// Character names, pointers at stride 8 ("KERMIT", "GONZO", ...).
     pub const NAMES: u32 = 0x800A_B128;
 }
@@ -193,6 +199,10 @@ pub struct HudTables {
     pub course_finished: String,
     pub out_of_time: String,
     pub time: String,
+    pub battle_the_muppets: String,
+    pub damage: String,
+    pub best_crash: String,
+    pub knockouts: String,
 }
 
 impl HudTables {
@@ -229,6 +239,10 @@ impl HudTables {
             course_finished: exe_ptr_str(exe, addr::PTR_COURSE_FINISHED)?,
             out_of_time: exe_ptr_str(exe, addr::PTR_OUT_OF_TIME)?,
             time: exe_ptr_str(exe, addr::PTR_TIME)?,
+            battle_the_muppets: exe_ptr_str(exe, addr::PTR_BATTLE_THE_MUPPETS)?,
+            damage: exe_ptr_str(exe, addr::PTR_DAMAGE)?,
+            best_crash: exe_ptr_str(exe, addr::PTR_BEST_CRASH)?,
+            knockouts: exe_ptr_str(exe, addr::PTR_KNOCKOUTS)?,
         })
     }
 
@@ -441,6 +455,32 @@ pub struct HudState {
     pub results: Option<Results>,
     /// The stunt trial (race type 3): its HUD instead of the race's.
     pub stunt: Option<StuntHud>,
+    /// A battle (game mode 2; phase 4): its HUD instead of the race's.
+    pub battle: Option<BattleHud>,
+}
+
+/// What a battle's HUD reads (race type 2, game modes 2 and 10): the
+/// result FUN_8004DAE0.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BattleHud {
+    /// Kart +0x43C / +0x43E (damage dealt / taken), +0x478 (best crash),
+    /// +0x4FB (knock-outs).
+    pub dealt: i16,
+    pub taken: i16,
+    pub best_crash: i16,
+    pub knockouts: u8,
+    /// Kart +0x38C: the result's page (% 180: damage, best crash,
+    /// knock-outs, 60 VBlanks each) and the record flash.
+    pub counter: i32,
+    /// Kart +0x4CA (the place shown), +0x4BE (the place).
+    pub shown_place: u8,
+    pub place: u8,
+    /// Kart +0x358: the battle clock (180000 = out of time).
+    pub time: i32,
+    /// The course's record (0x800E0190 + 0x20 * world + 8 * slot) and the
+    /// race flags (the flash needs 0).
+    pub record: i32,
+    pub race_flags: u16,
 }
 
 /// What the stunt trial's HUD reads (race type 3, game modes 3 and 10):
@@ -527,6 +567,7 @@ impl Default for HudState {
             minigame: None,
             results: None,
             stunt: None,
+            battle: None,
         }
     }
 }
@@ -723,6 +764,42 @@ impl HudTables {
             out.extend(self.text(time_text_cs(s.time - s.first_time, true).as_bytes(), cx + half + 8, cy, 2, Size::Small, 7, 0x60));
         }
         out.extend(self.text(self.course_finished.as_bytes(), cx, 0x1E, 0, Size::Large, 5, 0x60));
+        out
+    }
+
+    /// FUN_8004DAE0 (1 player, no rival; viewport centre (0x100, 0x78)):
+    /// the battle's result: one of DAMAGE "+dealt -taken", BEST CRASH,
+    /// KNOCKOUTS (60 VBlanks each by +0x38C % 180), the place, the time
+    /// (orange while it is the course record with race flags 0 and the
+    /// flash bit clear) and "TIME", or "OUT OF TIME".
+    pub fn battle_results(&self, b: &BattleHud) -> Vec<Sprite> {
+        let (cx, cy) = (0x100, 0x78);
+        let mut out = Vec::new();
+        let k = b.counter % 0xB4;
+        let (v, label) = if k < 0x3C {
+            (format!("+{} -{}", b.dealt, b.taken), &self.damage)
+        } else if k < 0x78 {
+            (b.best_crash.to_string(), &self.best_crash)
+        } else {
+            (b.knockouts.to_string(), &self.knockouts)
+        };
+        let (s, w) = self.text_w(v.as_bytes(), cx, cy, 0, Size::Medium, 4, 0x60);
+        out.extend(s);
+        out.extend(self.text(label.as_bytes(), cx - w / 2 - 8, cy, 8, Size::Small, 5, 0x60));
+        let p = b.shown_place.clamp(1, 6);
+        let y = cy - 0x18;
+        out.extend(self.text(&[b'0' + p], cx, y, 0, Size::Large, 7, 0x60));
+        let dx = self.suffix_dx[(p - 1) as usize] as i32;
+        out.extend(self.text(self.suffixes[(p - 1) as usize].as_bytes(), cx + dx, y - 5, 0, Size::Small, 4, 0x60));
+        if b.time < 180_000 {
+            let col = if b.race_flags == 0 && b.place == 1 && b.time == b.record && (b.counter & 0x1F) < 0x10 { 7 } else { 4 };
+            let y = cy + 0x11;
+            let (s, w) = self.text_w(time_text_cs(b.time, false).as_bytes(), cx, y, 0, Size::Medium, col, 0x60);
+            out.extend(s);
+            out.extend(self.text(self.time.as_bytes(), cx - w / 2 - 8, y, 8, Size::Small, 5, 0x60));
+        } else {
+            out.extend(self.text(self.out_of_time.as_bytes(), cx, cy + 0x12, 0, Size::Medium, 4, 0x60));
+        }
         out
     }
 

@@ -766,8 +766,9 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
             hud_g.results = hud::results_from_session(s);
             hud_g.mode = s.globals.mode as u8;
             hud_g.stunt = hud::stunt_from_session(s);
-            if hud_g.stunt.is_some() {
-                // the stunt trial's results: "PRESS START" in mode 10
+            hud_g.battle = hud::battle_from_session(s);
+            if hud_g.stunt.is_some() || hud_g.battle.is_some() {
+                // the stunt trial's / battle's results: "PRESS START" in mode 10
                 hud_g.results = (s.globals.mode == 10).then(|| mr_assets::hud::Results { press_start: true, frame: s.globals.results_clock, ..Default::default() });
             }
             let r = s.record();

@@ -891,6 +891,56 @@ pub fn stunt_hud(ht: &HudTables, t: &ItemTables, st: &crate::hud::HudState, s: &
     out
 }
 
+/// A battle's HUD (game mode 2; FUN_80051698 / FUN_8004F688 case 2, case
+/// 10 -> FUN_8004DAE0; phase 4, docs/spec/battle.md), in add order: the
+/// +0x4F9 icon; racing: SPECIAL MOVE / arrow / banner, the weapon slots,
+/// the turbo meter, the damage gauge (0x30, 0xCF), the minimap; out
+/// (+0x4C7) or in game mode 10: the result; while counting down "READY"
+/// (blinking) or "BATTLE THE MUPPETS" with the opponents' faces; racing:
+/// the clock (0x100, 0x1E); mode 10: "PRESS START" (blinking).
+pub fn battle_hud(ht: &HudTables, t: &ItemTables, st: &crate::hud::HudState, s: &ItemHud, bh: &crate::hud::BattleHud) -> Vec<Prim> {
+    let p = parts(ht, t, s);
+    let mut out = p.icon;
+    let c70 = st.countdown;
+    let sprites = |v: Vec<crate::hud::Sprite>| v.into_iter().map(Prim::Sprt);
+    if c70 <= 0 {
+        if st.finished || st.mode == 10 {
+            out.extend(sprites(ht.battle_results(bh)));
+        } else {
+            out.extend(status(ht, t, s));
+            out.extend(weapons(t, s, 0x2D));
+            out.extend(meter(t, s));
+            out.extend(damage_gauge(s, 0x30, 0xCF));
+        }
+        if st.mode != 10 {
+            out.extend(minimap(t, s));
+        }
+    }
+    if st.mode == 10 {
+        if let Some(r) = st.results {
+            if r.press_start && r.frame.rem_euclid(0x3C) < 0x2D {
+                out.extend(sprites(ht.text(ht.press_start.as_bytes(), 0x100, 0xD2, 0, Size::Medium, 4, 0x60)));
+            }
+        }
+        return out;
+    }
+    // FUN_80050F64
+    if c70 != 0 {
+        if c70 < st.countdown_start {
+            if c70 <= 0x77 && c70 % 0x1E >= 0xF {
+                out.extend(sprites(ht.text(ht.ready.as_bytes(), 0x100, 0xD2, 0, Size::Large, 6, 0x60)));
+            }
+        } else if !(s.e38 > 6 && c70 < st.countdown_start + 0xF) {
+            out.extend(sprites(ht.text(ht.battle_the_muppets.as_bytes(), 0x100, 0xD2, 0, Size::Large, 5, 0x60)));
+            out.extend(intro_faces(t, s));
+        }
+        return out;
+    }
+    // FUN_80050B2C: the race clock at the top in mode 2
+    out.extend(sprites(ht.text(crate::hud::timer_text(st.race_time).as_bytes(), 0x100, 0x1E, 0, Size::Medium, 4, 0x60)));
+    out
+}
+
 /// The whole 1-player race HUD in the game's add order (FUN_80051698 ->
 /// FUN_8004f688 for the player, then the minimap; the timer FUN_80050b2c
 /// last): the minimal HUD of `HudTables::layout` with the item parts
@@ -898,6 +948,9 @@ pub fn stunt_hud(ht: &HudTables, t: &ItemTables, st: &crate::hud::HudState, s: &
 pub fn race_hud(ht: &HudTables, t: &ItemTables, st: &crate::hud::HudState, s: &ItemHud) -> Vec<Prim> {
     if let Some(sh) = &st.stunt {
         return stunt_hud(ht, t, st, s, sh);
+    }
+    if let Some(bh) = &st.battle {
+        return battle_hud(ht, t, st, s, bh);
     }
     let p = parts(ht, t, s);
     let base: Vec<Prim> = ht.layout(st).into_iter().map(Prim::Sprt).collect();

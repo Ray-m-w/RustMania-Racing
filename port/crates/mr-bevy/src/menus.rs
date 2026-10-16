@@ -114,6 +114,8 @@ mod sp {
     pub const BEST_TIME: u32 = 0x800B_0350;
     pub const ONE_PLAYER_STUNT_TRIAL: u32 = 0x800B_0370;
     pub const TWO_PLAYER_STUNT_RACE: u32 = 0x800B_0374;
+    pub const ONE_PLAYER_BATTLE: u32 = 0x800B_0360;
+    pub const TWO_PLAYER_BATTLE: u32 = 0x800B_0364;
     pub const NOT_COLLECTED: u32 = 0x800B_05E8;
     pub const NOT_WON: u32 = 0x800B_05F4;
     pub const MUPPET: u32 = 0x800B_01D0;
@@ -221,7 +223,7 @@ impl MenuTables {
             sp::RETIRE, sp::RESTART, sp::YES, sp::NO, sp::MUSIC_VOLUME, sp::SOUND_VOLUME, sp::CONTROLLER, sp::JUMP, sp::BRAKE, sp::CONFIGURATION,
             sp::VIBRATION, sp::RACE_LEAGUE_A, sp::RACE_LEAGUE_B, sp::BATTLE_LEAGUE, sp::RANDOM_RACE_LEAGUE, sp::RACE_POINTS, sp::TOURNAMENT_POINTS,
             sp::FINAL_TABLE, sp::AFTER, sp::RACES, sp::NEXT, sp::START_RACE, sp::POINTS, sp::QUIT_TOURNAMENT, sp::P1,
-            sp::BEST_TIME, sp::ONE_PLAYER_STUNT_TRIAL, sp::TWO_PLAYER_STUNT_RACE,
+            sp::BEST_TIME, sp::ONE_PLAYER_STUNT_TRIAL, sp::TWO_PLAYER_STUNT_RACE, sp::ONE_PLAYER_BATTLE, sp::TWO_PLAYER_BATTLE,
         ];
         let mut s: std::collections::HashMap<u32, String> = ptrs.iter().map(|&p| (p, exe_ptr_str(exe, p))).collect();
         for a in [si::QUESTION, si::DASH, si::ON, si::OFF, si::A, si::B, si::T_PREFIX, si::X_PREFIX] {
@@ -359,8 +361,16 @@ fn progress() -> Progress {
 /// plus world 7 (SPEEDWAY, RALLY, GLACIER) once DISCO is won
 /// (0x800E02B9 bit 0: the game's secret screen, course 0x1D, then offers
 /// them; that screen is not ported, so the port lists the world).
+/// World 8 (the cup-8 arenas VOLCANO, HOUSE, WHATEVER) likewise once
+/// everything is complete (0x800E02B9 bit 1; phase 4).
 fn worlds_shown(p: &Progress) -> usize {
-    if p.0.secrets() & 1 != 0 { 8 } else { 7 }
+    if p.0.secrets() & 2 != 0 {
+        9
+    } else if p.0.secrets() & 1 != 0 {
+        8
+    } else {
+        7
+    }
 }
 
 /// The courses the port runs (the 18 race courses of the course table and
@@ -469,7 +479,8 @@ impl Front {
             Some((w, 3)) if w < 6 => 3,
             Some((w, 1)) if w < 6 => 1,
             Some((w, 2)) if w < 6 => 2,
-            Some((8, _)) => 2,
+            // ARENA/BATTLE (course 0x1B, world 6 slot 1) and cup 8
+            Some((6, 1)) | Some((8, _)) => 2,
             _ => 0,
         }
     }
@@ -877,6 +888,14 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
                     // FUN_80051698 case 0, race type 3: the stunt trial
                     Item::new(txt(sp::ONE_PLAYER_STUNT_TRIAL)),
                     Item::new(txt(sp::TWO_PLAYER_STUNT_RACE)).grey(true),
+                    Item::new(format!("{} {}", here, txt(sp::SECRETS))).grey(true),
+                    Item::new(txt(sp::GAME_MENU)).tint([0x1F, 0xFF, 0x1F]),
+                    Item::new(txt(sp::BACK_TO_MAIN_MENU)).tint([0xFF, 0x1F, 0x1F]),
+                ],
+                Page::CourseMenu if fr.race_type() == 2 => vec![
+                    // FUN_80051698 case 0, race type 2: the arena (phase 4)
+                    Item::new(txt(sp::ONE_PLAYER_BATTLE)),
+                    Item::new(txt(sp::TWO_PLAYER_BATTLE)).grey(true),
                     Item::new(format!("{} {}", here, txt(sp::SECRETS))).grey(true),
                     Item::new(txt(sp::GAME_MENU)).tint([0x1F, 0xFF, 0x1F]),
                     Item::new(txt(sp::BACK_TO_MAIN_MENU)).tint([0xFF, 0x1F, 0x1F]),

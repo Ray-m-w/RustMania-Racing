@@ -24,10 +24,11 @@ fn choice() -> &'static Choice {
     C.get_or_init(|| {
         let mut disc = mr_disc::Disc::open_default().expect("open the disc (MRM_DISC or game.toml)");
         let exe = mr_sim::tables::ExeImage::parse(&disc.read("SLUS_012.37").expect("read the executable")).expect("exe");
-        // the race courses and (phase 3) the stunt courses' trial
-        let races: Vec<CourseInfo> = CourseInfo::races(&exe).into_iter().chain(CourseInfo::stunts(&exe)).collect();
+        // the race courses, (phase 3) the stunt courses' trial and (phase
+        // 4) the arenas' 1 PLAYER BATTLE
+        let races: Vec<CourseInfo> = CourseInfo::races(&exe).into_iter().chain(CourseInfo::stunts(&exe)).chain(CourseInfo::arenas(&exe)).collect();
         let want = crate::settings::Settings::global().get("course").map(|s| s.to_string()).filter(|s| !s.is_empty());
-        let found = want.as_deref().and_then(|w| CourseInfo::find(&exe, w)).filter(|c| c.is_race() || c.is_stunt());
+        let found = want.as_deref().and_then(|w| CourseInfo::find(&exe, w)).filter(|c| c.is_race() || c.is_stunt() || c.is_arena());
         if let (Some(w), None) = (&want, &found) {
             eprintln!("course {w}: not a race course of the game's table; DOCK instead (races: {})", races.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(" "));
         }

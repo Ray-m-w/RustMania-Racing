@@ -164,6 +164,11 @@ pub fn race_tick(s: &mr_sim::session::Session, place: Option<(usize, usize)>, pl
             if s.globals.race_type == 3 && s.globals.race_flags == 0 && s.kart.finished == 2 && s.world.course.gates.as_ref().is_some_and(|g| g.len() >= 4 && s.kart.gate as usize == g.len() / 2) && st.block.race_won(w, t) {
                 info!("save: stunt course {w}/{t} finished");
             }
+            // A battle won (FUN_8007916C @0x80079398): a 1-player battle
+            // with no race flags, the player the last kart standing
+            if s.globals.race_type == 2 && s.globals.race_flags == 0 && s.kart.finished == 1 && s.kart.race_pos == 1 && st.block.race_won(w, t) {
+                info!("save: arena {w}/{t} won");
+            }
         }
         for c in 0..25u8 {
             let have = st.block.vehicles(c);

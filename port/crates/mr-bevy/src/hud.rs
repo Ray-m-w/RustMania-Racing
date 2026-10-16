@@ -56,11 +56,13 @@ pub struct HudGlobals {
     pub results: Option<hud::Results>,
     /// The stunt trial's HUD inputs (`stunt_from_session`); None in a race.
     pub stunt: Option<hud::StuntHud>,
+    /// A battle's HUD inputs (`battle_from_session`); None in a race.
+    pub battle: Option<hud::BattleHud>,
 }
 
 impl Default for HudGlobals {
     fn default() -> Self {
-        HudGlobals { countdown: 0, countdown_start: 300, laps: 3, mode: 1, race_time: None, flicker: 0, results: None, stunt: None }
+        HudGlobals { countdown: 0, countdown_start: 300, laps: 3, mode: 1, race_time: None, flicker: 0, results: None, stunt: None, battle: None }
     }
 }
 
@@ -320,6 +322,7 @@ fn state_from_player(
     }
     st.results = g.results;
     st.stunt = g.stunt;
+    st.battle = g.battle;
     if input.state != Some(st) {
         input.state = Some(st);
     }
@@ -540,6 +543,29 @@ pub fn stunt_from_session(s: &mr_sim::session::Session) -> Option<hud::StuntHud>
         shown_place: k.shown_pos,
         record: s.globals.lap_record,
         first_time: k.race_time,
+    })
+}
+
+/// A battle's HUD inputs from a live session (race type 2; else None):
+/// the result's damage dealt / taken, best crash, knock-outs, page counter
+/// +0x38C, place, clock and the course record (the session's, lowered by
+/// this win as the game's save block).
+pub fn battle_from_session(s: &mr_sim::session::Session) -> Option<hud::BattleHud> {
+    if s.globals.race_type != 2 || crate::title::on_title() {
+        return None;
+    }
+    let k = &s.kart;
+    Some(hud::BattleHud {
+        dealt: k.hits_dealt,
+        taken: k.stun,
+        best_crash: k.max_hit,
+        knockouts: k.knockouts,
+        counter: k.finished_time,
+        shown_place: k.shown_pos,
+        place: k.race_pos,
+        time: k.race_time,
+        record: s.globals.lap_record,
+        race_flags: s.globals.race_flags,
     })
 }
 

@@ -168,6 +168,27 @@ pub fn states(c: &Cap, vb: u32) -> (HudState, ItemHud, [(u16, u16); 32]) {
             st.results = Some(mr_assets::hud::Results { press_start: f88, frame: i32at(0x800B_0AF0), ..Default::default() });
         }
     }
+    // A battle (race type 2, game modes 2 / 10; phase 4): its HUD state
+    // (the course record from MR_HUDX_RECORD, as the stunt trial's).
+    if c.read(vb, 0x800B_0B9A, 1)[0] == 2 && matches!(st.mode, 2 | 10) {
+        let r = &it.kart;
+        st.battle = Some(mr_assets::hud::BattleHud {
+            dealt: le::i16(r, 0x43C),
+            taken: le::i16(r, 0x43E),
+            best_crash: le::i16(r, 0x478),
+            knockouts: r[0x4FB],
+            counter: le::i32(r, 0x38C),
+            shown_place: r[0x4CA],
+            place: r[0x4BE],
+            time: le::i32(r, 0x358),
+            record: std::env::var("MR_HUDX_RECORD").ok().and_then(|v| v.parse().ok()).unwrap_or(i32::MIN),
+            race_flags: le::u16(&c.read(vb, 0x800B_07E2, 2), 0),
+        });
+        if st.mode == 10 {
+            let f88 = c.read(vb, 0x800B_0F88, 1)[0] != 0 || c.read(vb, 0x800B_0EBE, 1)[0] != 0;
+            st.results = Some(mr_assets::hud::Results { press_start: f88, frame: i32at(0x800B_0AF0), ..Default::default() });
+        }
+    }
     let tab = c.read(vb, 0x800D_FF00, 0x160);
     let mut slots = [(0u16, 0u16); 32];
     for (i, s) in slots.iter_mut().enumerate().take(0x16) {

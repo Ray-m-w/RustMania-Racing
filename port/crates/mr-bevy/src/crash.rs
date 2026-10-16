@@ -3,7 +3,7 @@
 //! `unreachable_in_scope!` for a game branch the port does not have yet),
 //! ends the program with a message instead of leaving a hung window.
 //!
-//! The panic hook writes `crash.txt` beside the executable (the message,
+//! The panic hook writes `crash.txt` in the data folder (paths.rs; the message,
 //! where it was raised, the thread, the course, the tick, the race clock and
 //! mode, the command line and a backtrace when the build has one), prints
 //! the same to stderr, shows a message box (Windows; not with
@@ -100,7 +100,7 @@ fn report(msg: &str, at: &str) -> ! {
         if mode < 0 { "-".to_string() } else { format!("{mode:#X}") },
         std::env::args().collect::<Vec<_>>().join(" "),
     );
-    let path = std::env::current_exe().ok().map(|p| p.with_file_name("crash.txt")).unwrap_or_else(|| "crash.txt".into());
+    let path = crate::paths::data_file("crash.txt").or_else(|| std::env::current_exe().ok().map(|p| p.with_file_name("crash.txt"))).unwrap_or_else(|| "crash.txt".into());
     let written = std::fs::File::create(&path).and_then(|mut f| f.write_all(text.as_bytes())).is_ok();
     let where_ = if written { format!("Details: {}", path.display()) } else { format!("(could not write {})", path.display()) };
     eprintln!("\n=== Muppet RaceMania stopped on an error: {msg}\n=== {where_}");

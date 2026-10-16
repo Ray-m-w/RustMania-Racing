@@ -13,6 +13,8 @@
 
 mod audio;
 mod crash;
+mod discsel;
+mod paths;
 mod sfx;
 mod animtex;
 mod effects;
@@ -458,6 +460,12 @@ impl SimRun {
 fn main() {
     crash::install();
     let args = parse_args();
+    // Phase 10: the disc (--disc, settings `disc`, $MRM_DISC, game.toml) or
+    // the "no disc" screen; the Redump check runs once in the background.
+    match discsel::resolve(settings::Settings::global()) {
+        Ok(bin) => discsel::check_in_background(bin),
+        Err(reason) => discsel::no_disc_screen(&reason),
+    }
     let a0: Vec<String> = std::env::args().collect();
     let capture_dir = a0.iter().position(|x| x == "--replay-capture").and_then(|i| a0.get(i + 1)).cloned();
     let driver = match &args.replay {
@@ -1008,6 +1016,9 @@ fn title(p: Res<Player>, g: Res<ghost::Ghost>, mut w: Query<&mut Window>) {
     let mut s = format!("Muppet RaceMania (Rust) | tick {} | buttons {:04X}", p.tick, p.buttons);
     if let Some(d) = g.drift(&p.pose) {
         s += &format!(" | ghost drift {:.0} units", d);
+    }
+    if discsel::warning().is_some() {
+        s += " | WARNING: disc image not the verified dump (disc-check.txt)";
     }
     if win.title != s {
         win.title = s;

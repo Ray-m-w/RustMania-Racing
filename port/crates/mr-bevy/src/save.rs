@@ -1,12 +1,12 @@
 //! The port's save file (phase 2; docs/spec/frontend.md "Saves"): the
-//! game's save block 0x800E0190.. (mr_sim::save) in `save.bin` beside the
-//! executable (or `--save PATH`): "MRMSAVE1", a format version, the game's
+//! game's save block 0x800E0190.. (mr_sim::save) in `save.bin` in the data
+//! folder (paths.rs; or `--save PATH`): "MRMSAVE1", a format version, the game's
 //! own checksum (the word sum its memory-card save carries) and the 0x20C
 //! bytes in the game's layout.
 //!
 //! - At start: save.bin; else a read-only import of this game's save from a
-//!   PS1 memory card image (psxrecomp's `saves/card1.mcd` beside the
-//!   executable, or `--import-card PATH`); else a new game (FUN_8008F448).
+//!   PS1 memory card image (`saves/card1.mcd` in the data folder or, as
+//!   psxrecomp keeps it, beside the executable; or `--import-card PATH`); else a new game (FUN_8008F448).
 //! - Autosave instead of the MEMORY CARD page: the file is rewritten
 //!   whenever the block changes (a race's lap record, won bit, vehicles
 //!   won; the progression check between courses; laps; options), where the
@@ -33,10 +33,6 @@ pub struct SaveState {
     pub source: &'static str,
 }
 
-fn exe_dir() -> Option<PathBuf> {
-    std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.to_path_buf()))
-}
-
 fn may_write() -> bool {
     !cfg!(test) && !crate::menus::tool_run()
 }
@@ -45,7 +41,7 @@ fn load() -> SaveState {
     let mut disc = mr_disc::Disc::open_default().expect("open the disc");
     let exe = disc.read("SLUS_012.37").expect("read the executable");
     let tables = SaveTables::from_exe(&mr_sim::tables::ExeImage::parse(&exe).expect("parse the executable"));
-    let path = crate::settings::arg_value("--save").map(PathBuf::from).or_else(|| exe_dir().map(|d| d.join("save.bin")));
+    let path = crate::settings::arg_value("--save").map(PathBuf::from).or_else(|| crate::paths::data_file("save.bin"));
     let new_game = |tables: &SaveTables| {
         let mut seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u32).unwrap_or(1);
         let mut rand = || mr_sim::session::bios_rand(&mut seed);
@@ -69,7 +65,7 @@ fn load() -> SaveState {
             }
         }
     }
-    let cards = crate::settings::arg_value("--import-card").map(PathBuf::from).into_iter().chain(exe_dir().map(|d| d.join("saves").join("card1.mcd")));
+    let cards = crate::settings::arg_value("--import-card").map(PathBuf::from).into_iter().chain(crate::paths::data_dir().map(|d| d.join("saves").join("card1.mcd"))).chain(crate::paths::exe_dir().map(|d| d.join("saves").join("card1.mcd")));
     for c in cards {
         if let Some(block) = std::fs::read(&c).ok().and_then(|b| SaveBlock::from_card(&b)) {
             info!("save: imported this game's save from the memory card {} (read only)", c.display());

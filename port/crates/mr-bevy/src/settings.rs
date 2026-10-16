@@ -2,7 +2,7 @@
 //!
 //! Sources, later ones win:
 //! 1. the defaults in `KNOWN`;
-//! 2. `settings.txt` beside the executable (or `--settings PATH`): plain text,
+//! 2. `settings.txt` in the data folder (paths.rs; or `--settings PATH`): plain text,
 //!    one `key = value` per line, `#` starts a comment, blank lines ignored;
 //! 3. the command line: `--set key=value` (any key, repeatable) or
 //!    `--key-with-dashes [value]` for a known key (a bool key alone = true).
@@ -48,6 +48,8 @@ pub const KNOWN: &[Opt] = &[
     Opt { key: "logic_hz", default: "60", allowed: "30|60", help: "simulation rate: 30 = the game's logic (2 VBlanks per tick, exact against the original); 60 = the 60 Hz mode (1 VBlank per tick, within the feel tolerance of 30; kart-physics-ledger.md \"60 Hz mode\")" },
     Opt { key: "render_latency", default: "low", allowed: "low|normal", help: "low = no pipelined rendering (the frame is rendered right after its update) and a swapchain of at most 1 queued frame; normal = Bevy's defaults (render one frame behind on its own thread, 2 queued frames)" },
     Opt { key: "low_latency", default: "true", allowed: "true|false", help: "pad sampled every display frame and the coming tick shown as it is sampled (look-ahead on a throw-away copy; the simulation is unchanged); false = the Session 4 display (interpolated one tick behind)" },
+    // --- phase 10 ship ---
+    Opt { key: "disc", default: "", allowed: "", help: "your Muppet RaceMania (USA) disc image: the .cue (or its track .bin), e.g. disc = D:\\Games\\Muppet RaceMania (USA).cue; a relative path is taken from the data folder. Empty = $MRM_DISC, then a game.toml disc line (development)" },
     // --- P courses ---
     Opt { key: "course", default: "", allowed: "", help: "race course with skip_title / --skip-title: a TER file name of the game's 18 race courses (DOCK, BOG, NEW_YORK, ...; courses.rs) or its index; empty = DOCK" },
     // --- T title --- (append below)
@@ -136,7 +138,7 @@ impl Settings {
     pub fn load_from(args: &[String]) -> Settings {
         let mut s = Settings::default();
         let explicit = args.iter().position(|a| a == "--settings").and_then(|i| args.get(i + 1)).map(std::path::PathBuf::from);
-        let path = explicit.clone().or_else(|| std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("settings.txt"))));
+        let path = explicit.clone().or_else(|| crate::paths::data_file("settings.txt"));
         if let Some(p) = path {
             match std::fs::read_to_string(&p) {
                 Ok(text) => {

@@ -8,6 +8,7 @@
 //! No game content is embedded; everything is read at run time.
 
 pub mod iso;
+pub mod sha1;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

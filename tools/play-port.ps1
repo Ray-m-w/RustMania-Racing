@@ -22,7 +22,7 @@
 # Items (Session 4): Q = L1 / W = R1 (turbo; special move on a full meter) /
 # E = L2 / R = R2 (character special); pad: L1/R1 bumpers, L2/R2 = stick clicks.
 # Sound and music are on; see port/README.md for --music-volume, --no-audio etc.
-# The disc is read from game.toml's disc line (or $env:MRM_DISC); nothing from
+# The disc: settings.txt `disc` (data folder), $env:MRM_DISC or game.toml; nothing from
 # the recomp is used at run time.
 #
 # -Record writes analysis\drives\<stamp>.route.json (the inputs, in the oracle's

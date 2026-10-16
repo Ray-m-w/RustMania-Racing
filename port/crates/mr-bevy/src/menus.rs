@@ -1527,7 +1527,7 @@ fn cycle(key: &str, cur: &str, dir: i32) -> Option<String> {
     Some(vals[((i + dir).rem_euclid(n)) as usize].to_string())
 }
 
-/// settings.txt beside the executable (or `--settings PATH`), without the
+/// settings.txt in the data folder (or `--settings PATH`), without the
 /// command line's values.
 fn file_settings() -> crate::settings::Settings {
     let a: Vec<String> = std::env::args().collect();
@@ -1539,7 +1539,7 @@ fn file_settings() -> crate::settings::Settings {
 }
 
 fn save_settings(s: &crate::settings::Settings) {
-    let path = s.file.clone().or_else(|| std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("settings.txt"))));
+    let path = s.file.clone().or_else(|| crate::paths::data_file("settings.txt"));
     if let Some(p) = path {
         match std::fs::write(&p, s.to_text()) {
             Ok(()) => info!("menus: settings written to {}", p.display()),

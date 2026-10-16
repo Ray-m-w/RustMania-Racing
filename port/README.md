@@ -13,8 +13,25 @@ countdown and start game to results. Plan and rules: ../docs/SESSION-2.md; resul
 ```
 ..\tools\play-port.ps1
 ```
-or `cargo run --release -p mr-bevy` from this directory. The disc comes from
-the `disc = "..."` line of ../game.toml or `$env:MRM_DISC` (a .cue or .bin).
+or `cargo run --release -p mr-bevy` from this directory. The disc (a .cue or
+its .bin; not a .chd), first match wins: `--disc PATH`, the `disc` key of
+settings.txt, `$env:MRM_DISC`, the `disc = "..."` line of ../game.toml
+(phase 10, discsel.rs). With none the window says where to set it and the
+program exits. The track is checked once against Redump disc 16664
+track 1 (SHA-1, BINLIST.toml; disc-check.txt): a mismatch warns, never
+refuses.
+
+Data folder (phase 10, paths.rs): settings.txt, save.bin, crash.txt and
+disc-check.txt live in `%APPDATA%\MuppetRaceMania\` (`--data-dir PATH`
+overrides; an empty `portable.txt` beside the exe keeps them beside the
+exe). The first start copies (never moves) an existing save.bin /
+settings.txt from beside the exe (e.g. port/target/release) when the
+folder has none. "Beside the exe" below means this folder.
+
+Standalone package (phase 10): `..\tools\package-port.ps1` ->
+dist/mrm-port-<version>-windows-x64.zip (the exe as muppet-racemania.exe,
+README-port.txt from package/, THIRD-PARTY-LICENSES.txt generated from
+cargo metadata + the registry's licence files; no game data).
 Keyboard: arrows steer, X accelerate, S brake/reverse, Z jump, A
 (TRIANGLE) locks the camera on the nearest kart while held (Session 7),
 Enter = START (pause).
@@ -115,12 +132,12 @@ ADJUST SCREEN, MEMORY CARD, VIBRATION, MOVIE / MUSIC.
 Another course (or the title) restarts the program on it (`--course NAME
 --skip-title --menu --character C --vehicle V`, `--league` within a league;
 the scene is built at start-up).
-Saves (phase 2, save.rs; frontend.md "Saves"): `save.bin` beside the exe (or
+Saves (phase 2, save.rs; frontend.md "Saves"): `save.bin` in the data folder (or
 `--save PATH`) holds the game's own save block (unlocks, lap records, won
 courses, leagues, laps, options) with a version header and the game's
 checksum; it is written automatically whenever something changes (no MEMORY
 CARD prompts). With no save.bin the game's save on a PS1 memory card image
-is imported read-only (`saves/card1.mcd` beside the exe, or `--import-card
+is imported read-only (`saves/card1.mcd` in the data folder or beside the exe, or `--import-card
 PATH`), else a new game starts. `unlock_all = true` shows everything open
 without touching save.bin (default false). The menus' settings rows:
 `music_volume` / `sound_volume` (0..15, 12 = the game's level),
@@ -145,7 +162,7 @@ session aligned to the oracle's grid savestate; `--leader` there = no catch-up),
 BOG, NEW_YORK, ... or the course index), `--character N --vehicle N` (the
 exe's indices; default Kermit / RACER).
 
-View options (Session 5; `settings.txt` beside the exe, one `key = value`
+View options (Session 5; `settings.txt` in the data folder, one `key = value`
 per line, or `--set key=value`, or `--key-with-dashes [value]`; the command
 line wins; every key with its help: `settings::KNOWN`):
 | key | default | values | what |
@@ -246,7 +263,7 @@ cargo run --release -p mr-sim --example courses           # the course table and
 The game never hangs on an error: any panic (in the simulation, e.g. a game
 branch the port does not have yet, or anywhere in the app) or a failed
 simulation tick closes the window, shows a message box (Windows) and writes
-`crash.txt` beside the executable: the message, where it was raised, the
+`crash.txt` in the data folder: the message, where it was raised, the
 thread, the course, the app and simulation tick, race clock and game mode,
 the command line and a backtrace. Exit code 101. Please send `crash.txt`
 with a report. `MRM_NO_CRASH_DIALOG=1` (and the unattended tool flags

@@ -12,6 +12,7 @@
 //! a rotation (two axes flipped), so handedness and winding are preserved.
 
 mod audio;
+mod crash;
 mod sfx;
 mod animtex;
 mod effects;
@@ -267,7 +268,6 @@ pub struct SimRun {
     /// Buttons fed per tick after alignment (for --record-route / --trace-out).
     pub buttons: Vec<u16>,
     pub rows: Vec<(i64, u16, Vec<i64>)>,
-    pub stopped: Option<String>,
     /// --route PATH: scripted input instead of the pad ((vb_start, mask) steps).
     pub route: Option<Vec<(u64, u16)>>,
 }
@@ -359,7 +359,7 @@ impl SimRun {
         };
         let a: Vec<String> = std::env::args().collect();
         let route = a.iter().position(|x| x == "--route").and_then(|i| a.get(i + 1)).map(|p| parse_route(&std::fs::read_to_string(p).expect("read --route")));
-        SimRun { session, align: 0, buttons: vec![], rows: vec![], stopped: None, route }
+        SimRun { session, align: 0, buttons: vec![], rows: vec![], route }
     }
 
     /// Write the driven inputs as an oracle route (tools/oracle/routes format):
@@ -399,6 +399,7 @@ impl SimRun {
 }
 
 fn main() {
+    crash::install();
     let args = parse_args();
     let a0: Vec<String> = std::env::args().collect();
     let capture_dir = a0.iter().position(|x| x == "--replay-capture").and_then(|i| a0.get(i + 1)).cloned();
@@ -478,8 +479,11 @@ fn main() {
         .add_systems(FixedUpdate, capture::tick.after(sim_tick).before(karts::feed_player))
         .add_systems(Last, write_outputs)
         .add_systems(PostUpdate, (fit_viewports, fit_bars).before(bevy::camera::CameraUpdateSystems))
-        .add_systems(Update, (place_player, ghost::place, follow_camera, title, follow_sky.after(follow_camera), select_objects, shot.after(follow_sky).after(select_objects)))
-        .run();
+        .add_systems(Update, (place_player, ghost::place, follow_camera, title, follow_sky.after(follow_camera), select_objects, shot.after(follow_sky).after(select_objects)));
+    // Never freeze (crash.rs): installed again after the plugins, in case
+    // one of them replaced the hook (this one runs the previous first).
+    crash::install();
+    app.run();
 }
 
 fn setup_camera(mut c: Commands, settings: Res<settings::Settings>, mut meshes: ResMut<Assets<Mesh>>, mut mats: ResMut<Assets<StandardMaterial>>) {
@@ -657,28 +661,28 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
                 **run = SimRun::new(false, a.iter().any(|x| x == "--leader"));
                 run.session.autopilot = autopilot;
             }
-            if run.stopped.is_none() {
-                let idle = run.session.ticks < run.align;
-                let k = run.buttons.len() as u64;
-                let scripted = run.route.as_ref().map(|r| {
-                    // The bridge samples tick k's pad while VBlanks-since-restore = 2k
-                    // (60 Hz mode: k).
-                    let vb = run.session.vblanks_per_tick() as u64 * k;
-                    r.iter().take_while(|(v, _)| *v <= vb).last().map(|(_, m)| *m).unwrap_or(0)
-                });
-                let b = if idle { 0 } else { scripted.unwrap_or(buttons) };
-                match run.session.tick(b) {
-                    Ok(()) => {
-                        if !idle {
-                            run.buttons.push(b);
-                            let k = run.buttons.len() as i64;
-                            let row = sim_row(&run.session);
-                            run.rows.push((k, b, row));
-                        }
+            let idle = run.session.ticks < run.align;
+            let k = run.buttons.len() as u64;
+            let scripted = run.route.as_ref().map(|r| {
+                // The bridge samples tick k's pad while VBlanks-since-restore = 2k
+                // (60 Hz mode: k).
+                let vb = run.session.vblanks_per_tick() as u64 * k;
+                r.iter().take_while(|(v, _)| *v <= vb).last().map(|(_, m)| *m).unwrap_or(0)
+            });
+            let b = if idle { 0 } else { scripted.unwrap_or(buttons) };
+            match run.session.tick(b) {
+                Ok(()) => {
+                    if !idle {
+                        run.buttons.push(b);
+                        let k = run.buttons.len() as i64;
+                        let row = sim_row(&run.session);
+                        run.rows.push((k, b, row));
                     }
-                    Err(e) => run.stopped = Some(format!("{e:?}")),
                 }
+                Err(e) => crash::fatal(&format!("simulation tick failed: {e:?}")),
             }
+            crash::note(tick, &run.session);
+            crash::test_trigger(tick);
             let s = &run.session;
             // Every kart's record to the renderer (karts.rs, shadows).
             feed.external = true;

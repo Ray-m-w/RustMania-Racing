@@ -79,13 +79,16 @@ impl VramTextures {
         };
         // Kept in the main world too: animated textures (animtex.rs) rewrite
         // texels in place.
+        // Image::new checks the data against level 0 only (a debug
+        // assertion): build it from level 0, then put the whole mip chain in.
         let mut img = Image::new(
             Extent3d { width: 256, height: 256, depth_or_array_layers: 1 },
             TextureDimension::D2,
-            data,
+            data[..256 * 256 * 4].to_vec(),
             TextureFormat::Rgba8UnormSrgb,
             RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,
         );
+        img.data = Some(data);
         img.texture_descriptor.mip_level_count = levels;
         img.sampler = if smooth {
             ImageSampler::Descriptor(ImageSamplerDescriptor {

@@ -149,9 +149,6 @@ fn predict(mut p: ResMut<Player>, mut feed: ResMut<KartFeed>, latch: Res<PadLatc
         return;
     }
     let Driver::Sim(run) = &mut p.driver else { return };
-    if run.stopped.is_some() {
-        return;
-    }
     // The buttons the next real tick will take (sim_tick's rules).
     let b = if run.session.ticks < run.align {
         0

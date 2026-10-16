@@ -110,6 +110,7 @@ mod sp {
     pub const SECRETS: u32 = 0x800B_0380;
     pub const GAME_MENU: u32 = 0x800B_0384;
     pub const BACK_TO_MAIN_MENU: u32 = 0x800B_05C0;
+    pub const BACK_TO_CREDITS: u32 = 0x800B_05C4;
     pub const BEST_LAP: u32 = 0x800B_0354;
     pub const BEST_TIME: u32 = 0x800B_0350;
     pub const ONE_PLAYER_STUNT_TRIAL: u32 = 0x800B_0370;
@@ -244,7 +245,7 @@ impl MenuTables {
             sp::FINAL_TABLE, sp::AFTER, sp::RACES, sp::NEXT, sp::START_RACE, sp::START_BATTLE, sp::POINTS, sp::QUIT_TOURNAMENT, sp::P1,
             sp::BEST_TIME, sp::ONE_PLAYER_STUNT_TRIAL, sp::TWO_PLAYER_STUNT_RACE, sp::ONE_PLAYER_BATTLE, sp::TWO_PLAYER_BATTLE,
             sp::REVERSE_RACE, sp::PLAY_MOVIE, sp::DOGFIGHT, sp::BOSS_CHALLENGE, sp::DOOZER_BATTLE, sp::BATTLE_AS_BOSS, sp::CHICKEN_CHASE,
-            sp::REVERSE, sp::TWO_PLAYERS, sp::REVERSE_BATTLE_RACE,
+            sp::REVERSE, sp::TWO_PLAYERS, sp::REVERSE_BATTLE_RACE, sp::BACK_TO_CREDITS,
         ];
         let mut s: std::collections::HashMap<u32, String> = ptrs.iter().map(|&p| (p, exe_ptr_str(exe, p))).collect();
         for a in [si::QUESTION, si::DASH, si::ON, si::OFF, si::A, si::B, si::T_PREFIX, si::X_PREFIX] {
@@ -741,7 +742,12 @@ impl Front {
             Page::Sound | Page::Confirm(_) => 2,
             Page::Controllers => 2,
             Page::PortSettings => PORT_KEYS.len() as i8,
-            Page::CourseMenu => 5,
+            // the secret screen's courses: sub-states 0xB (world 7) / 0xC (8)
+            Page::CourseMenu => match self.here.map(|h| h.0) {
+                Some(7) => 7,
+                Some(8) => 4,
+                _ => 5,
+            },
             Page::GameMenu => 4,
             Page::WorldList | Page::CourseSelect => worlds_shown(&self.progress) as i8,
             Page::CourseList => 4,
@@ -1030,6 +1036,30 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
                 sp_out.extend(back_button(t, 0x20, 0x1E, 2, false));
             }
             let list: Vec<Item> = match fr.page {
+                // Phase 6b: the secret screen's courses (FUN_80051698 cases
+                // 0xB / 0xC): world 7 (SPEEDWAY, RALLY, GLACIER) and the
+                // cup-8 arenas; BACK TO CREDITS returns to the secret screen
+                // (course 0x1D; not ported: the title here)
+                Page::CourseMenu if fr.here.is_some_and(|h| h.0 == 7) => {
+                    let laps = p.laps();
+                    let lap_s = txt(if laps == 1 { sp::LAP } else { sp::LAPS });
+                    let one = |a: u32| format!("{} - {}", txt(a), txt(sp::ONE_PLAYER));
+                    vec![
+                        Item::new(format!("{} - {} {}", txt(sp::ONE_PLAYER_RACE), laps, lap_s)),
+                        Item::new(format!("{} - {} {}", txt(sp::TWO_PLAYER_RACE), laps, lap_s)).grey(true),
+                        Item::new(one(sp::REVERSE_RACE)),
+                        Item::new(one(sp::BATTLE)),
+                        Item::new(one(sp::BATTLE_RACE)),
+                        Item::new(txt(sp::CHICKEN_CHASE)).grey(true),
+                        Item::new(txt(sp::BACK_TO_CREDITS)).tint([0xFF, 0x1F, 0x1F]),
+                    ]
+                }
+                Page::CourseMenu if fr.here.is_some_and(|h| h.0 == 8) => vec![
+                    Item::new(txt(sp::ONE_PLAYER_BATTLE)),
+                    Item::new(txt(sp::TWO_PLAYER_BATTLE)).grey(true),
+                    Item::new(txt(sp::CHICKEN_CHASE)).grey(true),
+                    Item::new(txt(sp::BACK_TO_CREDITS)).tint([0xFF, 0x1F, 0x1F]),
+                ],
                 Page::CourseMenu if fr.race_type() == 3 => vec![
                     // FUN_80051698 case 0, race type 3: the stunt trial
                     Item::new(txt(sp::ONE_PLAYER_STUNT_TRIAL)),
@@ -1760,7 +1790,28 @@ impl Front {
                         crate::save::persist();
                     }
                 }
-                if cross {
+                let world = self.here.map(|h| h.0);
+                if cross && world.is_some_and(|w| w >= 7) {
+                    // FUN_80074A94 sub-states 0xB / 0xC: world 7's REVERSE
+                    // RACE (2), BATTLE (1), BATTLE RACE (8) through the
+                    // character select; BACK TO CREDITS
+                    let w7 = world == Some(7);
+                    let flags = match self.row {
+                        2 if w7 => Some(2),
+                        3 if w7 => Some(1),
+                        4 if w7 => Some(8),
+                        _ => None,
+                    };
+                    if self.row == 0 || flags.is_some() {
+                        confirm(&mut fx);
+                        self.secret = flags.map(|f| Secret { race_flags: f, boss: false });
+                        self.open(Page::CharSelect);
+                        self.request = Request::Menu { keep_camera: true };
+                    } else if self.row == if w7 { 6 } else { 3 } {
+                        confirm(&mut fx);
+                        fx.relaunch_title = true;
+                    }
+                } else if cross {
                     match self.row {
                         0 => {
                             confirm(&mut fx);
@@ -1941,7 +1992,7 @@ impl Front {
                     }
                     self.adventure = false;
                     let from_secrets = self.secret.take().is_some();
-                    self.open(if from_secrets { Page::Secrets } else { Page::CourseMenu });
+                    self.open(if from_secrets && self.secrets_offered() { Page::Secrets } else { Page::CourseMenu });
                     self.request = Request::Menu { keep_camera: true };
                 } else if cross && self.progress.char_open(self.character) && self.progress.vehicle_open(self.character, self.vehicle) {
                     // FUN_80073C58: the character (and its vehicle) collected

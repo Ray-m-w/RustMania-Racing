@@ -26,24 +26,41 @@ knocking the letters about, the orbiting camera, the title music, PRESS START).
 START (Enter / pad Start) opens the game's menus (Session 7, menus.rs;
 frontend.md "Menus"):
 - main menu: SELECT COURSE (the film-strip course select: UP / DOWN world,
-  LEFT / RIGHT course, CROSS loads it), OPTIONS (ADJUST SOUND: music and sound
-  volume 0..15; SET CONTROLLERS: configuration A / B; PORT SETTINGS: the view
-  and logic settings below as a list, LEFT / RIGHT changes, CROSS writes
-  settings.txt, applied on the next start);
+  LEFT / RIGHT course, CROSS loads it), TOURNAMENT - 1 PLAYER (the leagues,
+  below), OPTIONS (ADJUST SOUND: music and sound volume 0..15; SET
+  CONTROLLERS: configuration A / B; PORT SETTINGS: the view and logic
+  settings below as a list, LEFT / RIGHT changes, CROSS writes settings.txt,
+  applied on the next start);
 - the course menu (over the course): 1 PLAYER RACE -> character select (UP /
-  DOWN character, LEFT / RIGHT vehicle, CROSS races), GAME MENU -> CHANGE
-  COURSE (world and course lists), BACK TO MAIN MENU;
+  DOWN character, LEFT / RIGHT vehicle, CROSS races; LEFT / RIGHT on the row
+  sets 1..10 laps once the course is won), GAME MENU -> CHANGE COURSE (world
+  and course lists), BACK TO MAIN MENU;
 - in a race START pauses: CONTINUE, RETIRE (to the course menu), RESTART,
-  ADJUST SOUND; START on the results goes back to the course menu.
+  ADJUST SOUND; CROSS / START on the results goes back to the course menu;
+- TOURNAMENT - 1 PLAYER (Session 7 phase 2, league.rs; frontend.md
+  "Leagues"): RACE LEAGUE A / B (each world's race A / race B course) and
+  RANDOM RACE LEAGUE (opens once A and B are won); CROSS loads the first
+  course, the character select draws the five opponents, then each course
+  shows START RACE n / POINTS / QUIT TOURNAMENT; after each race RACE POINTS
+  (place 3 / 2 / 1, fastest lap, best start, most hits) and TOURNAMENT
+  POINTS; after six races the result (won when first in the table, best
+  points kept).
 Menu keys: arrows move, X (CROSS) selects, A (TRIANGLE) goes back; pad: D-pad,
 south, north. Shown greyed and not selectable (later phases): MEET THE
-MUPPETS, GAME STATUS, TOURNAMENT, ADVENTURE, 2 PLAYER RACE, SECRETS, ADJUST
-SCREEN, MEMORY CARD, VIBRATION, MOVIE / MUSIC, stunt and battle courses.
+MUPPETS, GAME STATUS, ADVENTURE, 2 PLAYER RACE, SECRETS, ADJUST SCREEN, MEMORY
+CARD, VIBRATION, BATTLE LEAGUE, MOVIE / MUSIC, stunt and battle courses.
 Another course (or the title) restarts the program on it (`--course NAME
---skip-title --menu --character C --vehicle V`; the scene is built at
-start-up). Until saves exist `unlock_all = true` opens every character,
-vehicle and course (false: the oracle save's progress). The menus' settings
-rows: `music_volume` / `sound_volume` (0..15, 12 = the game's level),
+--skip-title --menu --character C --vehicle V`, `--league` within a league;
+the scene is built at start-up).
+Saves (phase 2, save.rs; frontend.md "Saves"): `save.bin` beside the exe (or
+`--save PATH`) holds the game's own save block (unlocks, lap records, won
+courses, leagues, laps, options) with a version header and the game's
+checksum; it is written automatically whenever something changes (no MEMORY
+CARD prompts). With no save.bin the game's save on a PS1 memory card image
+is imported read-only (`saves/card1.mcd` beside the exe, or `--import-card
+PATH`), else a new game starts. `unlock_all = true` shows everything open
+without touching save.bin (default false). The menus' settings rows:
+`music_volume` / `sound_volume` (0..15, 12 = the game's level),
 `controller_config` (A / B), `unlock_all`.
 `--skip-title` (or `skip_title = true` in settings.txt) starts in the race
 (`--menu` with it: in the course's menu); the tool flags below

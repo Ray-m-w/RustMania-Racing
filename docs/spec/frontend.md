@@ -208,12 +208,12 @@ local, not committed).
 ## Screens [CODE][SHOT][GPU]
 | screen | where (0x800B0FAC / 0x800B0D46 / sub-state) | items | port |
 |---|---|---|---|
-| main menu | 0x1E / 0x10 / 0x800B0E8A = 1 | MEET THE MUPPETS, GAME STATUS, SELECT COURSE, TOURNAMENT - 1 PLAYER, OPTIONS; BACK = title | yes (1, 2, 4 greyed) |
+| main menu | 0x1E / 0x10 / 0x800B0E8A = 1 | MEET THE MUPPETS, GAME STATUS, SELECT COURSE, TOURNAMENT - 1 PLAYER, OPTIONS (+ GAME STATUS CHANGED - SAVE GAME while 0x800B07DC: 6 rows); BACK = title | yes (1, 2 greyed; the port autosaves: no 6th row) |
 | options | 0x1E / 0x10 / 3 (5 rows, 4 drawn) | ADJUST SOUND, SET CONTROLLERS, ADJUST SCREEN (sub-state 4), MEMORY CARD | yes; 3, 4 greyed; 5th row = the port's PORT SETTINGS |
 | adjust sound | 0x800B07CD | MUSIC VOLUME - n, SOUND VOLUME - n (0..15; levels 0x800AC118 / 0x800AC138, default 12 = 0x6C / 0x60; FUN_80074850: LEFT / RIGHT, CROSS keeps, TRIANGLE restores) | yes (settings music_volume / sound_volume; bus gains level / level(12)) |
 | set controllers | 0x800B07CC | CONTROLLER 1, s JUMP / BRAKE o, CONFIGURATION - A/B, VIBRATION - ON/OFF | configuration only (settings controller_config -> SessionConfig::alt_controls); one controller |
 | course select | 0x1E / 0xC | world name (0x100, 0x3C), RACE A/B, STUNT, BATTLE (0x9F, size 2, colour 1), course name (0xB4, size 1, colour 5) or "?" (colour 7); s MOVIE, x SELECT, o MUSIC (0xD2); camera mode 5 (0x80070E4C): eye (0xA000, (row * 10000 - 25000) * 32, -0x28000) looking along +z, angles fixed at 0 on event 0x1E (0x80072394) | yes; CROSS on an open race course restarts on it; MOVIE / MUSIC greyed; the backdrop (sky, ship) and the world's 3D prop not drawn |
-| course menu | course / 0 / 0x800B0EA2 = 0 | 1 PLAYER RACE - n LAPS, 2 PLAYER RACE - n LAPS, COURSE SECRETS, GAME MENU, BACK TO MAIN MENU; course name (0x1E0, 0x1E, right), BEST LAP m:ss.hh (record / 3 = hundredths), SELECT bottom left; camera mode 1 (orbit, DAT chunks 0x0B / 0x0A) | yes (2, 3 greyed); BACK TO MAIN MENU restarts on the title |
+| course menu | course / 0 / 0x800B0EA2 = 0 | 1 PLAYER RACE - n LAPS, 2 PLAYER RACE - n LAPS, COURSE SECRETS, GAME MENU, BACK TO MAIN MENU; course name (0x1E0, 0x1E, right), BEST LAP m:ss.hh (the save's record / 3 = hundredths), SELECT bottom left; LEFT / RIGHT on the race rows: laps 1..10 (0x800E038C) once the course is won (flags & 3 == 3); camera mode 1 (orbit, DAT chunks 0x0B / 0x0A) | yes (2, 3 greyed); BACK TO MAIN MENU restarts on the title (or on a course the progression check opened) |
 | game menu | course / 0 / (BACK shown) | ADVENTURE, GAME STATUS, CHANGE COURSE, TOURNAMENT - 1 PLAYER | CHANGE COURSE only |
 | world list | course / 0 / 1 | the 7 world names (cursor on the current world) | yes; + SWEETUMS (world 7) while unlock_all |
 | course list | course / 0 / 2 | the world's 4 courses, the cursor's " - RACE A" etc., "?" when closed, the current course greyed | yes; stunt / battle greyed |
@@ -221,12 +221,12 @@ local, not committed).
 | pause | race / 0x800B0BD0 != 0 / 0x800B0E78 = 0 | CONTINUE, RETIRE, RESTART, ADJUST SOUND; PAUSED (0x1E0, 0x1E, right; 0x800B07D0 % 60 < 45), SELECT (0x20, 0xD2) | yes (virtual time and the XA music paused) |
 | retire / restart | 0x800B0E78 = 1 / 0xB | YES, NO (opens on NO); YES = game mode 0 (course menu) / the same race again | yes |
 
-Unlocks (the save block 0x800E0190..; phase 2): characters 0x800E02BC, the
-vehicles won per character 0x800E02C0 + 8 * c, courses bit 0 of
-0x800E0194 + 0x20 * world + 8 * type + 2. The oracle's save [RAM]:
-characters 0..7, each only its own vehicle, worlds 0..5 open, world 6
-0x60 (closed), worlds 7 / 8 0xFF. The port: settings `unlock_all` (default
-true until the save file) or that state.
+Unlocks: the save block ("Saves" below): characters 0x800E02BC, the
+vehicles won per character 0x800E02C0 + 8 * c, courses bit 0 of 0x800E0196 +
+0x20 * world + 8 * slot. A new game: characters 0..7, each its own vehicle,
+worlds 0..5 open, the secret courses closed (0x160 / 0x120), worlds 7 / 8
+0x1FF (= the oracle's save). The port: save.rs; `unlock_all` shows the
+game's everything code applied to a copy.
 
 ## Checks
 - GP0: the port's font sprites (position, UV, CLUT, raw / modulated) equal
@@ -244,9 +244,193 @@ true until the save file) or that state.
 
 ## Not ported (listed)
 MEET THE MUPPETS (game mode 0xD, camera mode 6: the 5 x 5 character
-gallery, TEST DRIVE, voice clips FUN_80060580), GAME STATUS, TOURNAMENT /
-ADVENTURE (phase 2), 2 PLAYER RACE (phase 7), SECRETS, stunt and battle
-courses (phases 4 / 5), MEMORY CARD and GAME STATUS CHANGED - SAVE GAME
-(phase 2), ADJUST SCREEN, VIBRATION, MOVIE / MUSIC in the course select
-(phases 9 / 8), the fades and LOADING screen between screens, the attract
-demo.
+gallery, TEST DRIVE, voice clips FUN_80060580), GAME STATUS and ADVENTURE
+("Not ported in phase 2" below), 2 PLAYER RACE (phase 7), SECRETS, stunt and
+battle courses (phases 4 / 5), MEMORY CARD and GAME STATUS CHANGED - SAVE
+GAME (the port autosaves), ADJUST SCREEN, VIBRATION, MOVIE / MUSIC in the
+course select (phases 9 / 8), the fades and LOADING screen between screens,
+the attract demo.
+
+
+# Saves (Session 7, phase 2)
+
+Port: port/crates/mr-sim/src/save.rs (`SaveBlock`: the block in the game's
+layout, new game, progression, records, leagues, files),
+port/crates/mr-bevy/src/save.rs (save.bin, autosave, the race's effects).
+Check: tools/oracle/save_check.py `unlock` (analysis/s7/saves, local).
+
+## The block [CODE 8008f448, 8008efac, 8008be68, 80082708, 8008c4ac, 80074a94] [RAM]
+0x800E0190..0x800E039C (0x20C bytes); offsets from 0x800E0190:
+| offset | contents |
+|---|---|
+| 0x000 + 0x20 w + 8 s | 9 worlds x 4 slots (the world / course table 0x800AC1E4): i32 lap record (300 = 1 s; new game: 0x80023678), +4 the record holder's character, +5 vehicle, +6 u16 flags |
+| 0x120 + 2 l | 4 leagues (RACE LEAGUE A, B, BATTLE LEAGUE, RANDOM RACE LEAGUE): flags (1 open, 2 won), +1 best points (0x0F new) |
+| 0x128 | 0x800E02B8: leagues + courses complete, 0..31 (the card title's "nn/31" [INFER]) |
+| 0x129 | 0x800E02B9: bit 0 DISCO won, bit 1 everything (both lead to course 0x1D, the secret screen: SPEEDWAY, RALLY, GLACIER / the arenas) |
+| 0x12A | 0x800E02BA: the best start boost so far |
+| 0x12C | u32 characters collected |
+| 0x130 + 8 c | 2 x u32: vehicles won with character c (25 characters) |
+| 0x1F8 + l | laps per league; 0x1FC / 0x1FD laps of a 1 / 2 player race (1..10, 3 new) |
+| 0x1FE / 0x1FF | MEET THE MUPPETS cursor |
+| 0x200 / 0x201 | music / sound volume (0..15, 12) |
+| 0x202 / 0x203 | controller configuration per pad (1 = B) |
+| 0x204 / 0x205 | vibration (1) |
+| 0x206 / 0x207 | screen offset (main() sets 8, 2 after the new game) |
+| 0x208 / 0x209 | course select cursor; 0x20A AI catch-up 8 (/16) |
+
+Course flags: 0x001 open, 0x002 won (player 1 first in a plain race: race
+flags 0, or DISCO's 8; arenas at 0x8007916C), 0x004 / 0x020 / 0x080 the
+course's secret pickups taken (FUN_8008C4AC marks them gone on the next
+load), 0x008 / 0x010 more per-course secrets, 0x040 no boss here (none, or
+beaten in a challenge: race flag 0x10 also collects the character), 0x100
+set on every non-arena slot at a new game (an arena's by its game mode 7
+win); 0x1FF = complete.
+
+A new game (FUN_8008F448, at boot): the records and one random racer per
+course as holder (rand() / 0x2AB), worlds 0..5 open, world 6 0x20 (+0x40,
++0x100), worlds 7 / 8 0x1FF, leagues 0..2 open, characters 0..7 with their
+own vehicles, volumes 12, laps 3, catch-up 8. The oracle's block equals the
+port's new game except the random holders (mr-sim test
+`new_game_matches_oracle_ram`).
+
+## The memory card [RAM: the card file's block = the oracle's RAM]
+One 8 KiB block "BASLUS-01237..." titled "MUPPET RACEMANIA: nn/31:..":
+offset 0x200 the u32 sum of the block's 131 words, 0x204 the block. The
+"GAME STATUS CHANGED - SAVE GAME" row appears while the first 0x1F8 bytes
+(0x800B07DE) differ from the copy taken at the last load / save (0x800D8420;
+main() compares between course sessions, the cheat codes too).
+
+## What changes it [CODE]
+- Each lap end (FUN_80082708 @0x80082E80): a human kart's lap under the
+  course record (no race flag 2) takes the record and holder.
+- The finish (@0x800832EC): player 1 first, 1 player, plain race: won bit.
+- Specials (FUN_8006B828) hitting a kart: the special user's character wins
+  the hit kart's vehicle (0x800E02C0; sound 0x24 when new).
+- FUN_8008BE68, run by main() between course sessions and after each
+  1-player league race: a won slot opens the next slot of its world (race A
+  -> race B -> arena -> stunt); all six worlds' slot k open -> league k
+  open; leagues A and B won -> the random league; bit 8 on all 24 courses of
+  worlds 0..5 -> world 6 slot 0 (OVAL), bit 0x10 -> slot 1, bit 0x20 ->
+  slot 2 and character 24, everything 0x127 + leagues A, B and battle won ->
+  slot 3 (DISCO); DISCO won -> 0x800E02B9 bit 0; all 28 courses 0x1FF and
+  the leagues won with 30+ (battle 20+) points -> bit 1; 0x800E02B8 counted.
+  It returns the course it opened (0x800B0800); outside a league main() then
+  loads that course instead of the one asked for.
+- FUN_8008ACE4 at a course load: race laps back to 3 unless the course is
+  won; leagues' laps likewise unless won.
+- The league end (below), the menus (laps, volumes, controller
+  configuration), the cheat codes (FUN_8008F884, not ported).
+
+## The port
+- save.bin beside the executable (`--save PATH`): "MRMSAVE1", u32 version
+  1, u32 checksum (the card's word sum), the 0x20C bytes. A bad file is kept
+  as save.bin.bad and a new game starts.
+- No save.bin: the game's save from a memory card image is imported read
+  only (`saves/card1.mcd` beside the exe, psxrecomp's layout, or
+  `--import-card PATH`), else a new game (rand() seeded from the clock).
+- Autosave: written whenever the block changes (records and won bits during
+  the race, vehicles won, the progression check at each course change, laps,
+  the league end); options stay in settings.txt and are mirrored into the
+  block when written. No MEMORY CARD page, no "SAVE GAME" row.
+- Course changes run the progression check first; a newly opened race
+  course the port runs is loaded instead (as main() does).
+- `unlock_all` (default false): the menus show the everything code applied
+  to a copy; save.bin is unchanged.
+- Tool runs (routes, replays, shots) and tests never write it.
+
+## Checks
+- `save_check.py unlock`: slot 1 (DOCK's course menu) with DOCK's record
+  poked to 3000 shows BEST LAP 0:10.00 [SHOT analysis/s7/saves/
+  unlock_coursemenu.png]; with every world 0..5 course's flag 8, DOCK won
+  and ISLAND closed, BACK TO MAIN MENU: main() ran FUN_8008BE68, ISLAND
+  reopened, OVAL opened, the game loaded course 26 (OVAL) instead of the
+  title and set 0x800B07DC; the block after equals the port's `progression`
+  on the poked block, which returns 0x1A (mr-sim test
+  `progression_matches_oracle`).
+
+# Leagues (TOURNAMENT - 1 PLAYER; Session 7, phase 2)
+
+Port: port/crates/mr-bevy/src/league.rs, menus.rs (`Leagues`, `LeagueMenu`,
+`LeaguePoints`, `LeagueQuit`, `Standings`), mr-sim save.rs (`race_points`,
+`table_order`, `league_end`). Check: save_check.py `league`.
+
+## The game's flow [CODE 80074a94, 8008b9ac, 8008baf8, 8008c4ac, 800597cc, 8004eedc, 80050440] [SHOT][GPU]
+- Main menu row 3 -> title sub-state 2 (FUN_80050440): "RACE LEAGUE A - n
+  LAPS", "RACE LEAGUE B - n LAPS", "BATTLE LEAGUE", "RANDOM RACE LEAGUE - n
+  LAPS", "?" while closed (league flags bit 0); LEFT / RIGHT laps 1..10
+  (0x800E0388 + l) once the league is won (not the battle league); CROSS on
+  an open league: 0x800B07E4 = 1, 0x800C1E48 = league, FUN_8008B9AC courses
+  0x800C1DE8 (leagues 0..2: 0x800AD078 + 6 l = A: BOG, HAPPY, PARK, LONDON,
+  DOCK, BASE; B: GHOST, GALLERY, NEW_YORK, GRAVE, ISLAND, CAPE; battle: the
+  arenas; random: six distinct of A + B, rand() / 0xAAB), load course 0.
+- The character select there; CROSS -> FUN_8008BAF8: the player's kart and
+  five opponents drawn as a race draws them (a racer no one has, its own
+  vehicle), points 0x800C1E00 cleared; then the league menu (0x800B0EA2 =
+  4): "START RACE n" (n = race + 1; START TIE-BREAKER / START BATTLE),
+  POINTS (0xEA2 = 3, FUN_8004EEDC: per kart in table order its swinging
+  face, its points (size 1, colour 5 the leader, 6 others, 7 zero), "P1"
+  blinking under the player's, 0x40 apart from 0x60), QUIT TOURNAMENT
+  (0xEA2 = 5, YES / NO opening on NO: 0x800B07E4 = 0, the course menu).
+- The race: the league's karts, the grid drawn (*rng % 6, then in order),
+  the league's laps.
+- Results (game mode 10): CROSS -> game mode 0x11 (FUN_8008C4AC computes
+  the points: per kart in finishing order (0x800D8F94) place 3 / 2 / 1 / 0,
+  +1 the race's best lap (+0x384 == 0x800B0DD0), +1 the best start
+  (0x800B0E8C), +1 the most hits (+0x492, ties to the fewest taken +0x494);
+  the table 0x800C1E30 by points, a bubble sort keeping slot order among
+  equals). Page 1 RACE POINTS (FUN_80051698 case 0x11): columns 62 px apart
+  centred on 0x100 in finishing order: 1ST..6TH (y 0x38, the player's
+  blinking in colour 5), the four points (y 0x78 + 15 r, size 2, colour 5,
+  a 0 in colour 7 semi-transparent), the total (0xB8, colour 6); the
+  heading ". . . POSITION . . ." (then BEST LAP, BEST START, MOST HITS, one
+  a second) on its row, hiding the two middle columns' values there; course
+  name bottom right; "x NEXT". CROSS -> page 2 TOURNAMENT POINTS: the table
+  68 px apart (1ST.. y 0x4C, points "%i%i" y 0xA4 colour 7), "AFTER n
+  RACE(S)" / FINAL TABLE; BACK -> page 1; CROSS -> the next course
+  (0x800C1DEE + 1) and its league menu. 8007916C also runs FUN_8008BE68
+  after each 1-player league race.
+- After the sixth: a tie for first with a human -> a tie-break race on
+  course 0x1A / 0x1B (START TIE-BREAKER, the tied karts); else course 0x1A
+  (0x1B battle) in game mode 0x12, the presentation; there (FUN_8008C4AC
+  @0x8008CE98) the player first in the table wins the league (bit 1), more
+  points than its best are kept (fanfare 0x24 for a new win or 30+ /
+  battle 20+).
+- In the oracle run [SHOT analysis/s7/saves]: the league page, BOG's
+  character select, the league menu "START RACE 1", POINTS, results, RACE
+  POINTS and TOURNAMENT POINTS "AFTER 1 RACE".
+
+## The port
+- The league crosses the per-course restarts in league.txt beside save.bin
+  (`--league`); RETIRE in a league race or QUIT TOURNAMENT ends it.
+- Standings over the course's orbit (the game lines the karts up in 3D);
+  after the sixth race FINAL TABLE, then the result into the save and the
+  title.
+- Not ported: the karts lined up behind the standings, the tie-break race
+  (the port's table keeps the player first among equals), the presentation
+  on course 0x1A, BATTLE LEAGUE (phase 4), 2 player leagues.
+
+## Checks
+- `save_check.py league` (one run; the player's kart marked finished 300
+  VBlanks after GO): the game's points and table equal `race_points` /
+  `table_order` on the karts' ranks, best laps, hits and start mask (mr-sim
+  test `league_points_match_oracle`; place points only in that run: no
+  laps, no hits, no best start).
+- GP0: the font sprites of the league page, the league menu, its POINTS,
+  RACE POINTS and TOURNAMENT POINTS equal the oracle frames' (position, UV,
+  CLUT, raw; mr-bevy test `menus::tests::gp0_league_pages`, the frame
+  counter searched).
+- In the port (analysis/s7/saves/port): the league menu, POINTS with the
+  faces, a league race with the league's karts.
+
+# Not ported in phase 2 (listed)
+- GAME STATUS (FUN_8004A878, 5 KB: the 7 x 4 course grid with "?" / done
+  marks and icons, a cursor with the course's name, record, holder and
+  secrets, the leagues' results, "nn/31").
+- ADVENTURE (0x800B07E6: a course's boss / character to collect as an
+  extra kart, race flag 0x10 "BEAT x" challenges collecting characters,
+  "YOU BEAT" / "BEAT YOU" on the results): with phase 6 (challenge / boss
+  races).
+- The secret pickups' bits (0x4 / 0x20 / 0x80 / 0x8 / 0x10) as races set
+  them; the cheat codes (FUN_8008F884: everything, all characters, ...).
+- The "new course" announcement after a league race (0x800B0801,
+  FUN_8004CEA0) and the course intro movies (phase 9).

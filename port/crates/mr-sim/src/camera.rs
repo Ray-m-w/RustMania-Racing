@@ -143,6 +143,13 @@ impl CameraTables {
     /// LZCR counts leading sign bits, so a negative input behaves like the
     /// hardware does (the camera only passes non-negative sums).
     pub fn sqrt0(&self, a: i32) -> i32 {
+        if a < 0 {
+            // A sum past 2^31 (phase 6: ADVENTURE's first frame, the camera
+            // still at the session's origin with the kart far away): the
+            // game's table read lands before the table (no defined value);
+            // the port takes the unsigned root, a far distance [INFER].
+            return (a as u32 as f64).sqrt() as i32;
+        }
         let lz = if a >= 0 { (a as u32).leading_zeros() } else { (!(a as u32)).leading_zeros() } as i32;
         if lz == 32 {
             return 0;

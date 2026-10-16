@@ -147,7 +147,16 @@ fn panic_text(msg: String) -> String {
     }
 }
 
-fn run(info: &CourseInfo, title: bool, hz: u8, seed: u32, long: bool) -> Outcome {
+/// Phase 6: the session kind besides races: ADVENTURE (game mode 0xB) or
+/// the "BEAT x" race (race flag 0x10 against the course's character).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Race,
+    Adventure,
+    Beat,
+}
+
+fn run(info: &CourseInfo, title: bool, hz: u8, seed: u32, long: bool, kind: Kind) -> Outcome {
     let name = if title { "TITLE".to_string() } else { info.name.clone() };
     let mut out = Outcome { course: name, hz, seed, ticks: 0, clock: 0, finished: false, mode: 0, mixed: false, panic: None };
     let mut disc = mr_disc::Disc::open_default().expect("open the owner's disc");
@@ -158,6 +167,26 @@ fn run(info: &CourseInfo, title: bool, hz: u8, seed: u32, long: bool) -> Outcome
     if !title {
         cfg.rand_seed = rand_seed;
         cfg.rng_start = rng_start;
+        // ADVENTURE: the save's secrets drawn (none / some / all found)
+        let flags = [0x101u16, 0x13D, 0x1FF][r.below(3) as usize];
+        match kind {
+            Kind::Race => {}
+            Kind::Adventure => {
+                cfg.adventure = true;
+                cfg.course_flags = flags;
+                cfg.characters = 0xFF;
+                cfg.doozer_vehicle = [6, 25, 27][r.below(3) as usize];
+            }
+            Kind::Beat => {
+                let c = (8 + r.below(16)) as u8;
+                cfg.race_flags = 0x10;
+                cfg.opponents = 1;
+                cfg.lineup = Some([(c, mr_sim::ai::character_entry(&mr_sim::tables::ExeImage::parse(&disc.read("SLUS_012.37").expect("exe")).expect("exe"), c).1.min(30)); 5]);
+                cfg.draw_grid = true;
+                cfg.tagged = c as i8;
+                cfg.laps = 3;
+            }
+        }
     }
     let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| Session::with_config(&mut disc, cfg)));
     let mut s = match made {
@@ -234,6 +263,7 @@ fn main() {
     let mut first = 1u32;
     let mut long_n = 1u32;
     let mut hzs = vec![30u8, 60];
+    let mut kind = Kind::Race;
     let mut names = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -242,6 +272,8 @@ fn main() {
             "--first" => first = it.next().and_then(|x| x.parse().ok()).expect("--first S"),
             "--long" => long_n = it.next().and_then(|x| x.parse().ok()).expect("--long N"),
             "--hz" => hzs = vec![it.next().and_then(|x| x.parse().ok()).expect("--hz 30|60")],
+            "--adventure" => kind = Kind::Adventure,
+            "--beat" => kind = Kind::Beat,
             _ => names.push(a.to_ascii_uppercase()),
         }
     }
@@ -250,6 +282,9 @@ fn main() {
     // location for the report instead of printing each.
     std::panic::set_hook(Box::new(|info| {
         let at = info.location().map(|l| format!("{}:{}", l.file(), l.line())).unwrap_or_default();
+        if std::env::var("MR_FUZZ_BT").is_ok() {
+            eprintln!("{}", std::backtrace::Backtrace::force_capture());
+        }
         LAST_PANIC.with(|p| *p.borrow_mut() = Some(at));
     }));
     let mut disc = mr_disc::Disc::open_default().expect("open the owner's disc");
@@ -284,7 +319,7 @@ fn main() {
             std::thread::spawn(move || loop {
                 let job = jobs.lock().unwrap().pop();
                 let Some((c, t, h, seed, long)) = job else { break };
-                let o = run(&c, t, h, seed, long);
+                let o = run(&c, t, h, seed, long, kind);
                 if let Some((tick, m)) = &o.panic {
                     eprintln!("PANIC {} {} Hz seed {}: tick {tick}: {m}", o.course, o.hz, o.seed);
                 }

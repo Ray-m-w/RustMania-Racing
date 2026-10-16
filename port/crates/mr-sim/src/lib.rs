@@ -46,6 +46,7 @@ pub mod render;
 pub mod scenery;
 pub mod session;
 pub mod sound;
+pub mod stunt;
 pub mod tables;
 pub mod title;
 pub mod update;

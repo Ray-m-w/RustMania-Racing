@@ -1,0 +1,69 @@
+{
+ "name": "stunt_finish_fx",
+ "slot": 11,
+ "state": "MOUNTAIN_grid.pst",
+ "end_vb": 620,
+ "steps": [
+  [
+   0,
+   "cross"
+  ]
+ ],
+ "pokes": [
+  [
+   2148282536,
+   200960,
+   4,
+   1
+  ],
+  [
+   2148282540,
+   4294508480,
+   4,
+   1
+  ],
+  [
+   2148282544,
+   4294810784,
+   4,
+   1
+  ],
+  [
+   2148282550,
+   615,
+   2,
+   1
+  ],
+  [
+   2148283280,
+   200960,
+   4,
+   1
+  ],
+  [
+   2148283284,
+   4294508480,
+   4,
+   1
+  ],
+  [
+   2148283288,
+   4294810784,
+   4,
+   1
+  ],
+  [
+   2148283704,
+   349,
+   2,
+   1
+  ],
+  [
+   2148283758,
+   1,
+   1,
+   1
+  ]
+ ],
+ "note": "Session 7 phase 3: MOUNTAIN grid (slot 11 = analysis/states/courses/MOUNTAIN_grid.pst), the kart poked before the finish gate (tools/oracle/routes/stunt_finish_pokes.json), CROSS held"
+}

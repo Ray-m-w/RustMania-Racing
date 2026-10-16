@@ -63,6 +63,10 @@ pub struct RaceGlobals {
     pub cup: i8,
     /// 0x800B0E8C: bit per kart slot with the best start boost at GO.
     pub start_best_mask: u8,
+    /// 0x800B0AF0: VBlanks since the results began (FUN_8005C2EC adds dt;
+    /// 0 when the race goes to mode 10): the results' "PRESS START" blinks
+    /// with it.
+    pub results_clock: i32,
     /// Sound calls of the frame and the listener (crate::sound, track D).
     pub sound: crate::sound::SoundState,
     /// Item state: pickups, projectiles, the special in progress
@@ -204,6 +208,7 @@ impl RaceGlobals {
             difficulty: m.u8(0x800E_039A),
             cup: m.i8(0x800B_0E38),
             start_best_mask: m.u8(0x800B_0E8C),
+            results_clock: m.i32(0x800B_0AF0),
             sound: Default::default(),
             items: crate::items::ItemState::read(m),
             stack: StackSlots::default(),

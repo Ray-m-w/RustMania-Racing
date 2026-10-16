@@ -52,8 +52,7 @@ pub struct Course {
     pub length: Option<u16>,
     pub triggers: Vec<Trigger>,
     /// Object lists only the stunt courses have (chunks 0x08 / 0x17 read by
-    /// FUN_80062E38 at 0x800D1C68 / 0x800D1CA4, chunk 0x14 read by
-    /// FUN_800628FC at 0x800D1C98): their code is `unreachable_in_scope!`.
+    /// FUN_80062E38 at 0x800D1C68 / 0x800D1CA4).
     pub has_other_objects: bool,
     /// Jets, turntables, hooks (objects.rs, hooks.rs).
     pub objects: crate::objects::CourseObjects,
@@ -61,6 +60,23 @@ pub struct Course {
     /// path) and 0x0B (0x800D1C74, the eye path), world units >> 5.
     pub path_a: Vec<[i32; 3]>,
     pub path_b: Vec<[i32; 3]>,
+    /// The stunt courses' lists (stunt.rs): gates (chunk 0x04, 0x800D1C58:
+    /// point pairs), the strip's two edges (0x0F / 0x10, 0x800D1C84 /
+    /// 0x800D1C88) and the pipes (0x14, 0x800D1C98: groups of 5 points).
+    /// `None` = the chunk is absent (a null pointer in the game).
+    pub gates: Option<Vec<[i32; 3]>>,
+    pub strip: Option<(Vec<[i32; 3]>, Vec<[i32; 3]>)>,
+    pub pipes: Option<Vec<[i32; 3]>>,
+    /// Mirror planes (FUN_80062E38): chunk 0x08 (0x800D1C68, wall
+    /// segments, 3 points each) and 0x17 (0x800D1CA4, floor triangles).
+    pub mirror_walls: Option<Vec<[i32; 3]>>,
+    pub mirror_floors: Option<Vec<[i32; 3]>>,
+    /// Paired triggers (chunk 0x0D, 0x800D1C7C): (point, heading point)
+    /// pairs, two per two-way link (FUN_80061F08 / FUN_80061FC0).
+    pub paired: Option<Vec<[i32; 3]>>,
+    /// The start / finish banners (chunk 0x09, 0x800D1C6C: point pairs;
+    /// FUN_80034CE0).
+    pub banners: Option<Vec<[i32; 3]>>,
 }
 
 /// Where the game keeps the TER sections in RAM. The kart record stores RAM
@@ -111,7 +127,12 @@ pub mod chunk {
     pub const TRIGGERS: i16 = 0x15;
     /// Lists read by FUN_80062E38 (0x800D1C68, 0x800D1CA4) and FUN_800628FC
     /// (0x800D1C98): stunt courses only.
-    pub const OTHER: [i16; 3] = [0x08, 0x14, 0x17];
+    pub const OTHER: [i16; 2] = [0x08, 0x17];
+    /// Stunt courses (stunt.rs): gates, the strip's edges, pipes.
+    pub const GATES: i16 = 0x04;
+    pub const STRIP_A: i16 = 0x0F;
+    pub const STRIP_B: i16 = 0x10;
+    pub const PIPES: i16 = 0x14;
 }
 
 pub struct World {
@@ -225,7 +246,15 @@ impl Course {
             }).collect()).unwrap_or_default()
         };
         let (path_a, path_b) = (pts(0x0A), pts(0x0B));
-        Course { grid, look_points, course_points, finish, length, triggers, has_other_objects, objects, path_a, path_b }
+        let opt = |id: i16| find(id).map(|_| pts(id));
+        let gates = opt(chunk::GATES);
+        let strip = match (opt(chunk::STRIP_A), opt(chunk::STRIP_B)) {
+            (Some(a), Some(b)) => Some((a, b)),
+            _ => None,
+        };
+        let pipes = opt(chunk::PIPES);
+        let (mirror_walls, mirror_floors, paired, banners) = (opt(0x08), opt(0x17), opt(0x0D), opt(0x09));
+        Course { grid, look_points, course_points, finish, length, triggers, has_other_objects, objects, path_a, path_b, gates, strip, pipes, mirror_walls, mirror_floors, paired, banners }
     }
 }
 

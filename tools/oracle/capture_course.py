@@ -81,19 +81,19 @@ def read_facts(o):
     return out
 
 
-def run(name, end_vb=3400, grid=True):
+def run(name, end_vb=3400, grid=True, steps=None):
     outdir = os.path.join(ROOT, "analysis", "oracle", "courses", name)
     os.makedirs(outdir, exist_ok=True)
     course = gc.COURSES[name][0]
     grid_slot = gc.GRID_SLOTS.get(name, gc.SCRATCH)
     route = {"name": "course_" + name.lower(), "slot": gc.SCRATCH, "state": "%s_menu.pst" % name,
-             "end_vb": end_vb, "steps": ROUTE_STEPS}
+             "end_vb": end_vb, "steps": steps or ROUTE_STEPS}
     with OracleLock():
         o, b = Oracle(), Bridge()
         warm_up(o, b, 2)
         gc.install(name, "menu", gc.SCRATCH)
         b.set_regions(COURSE_REGIONS)
-        b.arm_route([(s[0], active_high(s[1]), 0x80, 0x80, 0x80, 0x80) for s in ROUTE_STEPS], end_vb=end_vb)
+        b.arm_route([(s[0], active_high(s[1]), 0x80, 0x80, 0x80, 0x80) for s in route["steps"]], end_vb=end_vb)
         gen0, seq0 = b.restore_gen, b.seq
         o.q("cdrom_sector_history_clear")
         o.load_state(gc.SCRATCH)
@@ -117,7 +117,7 @@ def run(name, end_vb=3400, grid=True):
                 if g == gen and vbr not in rows:
                     rows[vbr] = data
             vb = b.vb_since_restore
-            if race_vb is None and vb > 130 and int.from_bytes(o.read(0x800B0D46, 2), "little") == 1:
+            if race_vb is None and vb > 130 and int.from_bytes(o.read(0x800B0D46, 2), "little") in (1, 3):
                 race_vb = vb
             if grid and race_vb is not None and grid_vb is None and vb >= race_vb + 60:
                 grid_vb = b.vb_since_restore
@@ -166,7 +166,13 @@ def run(name, end_vb=3400, grid=True):
 if __name__ == "__main__":
     a = sys.argv[1:]
     end = int(a[a.index("--end") + 1]) if "--end" in a else 3400
-    m = run(a[0].upper(), end_vb=end, grid="--no-grid" not in a)
+    # --hold SPEC VB: from VB on, hold SPEC (e.g. "cross") to the end
+    # (Session 7: the stunt trial, the player driving).
+    steps = None
+    if "--hold" in a:
+        i = a.index("--hold")
+        steps = ROUTE_STEPS + [[int(a[i + 2]), a[i + 1]]]
+    m = run(a[0].upper(), end_vb=end, grid="--no-grid" not in a, steps=steps)
     print(json.dumps({k: m[k] for k in ("course", "first_vb", "last_vb", "race_vb", "grid_vb", "grid_slot")}),
           "missing", len(m["missing"]))
     print("xa", json.dumps(m["xa_delivered"]))

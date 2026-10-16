@@ -38,6 +38,7 @@ pub fn frame_clock(g: &mut RaceGlobals, karts: &mut [&mut KartState], best_start
     if g.hz60.beat() {
         rand();
     }
+    g.results_clock = g.results_clock.wrapping_add(g.dt);
 }
 
 /// 0x8005C4A8: GO. Human karts keep the boost they earned in the start game
@@ -176,8 +177,17 @@ pub fn race_progress(g: &RaceGlobals, w: &World, karts: &mut [&mut KartState], p
     if g.mode == 0xB || g.mode == 0x14 {
         return None;
     }
-    if g.race_flags & 1 != 0 || g.race_type == 3 {
-        crate::unreachable_in_scope!("race progress outside a plain race (time trial / flag 1)");
+    if g.race_flags & 1 != 0 {
+        crate::unreachable_in_scope!("race progress with race flag 1");
+    }
+    // Race type 3 (the stunt trial, stunt.rs): along the strip, then the
+    // ranking as a race's (0x800838A0).
+    if g.race_type == 3 {
+        if crate::stunt::strip_quads(w) == 0 || g.race_clock == 0 {
+            return None;
+        }
+        crate::stunt::progress(&mut *karts[pick], g, w);
+        return Some(rank(g, karts));
     }
     // Race type 2 (battles, the title's frontend course 0x1E): no course
     // progress; FUN_800834C0(1) ranks by +0x440, lowest first (0x80083A1C).
@@ -218,6 +228,11 @@ pub fn race_progress(g: &RaceGlobals, w: &World, karts: &mut [&mut KartState], p
             }
         }
     }
+    Some(rank(g, karts))
+}
+
+/// FUN_800834C0(0) and the position flash: returns the leader.
+fn rank(g: &RaceGlobals, karts: &mut [&mut KartState]) -> usize {
     // FUN_800834C0(0): bubble sort by progress, highest first (equal
     // neighbours swap).
     let n = karts.len();
@@ -233,7 +248,7 @@ pub fn race_progress(g: &RaceGlobals, w: &World, karts: &mut [&mut KartState], p
         karts[i].race_pos = rank as u8 + 1;
     }
     position_flash(g, karts);
-    Some(order[0].1)
+    order[0].1
 }
 
 /// 0x80083A60: a position change shows for 0x1E VBlanks (+0x4FF), the

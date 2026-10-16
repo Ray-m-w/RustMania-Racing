@@ -62,6 +62,10 @@ with OracleLock():
     warm_up(o, b, slot)
     end = max([s[0] for s in shots] + [st[0] for st in steps]) + 60
     b.arm_route([(vb, m, 0x80, 0x80, 0x80, 0x80) for vb, m in steps], end_vb=end)
+    # Session 7 (stunt trial): optional RAM pokes at the restore (5th arg,
+    # capture_poked.py's format).
+    if len(sys.argv) > 5:
+        b.arm_pokes([tuple(p) for p in json.load(open(sys.argv[5]))])
     gen = b.restore_gen
     o.load_state(slot)
     b.wait_restore(gen)

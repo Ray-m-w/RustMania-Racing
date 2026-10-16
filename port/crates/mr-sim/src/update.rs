@@ -1079,7 +1079,8 @@ pub fn kart_update_full(k: &mut KartState, others: &mut Others, g: &mut RaceGlob
             k.finished_time = k.finished_time.wrapping_add(dt);
         }
         if g.race_type == 3 {
-            unreachable_in_scope!("time-trial ghost FUN_8006F64C");
+            // FUN_8006F64C: the stunt course's strip quad (stunt.rs).
+            crate::stunt::strip_locate(k, w);
         }
         // 0x80067EC0: the time limits (race clock 300 a second: 179999 =
         // 10 minutes; a race (mode 1) ends for every kart still short of

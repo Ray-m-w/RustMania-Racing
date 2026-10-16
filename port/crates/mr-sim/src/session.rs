@@ -242,6 +242,13 @@ pub struct Session {
     /// found the load frame draws no FUN_8005C2EC rand() before the kart
     /// loop and the camera draws its own: kart-physics-ledger.md).
     pub camera_peek: bool,
+    /// Analysis (mr-course-check), for the next tick only: whether
+    /// FUN_8005C2EC's clock step runs at its start and whether the next
+    /// frame's runs at its end (captures whose VBlank samples fall either
+    /// side of the frame boundary: oracle MOUNTAIN). None: start only.
+    pub clock_plan: Option<(bool, bool)>,
+    /// With `clock_plan`'s end step: the dt it runs with (the next frame's).
+    pub clock_end_dt: Option<i32>,
     /// The BIOS rand() seed 0x80009010 (rand_seed() reads it).
     pub rand_state: u32,
     /// Session 7 (menus): the game state and menu row the camera sees
@@ -337,6 +344,8 @@ struct SessionCameraEnv<'a> {
     world: &'a World,
     rand_state: &'a mut u32,
     rng: &'a mut u32,
+    /// The stunt camera's write to the kart (+0x4A8, +0x4A9).
+    strip_out: Option<(u8, u8)>,
 }
 
 impl camera::CameraEnv for SessionCameraEnv<'_> {
@@ -396,6 +405,22 @@ impl camera::CameraEnv for SessionCameraEnv<'_> {
         let c = &self.world.course;
         let pts = if chunk == 0x0A { &c.path_a } else { &c.path_b };
         crate::objects::path_lerp(pts, 0, 0, phase, true)
+    }
+
+    fn strip_project(&mut self, x5: i32, z5: i32, quad: i16) -> Option<([i32; 3], [i32; 3], i16)> {
+        crate::stunt::strip_project(self.world, x5, z5, quad)
+    }
+
+    fn strip_point(&mut self, phase: i32) -> Option<([i32; 3], [i32; 3])> {
+        crate::stunt::strip_point(self.world, phase)
+    }
+
+    fn stunt_dist(&mut self) -> (i32, i32) {
+        crate::stunt::camera_consts(self.world)
+    }
+
+    fn strip_kart(&mut self, along: u8, across: u8) {
+        self.strip_out = Some((along, across));
     }
 
     fn rng_byte(&mut self) -> u8 {
@@ -495,11 +520,15 @@ impl Session {
         let title_data = if title { Some(Box::new(crate::title::TitleData::load(disc, &world).map_err(SessionError::Disc)?)) } else { None };
         let n = if title { crate::title::TITLE_KARTS } else { 1 + cfg.opponents as usize };
         let race_type = world.info.race_type;
-        if world.info.mode != 1 && !title {
+        // Race courses (mode 1) and the stunt courses' 1 PLAYER STUNT TRIAL
+        // (race type 3, mode 3: one kart, FUN_8008C4AC).
+        let stunt = world.info.mode == 3;
+        if world.info.mode != 1 && !stunt && !title {
             return Err(SessionError::OutOfScope(format!("course {} is not a race course (mode {})", world.info.name, world.info.mode)));
         }
+        let n = if stunt { 1 } else { n };
         let race_flags = if title { crate::title::TITLE_RACE_FLAGS } else { cfg.race_flags };
-        let mode = if title { crate::title::TITLE_MODE } else { 1 };
+        let mode = if title { crate::title::TITLE_MODE } else { world.info.mode };
         let setup = RaceSetup { mode, race_type, race_flags, challenge: 0, humans: 1, karts: n as i16 };
         let mut rand_state = cfg.rand_seed;
         let mut globals = RaceGlobals {
@@ -508,8 +537,9 @@ impl Session {
             race_clock: 0,
             // FUN_8008C4AC @0x8008DA4C: 300 + 180 VBlanks to GO (none on
             // the title: 0x800B0C70 = 0 for course 0x1E).
-            countdown: if title { 0 } else { crate::race::COUNTDOWN_START },
-            countdown_len: 300,
+            // Mode 3 (the stunt trial): 0x78 + 180 (0x8008DA2C).
+            countdown: if title { 0 } else if stunt { 0x78 + 180 } else { crate::race::COUNTDOWN_START },
+            countdown_len: if stunt { 0x78 } else { 300 },
             race_flags,
             challenge: 0,
             race_type,
@@ -531,6 +561,7 @@ impl Session {
             difficulty: cfg.difficulty,
             cup: cfg.cup,
             start_best_mask: 0,
+            results_clock: 0,
             sound: Default::default(),
             items: Default::default(),
             stack: Default::default(),
@@ -546,7 +577,7 @@ impl Session {
         // FUN_8008C4AC: the first human's grid slot (*rng++ % karts), the
         // other karts on the following slots; with no opponents the
         // configured slot.
-        let grid0 = if n > 1 && (cfg.lineup.is_none() || cfg.draw_grid) { crate::ai::grid_start(&mut globals, &world, n as i16) } else { cfg.grid };
+        let grid0 = if (n > 1 || stunt) && (cfg.lineup.is_none() || cfg.draw_grid) { crate::ai::grid_start(&mut globals, &world, n as i16) } else { cfg.grid };
         // The title's kart 0 is an AI kart like the others (FUN_8008C4AC
         // @0x8008DCC4: the same draw for every slot).
         let mut title_first: Option<(u8, u8)> = None;
@@ -606,16 +637,17 @@ impl Session {
                     character_model: cpath,
                 });
             }
-            // FUN_8009192C(&kart0, karts): every kart's special-move roll
-            // (not on the title: the course-0x1E branch skips it).
-            if !title {
-                let mut ks: Vec<KartState> = std::iter::once(kart.clone()).chain(others.iter().map(|o| o.kart.clone())).collect();
-                crate::ai::race_load_roll(&mut ks, &mut globals, &world, n as i16);
-                let mut it = ks.into_iter();
-                kart = it.next().unwrap();
-                for (o, k) in others.iter_mut().zip(it) {
-                    o.kart = k;
-                }
+        }
+        // FUN_8009192C(&kart0, karts): every kart's special-move roll (not
+        // on the title: the course-0x1E branch skips it; the stunt trial's
+        // single kart too: oracle MOUNTAIN, +0x47A = 3000).
+        if !title && (n > 1 || stunt) {
+            let mut ks: Vec<KartState> = std::iter::once(kart.clone()).chain(others.iter().map(|o| o.kart.clone())).collect();
+            crate::ai::race_load_roll(&mut ks, &mut globals, &world, n as i16);
+            let mut it = ks.into_iter();
+            kart = it.next().unwrap();
+            for (o, k) in others.iter_mut().zip(it) {
+                o.kart = k;
             }
         }
         let player_ai = crate::ai::AiState::from_record(&record);
@@ -630,7 +662,7 @@ impl Session {
         let camera_globals = CameraGlobals {
             dt: if cfg.logic_hz == 60 { 1 } else { 2 },
             countdown: 0,
-            countdown_len: 300,
+            countdown_len: if stunt { 0x78 } else { 300 },
             laps: cfg.laps,
             finish_gate_a: 0,
             finish_gate_b: 0,
@@ -639,7 +671,7 @@ impl Session {
             alt_rule: 0,
             overhead: cfg.cup,
             num_karts: n as i16,
-            cutscene_sync: false,
+            cutscene_sync: crate::stunt::strip(&world).is_some(),
             scene_center: [0; 3],
             menu_row: 0,
         };
@@ -669,6 +701,8 @@ impl Session {
             load_frame: true,
             rng_skip_items: None,
             camera_peek: false,
+            clock_plan: None,
+            clock_end_dt: None,
             camera_menu: None,
 
             rand_state,
@@ -765,7 +799,7 @@ impl Session {
             kart: ck,
             globals: CameraGlobals { dt, num_karts: 1, countdown: 0, game_state: self.camera_menu.map_or(0, |m| m.0), menu_row: self.camera_menu.map_or(0, |m| m.1), ..self.camera_globals.clone() },
         };
-        let mut env = SessionCameraEnv { peek_rand: false, world: w, rand_state: &mut self.rand_state, rng: &mut g.rng };
+        let mut env = SessionCameraEnv { peek_rand: false, world: w, rand_state: &mut self.rand_state, rng: &mut g.rng, strip_out: None };
         camera::tick(&mut self.camera, &inp, &self.camera_tables, &mut env);
         self.ticks += 1;
     }
@@ -917,7 +951,7 @@ impl Session {
             if g.hz60.pair_end() {
                 self.load_frame = false;
             }
-        } else {
+        } else if self.clock_plan.map_or(true, |p| p.0) {
             let mut karts: Vec<&mut KartState> = ks.iter_mut().collect();
             let seed = &mut self.rand_state;
             let mut rand = || bios_rand(seed);
@@ -937,10 +971,11 @@ impl Session {
         // tri/DOCK_FINISH and tri/DOCK_TIMEUP show the karts moving in it.)
         // With two humans and one finished the game just goes on
         // (0x80079708).
-        if g.mode == 1 && g.race_over == 0 {
+        if (g.mode == 1 || g.mode == 3) && g.race_over == 0 {
             let humans_done = ks.iter().filter(|x| (x.player_index as i32) < g.humans as i32 && x.finished != 0).count() as i32;
             if humans_done > 0 && humans_done == g.humans as i32 {
                 g.mode = 10;
+                g.results_clock = 0;
             }
         }
         // 1. Water animation.
@@ -1144,8 +1179,16 @@ impl Session {
                 ..self.camera_globals.clone()
             },
         };
-        let mut env = SessionCameraEnv { peek_rand: std::mem::take(&mut self.camera_peek), world: w, rand_state: &mut self.rand_state, rng: &mut g.rng };
+        let mut env = SessionCameraEnv { peek_rand: std::mem::take(&mut self.camera_peek), world: w, rand_state: &mut self.rand_state, rng: &mut g.rng, strip_out: None };
         camera::tick(&mut self.camera, &inp, &self.camera_tables, &mut env);
+        // The stunt camera (mode 3) writes the kart's place along / across
+        // the strip (the race progress reads +0x4A8).
+        if let Some((along, across)) = env.strip_out {
+            ks[0].strip_along = along;
+            ks[0].strip_across = across;
+            self.record[0x4A8] = along;
+            self.record[0x4A9] = across;
+        }
         // 8. After the camera (FUN_8007916C @0x80079B30..): each human's
         //    splash (FUN_800330D4 when +0x4DB, or in water / a special move
         //    under the ground at random: one random byte), the particle and
@@ -1206,6 +1249,15 @@ impl Session {
                     crate::race::hud_draws(g, w, k);
                 }
             }
+        }
+        if self.clock_plan.take().is_some_and(|p| p.1) {
+            if let Some(d) = self.clock_end_dt.take() {
+                g.dt = d;
+            }
+            let mut karts: Vec<&mut KartState> = ks.iter_mut().collect();
+            let seed = &mut self.rand_state;
+            let mut rand = || bios_rand(seed);
+            crate::race::frame_clock(g, &mut karts, &mut self.best_start, &mut rand);
         }
     }
 
@@ -1390,6 +1442,8 @@ impl Session {
             load_frame: false,
             rng_skip_items: None,
             camera_peek: false,
+            clock_plan: None,
+            clock_end_dt: None,
             camera_menu: None,
             rand_state: m.u32(0x8000_9010),
             cfg,

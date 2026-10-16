@@ -21,9 +21,15 @@ def main():
     slot, outdir, end_vb, pokes = int(sys.argv[1]), sys.argv[2], int(sys.argv[3]), json.load(open(sys.argv[4]))
     if slot in (1, 2):
         pass  # loading is fine; only saving is forbidden (this script never saves)
-    route = {"name": "poked-slot-%d" % slot, "slot": slot, "end_vb": end_vb, "steps": [[0, ""]],
-             "pokes": pokes, "note": "player idle; pokes at the restore: " + sys.argv[4]}
-    m = capture.run(route, outdir, regions=capture_course.COURSE_REGIONS)
+    # Session 7 (stunt trial): --hold SPEC holds SPEC (e.g. "cross") from
+    # VBlank 0; --save adds the save block 0x800E0190 (0x140 bytes).
+    hold = sys.argv[sys.argv.index("--hold") + 1] if "--hold" in sys.argv else ""
+    regions = list(capture_course.COURSE_REGIONS)
+    if "--save" in sys.argv:
+        regions.append((0x800E0190, 0x140))
+    route = {"name": "poked-slot-%d" % slot, "slot": slot, "end_vb": end_vb, "steps": [[0, hold]],
+             "pokes": pokes, "note": ("holding %s" % hold if hold else "player idle") + "; pokes at the restore: " + sys.argv[4]}
+    m = capture.run(route, outdir, regions=regions)
     print(outdir, "vb", m["first_vb"], "..", m["last_vb"], "missing", len(m["missing"]), flush=True)
 
 

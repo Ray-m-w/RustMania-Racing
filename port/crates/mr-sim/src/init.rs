@@ -90,11 +90,14 @@ pub fn init_kart(p: &KartInit, rng: &mut u32, rand: &mut dyn FnMut() -> i32) -> 
     // The title (mode 0x10, race type 2: 0x80060B04 takes 6 + 1 for the
     // index, then the plain path for flags 0x20 / 0x40 clear and race flags
     // 1/2/4 clear: index = `grid` again) [CODE 800609f4].
+    // The stunt trial (mode 3, race type 3; 0x80060B3C): one kart
+    // (0x800B0DFE == 1) takes grid point `grid` + 2.
     let title = s.mode == 0x10 && s.race_type == 2;
-    if !(s.mode == 1 && (0..=1).contains(&s.race_type) || title) || s.race_flags & 7 != 0 || s.challenge != 0 || p.flags & 0x60 != 0 {
+    let stunt = s.mode == 3 && s.race_type == 3;
+    if !(s.mode == 1 && (0..=1).contains(&s.race_type) || title || stunt) || s.race_flags & 7 != 0 || s.challenge != 0 || p.flags & 0x60 != 0 {
         crate::unreachable_in_scope!("grid placement outside a plain one-player race");
     }
-    let gi = p.grid as usize;
+    let gi = (p.grid + if stunt && s.karts == 1 { 2 } else { 0 }) as usize;
     let Some(g) = w.course.grid.get(gi) else {
         crate::unreachable_in_scope!("grid index past the course's grid (centre-of-course start)");
     };
@@ -262,9 +265,11 @@ pub fn init_kart(p: &KartInit, rng: &mut u32, rand: &mut dyn FnMut() -> i32) -> 
     // +0x488: FUN_80081170(x >> 5, y >> 5, z >> 5, course, 1, 0, 0): the
     // nearest course point over the whole list (Session 3 searched from
     // point 0 with mode 0x10's bisection; equal on DOCK, not on SPEEDWAY).
-    if let Some(i) = crate::race::course_point_all(w, &k) {
-        k.course_point = i;
-    }
+    // No course points (the stunt courses): -1.
+    k.course_point = crate::race::course_point_all(w, &k).unwrap_or(-1);
+    // 0x800611xx: the strip quad (FUN_8006F410; 0 without a strip) and
+    // +0x4A9 = 0x40, on every course.
+    crate::stunt::init_kart(&mut k, w);
     k.to_record(&mut r);
     (r, k)
 }

@@ -16,12 +16,12 @@ pub fn contact_phase(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Ti
         crate::ground::kart_ground(k, g, w, inp);
         return;
     }
-    // FUN_800628FC: list at 0x800D1C98 (chunk 0x14, stunt courses only).
-    if k.effect == -1 && w.course.has_other_objects {
-        unreachable_in_scope!("FUN_800628FC object list");
-    }
+    // FUN_800628FC: the stunt courses' pipes (chunk 0x14, stunt.rs); a
+    // kart in a pipe skips the rest.
+    crate::stunt::pipes(k, g, w);
     if k.item_e7 != -1 {
-        unreachable_in_scope!("item +0x4E7 active: ground contact skipped");
+        crate::stunt::mirrors(k, w);
+        return;
     }
     // FUN_80061FC0: proximity triggers (list 0x800D1C9C, count 0x800B0DC6).
     teleport(k, g, w);
@@ -41,8 +41,9 @@ pub fn contact_phase(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Ti
             unreachable_in_scope!("FUN_800627E0");
         }
     }
-    // FUN_80062E38: +0x4F8 = -1; lists 0x800D1C68 / 0x800D1CA4 null on DOCK.
-    k.object_f8 = -1;
+    // FUN_80062E38: the mirror planes (stunt.rs; lists 0x800D1C68 /
+    // 0x800D1CA4, null on the race courses: +0x4F8 = -1).
+    crate::stunt::mirrors(k, w);
 }
 
 /// FUN_80061FC0: touching a trigger object (within 16 units >> 10 of its
@@ -51,32 +52,66 @@ pub fn contact_phase(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Ti
 /// point moving from the first to the second, heading along the line, body
 /// flat), grows back at the second point (60), then is released. +0x4E6 =
 /// trigger, +0x4B5 = clock, +0x4EF = 1, +0x4B3 = done. DOCK has two (the
-/// course's own warp). The second list (0x800D1C7C, count 0x800B0C68: pairs,
-/// state 2) is empty on DOCK.
+/// course's own warp). The paired list (0x800D1C7C, count 0x800B0C68:
+/// two-way links, state 2; MOUNTAIN, DINER) is checked first.
 fn teleport(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
     if k.effect != -1 {
         return;
     }
-    if w.course.triggers.is_empty() {
-        return;
+    let (x, y, z) = (k.x >> 10, k.y >> 10, k.z >> 10);
+    let near = |p: [i32; 3]| {
+        let (dx, dy, dz) = ((p[0] >> 5) - x, (p[1] >> 5) - y, (p[2] >> 5) - z);
+        dx.wrapping_mul(dx).wrapping_add(dy.wrapping_mul(dy)).wrapping_add(dz.wrapping_mul(dz)) < 0x100
+    };
+    // The paired list (chunk 0x0D, 0x800D1C7C; FUN_80061F08: 0x800B0C68 =
+    // count / 2 when the count is a multiple of 4): (point, heading point)
+    // pairs; touching entry i's point takes the kart to its partner i ^ 1
+    // (state 2). Checked before the one-way list.
+    let paired: &[[i32; 3]] = match &w.course.paired {
+        Some(l) if l.len() & 3 == 0 && l.len() >= 4 => l,
+        _ => &[],
+    };
+    let mut use_paired = None;
+    if !paired.is_empty() {
+        if k.pickup == -1 {
+            if let Some(i) = (0..paired.len() / 2).find(|&i| near(paired[2 * i])) {
+                k.pickup = ((i & 0xFE) + ((i + 1) & 1)) as i8;
+                k.pickup_timer = 0;
+                k.pickup_state = 2;
+                k.event_bits |= 8;
+                use_paired = Some(true);
+            }
+        } else {
+            use_paired = Some(k.pickup_state != 1);
+        }
     }
-    if k.pickup == -1 {
-        let (x, y, z) = (k.x >> 10, k.y >> 10, k.z >> 10);
-        let hit = w.course.triggers.iter().position(|tr| {
-            let dx = (tr.pos[0] >> 5) - x;
-            let dy = (tr.pos[1] >> 5) - y;
-            let dz = (tr.pos[2] >> 5) - z;
-            dx.wrapping_mul(dx).wrapping_add(dy.wrapping_mul(dy)).wrapping_add(dz.wrapping_mul(dz)) < 0x100
-        });
-        let Some(i) = hit else { return };
-        k.pickup = i as i8;
-        k.pickup_timer = 0;
-        k.pickup_state = 1;
-        k.event_bits |= 8;
-    } else if k.pickup_state == 2 {
-        unreachable_in_scope!("paired trigger list (0x800D1C7C)");
-    }
-    let tr = w.course.triggers[k.pickup as u8 as usize];
+    let use_paired = match use_paired {
+        Some(u) => u,
+        None => {
+            // FUN_80061FC0 @0x8006216C: the one-way list (0x800B0DC6).
+            if w.course.triggers.is_empty() {
+                return;
+            }
+            if k.pickup == -1 {
+                let Some(i) = w.course.triggers.iter().position(|tr| near(tr.pos)) else { return };
+                k.pickup = i as i8;
+                k.pickup_timer = 0;
+                k.pickup_state = 1;
+                k.event_bits |= 8;
+                false
+            } else {
+                k.pickup_state == 2 && !paired.is_empty()
+            }
+        }
+    };
+    // from (piVar14), to (piVar13) and the heading point after `to`.
+    let tr = if use_paired {
+        let p = k.pickup as u8 as usize;
+        let from = if p & 1 == 0 { paired[2 * p + 2] } else { paired[2 * p - 2] };
+        crate::world::Trigger { pos: from, to: paired[2 * p], dir: paired[2 * p + 1] }
+    } else {
+        w.course.triggers[k.pickup as u8 as usize]
+    };
     let t0 = k.pickup_timer;
     if t0 == 0 {
         crate::sound::at(g, w, 0x1E, 0x1600, 0x60, [k.x, k.y, k.z], -1);
@@ -88,9 +123,13 @@ fn teleport(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
         let r2 = crate::update::rng_next(g, w) as i8 as i32;
         (r0, r1, r2)
     });
-    let end = [tr.to[0] * 0x20 + r0 * 2, tr.to[1] * 0x20 + r1 * 2, tr.to[2] * 0x20 + r2 * 2];
+    let mut end = [tr.to[0] * 0x20 + r0 * 2, tr.to[1] * 0x20 + r1 * 2, tr.to[2] * 0x20 + r2 * 2];
     if g.game_state == 0xC {
-        unreachable_in_scope!("trigger on course 12 (offset end point)");
+        // Course 12 (MOUNTAIN): the end point 1.5 x 0x4000 further along
+        // the heading (0x800621D8).
+        let a = ratan2(&w.tables, tr.dir[0] - tr.to[0], tr.dir[2] - tr.to[2]) & 0xFFF;
+        end[0] += (w.tables.sin_raw(a) * 3) / 2;
+        end[2] += (w.tables.cos_raw(a) * 3) / 2;
     }
     let t = t0 as i32;
     let start = [tr.pos[0] << 5, tr.pos[1] << 5, tr.pos[2] << 5];
@@ -141,7 +180,7 @@ fn teleport(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
     } else {
         k.wall_flag = 1;
     }
-    if k.wall_flag != 0 {
+    if k.wall_flag != 0 && (k.pickup_state != 2 || !near(tr.to)) {
         // Released (state 1; state 2 waits until the kart has left the
         // second point).
         k.pickup = -1;
@@ -178,7 +217,9 @@ pub fn lap_timing(k: &mut KartState, g: &mut RaceGlobals, w: &World, rand: &mut 
         }
     }
     if g.race_type == 3 {
-        unreachable_in_scope!("lap timing, time trial");
+        // 0x80082A40: the stunt trial's gates and clock (stunt.rs).
+        crate::stunt::timing(k, g, w);
+        return;
     }
     if (k.lap as i32) >= g.laps as i32 || g.mode == 10 || g.mode == 17 {
         return;

@@ -1,0 +1,98 @@
+{
+ "name": "menu_mountain",
+ "slot": 1,
+ "course": 12,
+ "world": 4,
+ "type": 3,
+ "end_vb": 310,
+ "steps": [
+  [
+   0,
+   ""
+  ],
+  [
+   20,
+   "down"
+  ],
+  [
+   26,
+   ""
+  ],
+  [
+   40,
+   "down"
+  ],
+  [
+   46,
+   ""
+  ],
+  [
+   60,
+   "down"
+  ],
+  [
+   66,
+   ""
+  ],
+  [
+   80,
+   "cross"
+  ],
+  [
+   86,
+   ""
+  ],
+  [
+   120,
+   "cross"
+  ],
+  [
+   126,
+   ""
+  ],
+  [
+   170,
+   "cross"
+  ],
+  [
+   176,
+   ""
+  ],
+  [
+   220,
+   "down"
+  ],
+  [
+   226,
+   ""
+  ],
+  [
+   240,
+   "down"
+  ],
+  [
+   246,
+   ""
+  ],
+  [
+   260,
+   "down"
+  ],
+  [
+   266,
+   ""
+  ],
+  [
+   290,
+   "cross"
+  ],
+  [
+   296,
+   ""
+  ]
+ ],
+ "pokes": [],
+ "loaded_vb": 871,
+ "saved_vb": 1022,
+ "note": "MUPPET TREASURE ISLAND / STUNT; from slot 1 (DOCK course menu); course loaded (0x800B0FAC == course, 0x800B0AF4 == -1) at loaded_vb, state saved ~150 VBlanks later (tools/oracle/goto_course.py)"
+}

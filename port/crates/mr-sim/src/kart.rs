@@ -210,6 +210,8 @@ kart_fields! {
     fwd_speed: i32 @ 0x390, side_speed: i32 @ 0x394,
     /// Water surface height (low byte kept between ticks).
     water_y: i32 @ 0x398,
+    /// +0x39C: the mirror plane's coordinate (FUN_80062E38).
+    mirror_at: i32 @ 0x39C,
     /// Ground speed: |position delta| / dt.
     /// FUN_8009004C: track width at the nearest path point (bytes * -8 / << 3)
     /// and the signed lateral offset from it.
@@ -259,6 +261,9 @@ kart_fields! {
     spin_rate: i16 @ 0x482,
     spin_timer: i16 @ 0x484,
     drift: i16 @ 0x486,
+    /// +0x490: the stunt course's strip quad under the kart (FUN_8006F64C;
+    /// FUN_8006F410 at the race load).
+    strip: i16 @ 0x490,
     contacts_from_above: i16 @ 0x492,
     contacts_below: i16 @ 0x494,
     start_timer: i16 @ 0x48A,
@@ -270,12 +275,17 @@ kart_fields! {
     /// Model slot numbers of the vehicle / driver (-1: none).
     model_slot: i8 @ 0x4A4, char_slot: i8 @ 0x4A5,
     shape_t: u8 @ 0x4A6, shape_n: u8 @ 0x4A7,
+    /// +0x4A8: the stunt camera's fraction along the strip quad (0..0x80,
+    /// 0x800B0AE8 of FUN_8006FB2C); +0x4A9: across it (0x40 at the load).
+    strip_along: u8 @ 0x4A8, strip_across: u8 @ 0x4A9,
     throttle_hold: u8 @ 0x4AA, coast_hold: u8 @ 0x4AB, brake_hold: u8 @ 0x4AF,
     blink_count: u8 @ 0x4B0,
     vehicle: u8 @ 0x4B1,
     character: u8 @ 0x4B2,
     wall_flag: u8 @ 0x4B3,
     pickup_timer: u8 @ 0x4B5,
+    /// +0x4B6: the stunt pipe's clock (FUN_800628FC, 0..180).
+    pipe_clock: u8 @ 0x4B6,
     rumble: u8 @ 0x4B7,
     start_hold: u8 @ 0x4B8,
     accel_spin: u8 @ 0x4B9,
@@ -288,6 +298,10 @@ kart_fields! {
     catchup: u8 @ 0x4C3,
     boosting: u8 @ 0x4C4,
     below_ground: u8 @ 0x4C5,
+    /// +0x4C2: the mirror plane's kind (FUN_80062E38: 0 z, 1 floor, 2 x).
+    mirror_kind: u8 @ 0x4C2,
+    /// +0x4C6: stunt-course gates passed (FUN_80081DD8).
+    gate: u8 @ 0x4C6,
     finished: u8 @ 0x4C7,
     /// 0 on the ground, 1 just above water / ground, 2 in the water.
     float_state: u8 @ 0x4C8,

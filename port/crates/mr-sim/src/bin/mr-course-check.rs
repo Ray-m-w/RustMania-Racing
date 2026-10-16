@@ -57,11 +57,81 @@ struct Ends {
 }
 
 fn frames(cap: &Capture) -> Option<Ends> {
+    // (a mode-3 capture's clock plan must not leak into the next course)
+    CLOCKS.with(|c| c.borrow_mut().clear());
     let key = |vb: u32| (cap.i32(vb, 0x800B_0C70).unwrap(), cap.i32(vb, 0x800B_0A94).unwrap());
-    let load = *cap.vbs.iter().find(|&&v| key(v).0 == 480 && cap.read(v, 0x800B_0D46, 2).unwrap() == [1, 0])?;
+    let load = *cap.vbs.iter().find(|&&v| (key(v).0 == 480 || key(v).0 == 300) && matches!(cap.read(v, 0x800B_0D46, 2).unwrap(), [1, 0] | [3, 0]))?;
     let vbs: Vec<u32> = cap.vbs.iter().copied().filter(|&v| v >= load).collect();
-    let ends: Vec<u32> = vbs.windows(2).filter(|w| key(w[0]) != key(w[1])).map(|w| w[0]).collect();
+    let mut ends: Vec<u32> = vbs.windows(2).filter(|w| key(w[0]) != key(w[1])).map(|w| w[0]).collect();
+    // The stunt trial (mode 3): its VBlank samples fall either side of the
+    // frame boundary (the load takes 3 VBlanks): a frame end is the last
+    // sample after the frame's own work (the random pointer 0x800B0BCC,
+    // stepped once a frame, has changed), which may already hold the next
+    // frame's clock step (the frame counter 0x800B0D90 changed). The
+    // session is told where the clock steps go (clock_plan).
+    if cap.read(load, 0x800B_0D46, 2).unwrap() == [3, 0] {
+        ends = mode3_ends(cap, &vbs, load, (0, 0));
+    }
     Some(Ends { load, ends })
+}
+
+/// Mode 3 frame ends from `start` (whose (frames, clock steps) are
+/// `base`): the last sample of each value of the random pointer 0x800B0BCC
+/// (stepped once a frame, after the frame's work); the frame counter
+/// 0x800B0D90 counts the clock steps (CLOCKS, clock_plan).
+fn mode3_ends(cap: &Capture, vbs: &[u32], start: u32, base: (u32, u32)) -> Vec<u32> {
+    let (mut r, mut c) = base;
+    let (mut lp, mut lf) = (cap.i32(start, 0x800B_0BCC).unwrap(), cap.i32(start, 0x800B_0D90).unwrap());
+    let mut at: Vec<(u32, u32, u32)> = Vec::new();
+    for &v in vbs.iter().filter(|&&v| v > start) {
+        let (p, f) = (cap.i32(v, 0x800B_0BCC).unwrap(), cap.i32(v, 0x800B_0D90).unwrap());
+        if p != lp {
+            r += 1;
+        }
+        if f != lf {
+            c += 1;
+        }
+        (lp, lf) = (p, f);
+        at.push((v, r, c));
+    }
+    let mut ends = Vec::new();
+    let mut clocks = std::collections::HashMap::new();
+    clocks.insert(start, base);
+    if base.0 > 0 || base.1 > 0 {
+        ends.push(start);
+    }
+    for w in at.windows(2) {
+        if w[0].1 >= 1 && w[1].1 != w[0].1 {
+            ends.push(w[0].0);
+            clocks.insert(w[0].0, (w[0].1, w[0].2));
+        }
+    }
+    CLOCKS.with(|c| *c.borrow_mut() = clocks);
+    ends
+}
+
+thread_local! {
+    /// Mode 3 captures: per frame-end VBlank, (frames done, clock steps
+    /// done) since the load (`frames`).
+    static CLOCKS: std::cell::RefCell<std::collections::HashMap<u32, (u32, u32)>> = Default::default();
+}
+
+/// The clock plan for a tick from the state at `from` to the one at `to`
+/// (mode 3 captures only): a clock step at the start when the frame's own
+/// has not run yet, one at the end when `to` holds the next frame's.
+fn clock_plan(from: Option<u32>, to: u32) -> Option<(bool, bool)> {
+    CLOCKS.with(|c| {
+        let c = c.borrow();
+        let (r0, c0) = match from {
+            Some(f) => *c.get(&f)?,
+            None => *c.values().min()?,
+        };
+        let (_, c1) = *c.get(&to)?;
+        // Tick from r0 frames done: frame r0 (0 = the load frame, no clock).
+        let start = c0 < r0 || (r0 >= 1 && c0 == 0);
+        let end = c1 > c0 + start as u32;
+        Some((start, end))
+    })
 }
 
 /// A session at the oracle's race load.
@@ -92,6 +162,7 @@ pub fn session_at_load(disc: &mut mr_disc::Disc, info: &CourseInfo, cap: &Captur
     }
     let mut s = Session::with_config(disc, cfg).expect("session");
     let m = cap.mem_at(load, None);
+
     s.water = mr_sim::water::WaterAnim::from_bytes(cap.read(load, 0x800A_FEF0, 0x20).unwrap());
     // Course-load state the session derives from seeds before the race
     // load: the game drew it at its own course load, before the capture.
@@ -229,8 +300,14 @@ fn main() {
         // the race clock stops, the frame counter runs on).
         let key = |vb: u32| (cap.i32(vb, 0x800B_0C70).unwrap(), cap.i32(vb, 0x800B_0A94).unwrap(), cap.i32(vb, 0x800B_0D90).unwrap());
         let mode = |v: u32| cap.read(v, 0x800B_0D46, 2).unwrap().to_vec();
-        let vbs: Vec<u32> = cap.vbs.iter().copied().filter(|&v| mode(v) == [1, 0] || mode(v) == [10, 0]).collect();
-        let ends: Vec<u32> = vbs.windows(2).filter(|w| key(w[0]) != key(w[1])).map(|w| w[0]).collect();
+        let vbs: Vec<u32> = cap.vbs.iter().copied().filter(|&v| mode(v) == [1, 0] || mode(v) == [3, 0] || mode(v) == [10, 0]).collect();
+        let mut ends: Vec<u32> = vbs.windows(2).filter(|w| key(w[0]) != key(w[1])).map(|w| w[0]).collect();
+        // A stunt-trial capture (mode 3): its samples hold the next frame's
+        // clock step (mode3_ends; the first sample taken as frame 0 with
+        // its next clock step done).
+        if mode(vbs[0]) == [3, 0] {
+            ends = mode3_ends(&cap, &vbs, vbs[0], (0, 1));
+        }
         let n = ends.len().min(nframes);
         println!("## {d} ({name}): {} frames from VB {}", ends.len(), ends[0]);
         let mk = |disc: &mut mr_disc::Disc| {
@@ -318,7 +395,16 @@ fn free_run(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_fields:
     let mut cam_first: Option<(usize, Vec<&str>)> = None;
     for (j, &vb) in ends.iter().enumerate().take(n) {
         let m = cap.mem_at(vb, None);
-        if let Err(e) = s.tick_dt(m.u16(0x800B_0CE8), m.i32(0x800B_0AEC)) {
+        let mut dt = m.i32(0x800B_0AEC);
+        if let Some(p) = clock_plan(if j == 0 { None } else { Some(ends[j - 1]) }, vb) {
+            s.clock_plan = Some(p);
+            s.clock_end_dt = Some(dt);
+            let prev = if j == 0 { CLOCKS.with(|c| c.borrow().iter().min_by_key(|e| *e.1).map(|e| *e.0)) } else { Some(ends[j - 1]) };
+            if let Some(pv) = prev {
+                dt = cap.mem_at(pv, None).i32(0x800B_0AEC);
+            }
+        }
+        if let Err(e) = s.tick_dt(m.u16(0x800B_0CE8), dt) {
             err = Some((j, e.to_string()));
             break;
         }
@@ -562,9 +648,20 @@ fn teacher_forced(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_f
             }
         }
         let m = cap.mem_at(ends[j], None);
-        if let Err(e) = s.tick_dt(m.u16(0x800B_0CE8), m.i32(0x800B_0AEC)) {
+        let mut dt = m.i32(0x800B_0AEC);
+        if let Some(p) = clock_plan(Some(ends[j - 1]), ends[j]) {
+            // These samples hold the next frame's dt (measured before its
+            // clock step): the frame's own is the previous sample's.
+            s.clock_plan = Some(p);
+            s.clock_end_dt = Some(dt);
+            dt = mprev.i32(0x800B_0AEC);
+        }
+        if let Err(e) = s.tick_dt(m.u16(0x800B_0CE8), dt) {
             tf_err = Some((j, e.to_string()));
             break;
+        }
+        if std::env::var("MR_TFCLOCK").is_ok() {
+            println!("      tf {j} vb {}: countdown {} vs {}, clock {} vs {}", ends[j], s.countdown(), m.i32(0x800B_0C70), s.globals.race_clock, m.i32(0x800B_0A94));
         }
         if cap.read(ends[j], 0x800C_4F40, mr_sim::camera::CAMERA_SIZE).is_some() {
             for d in camera_diff(s, &m) {

@@ -279,6 +279,8 @@ pub struct CameraState {
     pub orbit_angle: i32,
     /// +0x50 pitch, +0x52 yaw, +0x54 roll; 12-bit angles kept in 0..4095.
     pub pitch: i16,
+    /// +0x58: the stunt course menu's sweep phase (mode 9).
+    pub sweep: i16,
     pub yaw: i16,
     pub roll: i16,
     /// +0x5C/+0x5E/+0x60: per-axis follow weights (out of 1024 per VBlank).
@@ -330,6 +332,7 @@ impl CameraState {
             roll_ref: g_i32(b, 0x48),
             orbit_angle: g_i32(b, 0x4C),
             pitch: g_i16(b, 0x50),
+            sweep: g_i16(b, 0x58),
             yaw: g_i16(b, 0x52),
             roll: g_i16(b, 0x54),
             weight: [g_i16(b, 0x5C), g_i16(b, 0x5E), g_i16(b, 0x60)],
@@ -362,6 +365,7 @@ impl CameraState {
         p_i16(&mut b, 0x50, self.pitch);
         p_i16(&mut b, 0x52, self.yaw);
         p_i16(&mut b, 0x54, self.roll);
+        p_i16(&mut b, 0x58, self.sweep);
         p_i16(&mut b, 0x64, self.mode);
         p_i16(&mut b, 0x66, self.sub_state);
         p_i16(&mut b, 0x68, self.sub_timer);
@@ -429,6 +433,8 @@ pub struct CameraKart {
     /// +0x4DF: nonzero = the kart runs the course backward (path walks use
     /// FUN_80090670 instead of FUN_80090424).
     pub path_backward: u8,
+    /// +0x490: the stunt course's strip quad (mode 3).
+    pub strip: i16,
 }
 
 impl CameraKart {
@@ -457,6 +463,7 @@ impl CameraKart {
             path_seg: g_i16(rec, 0x498),
             path_pt: g_i16(rec, 0x49A),
             path_backward: rec[0x4DF],
+            strip: g_i16(rec, 0x490),
         }
     }
 }
@@ -600,6 +607,23 @@ pub trait CameraEnv {
     fn orbit_point(&mut self, _chunk: i16, _phase: i32) -> [i32; 3] {
         [0; 3]
     }
+    /// FUN_8006FB2C(x >> 5, z >> 5, quad): the stunt strip's edge points
+    /// across the kart and the fraction along the quad (mr_sim::stunt).
+    fn strip_project(&mut self, _x5: i32, _z5: i32, _quad: i16) -> Option<([i32; 3], [i32; 3], i16)> {
+        None
+    }
+    /// FUN_800702C4(phase): the strip's edge points at `phase` (0..0x7FFF
+    /// of its length).
+    fn strip_point(&mut self, _phase: i32) -> Option<([i32; 3], [i32; 3])> {
+        None
+    }
+    /// The stunt camera's distance constants (exe 0x800B078A, 0x800B078C).
+    fn stunt_dist(&mut self) -> (i32, i32) {
+        (0x800, 0x800)
+    }
+    /// Mode 3 writes the kart's +0x4A8 (along the quad) and +0x4A9
+    /// (across the strip).
+    fn strip_kart(&mut self, _along: u8, _across: u8) {}
 }
 
 /// Everything one camera tick reads.
@@ -788,8 +812,10 @@ fn select_mode(cam: &mut CameraState, inp: &CameraInput) -> i16 {
         10 => finish_rule(),
         _ => 0,
     };
+    // 0x80070750: a stunt course's strip (0x800D1C84 / 0x800D1C88 with
+    // equal counts): mode 3 (9 in game mode 0, the course menu).
     if g.cutscene_sync {
-        unreachable_in_scope!("cut-scene synchronised camera (modes 3/9)");
+        mode = if g.game_state == 0 { 9 } else { 3 };
     }
     // 0x800707A8: the intro camera while the countdown is at or above 300.
     if mode == 0 && g.countdown >= g.countdown_len as i32 {
@@ -1073,6 +1099,71 @@ pub fn tick(cam: &mut CameraState, inp: &CameraInput, t: &CameraTables, env: &mu
             let w: i16 = if g.countdown > 0 { 0x40 } else { 0x100 };
             w_target = [w, w, w];
         }
+        3 => {
+            // The stunt trial (0x80071574): beside the kart, on the
+            // strip's first edge across from it, pulled toward the kart
+            // to 0x800B078A less than its distance (at most 0x1C00) and
+            // raised 0x800B078C over it; both scaled by s (0x1000 in the
+            // trial; drawing in over the countdown's first 180 VBlanks,
+            // backing off over 180 after the finish).
+            let s = if g.countdown < g.countdown_len as i32 {
+                if k.finished == 0 {
+                    0x1000
+                } else if k.finish_wait > 0xB3 {
+                    0x800
+                } else {
+                    0x1000 - (k.finish_wait << 11) / 0xB4
+                }
+            } else {
+                0x1000 - (g.countdown - g.countdown_len as i32).wrapping_mul(0x800) / 0xB4
+            };
+            if let Some((a, b, along)) = env.strip_project(k.pos[0] >> 5, k.pos[2] >> 5, k.strip) {
+                let (c_in, c_up) = env.stunt_dist();
+                goal = [a[0], k.pos[1].wrapping_sub(div_pow2(c_up.wrapping_mul(s), 7)), a[2]];
+                let d = |p: &[i32; 3]| {
+                    let (dx, dz) = (p[0].wrapping_sub(k.pos[0]) >> 5, p[2].wrapping_sub(k.pos[2]) >> 5);
+                    t.sqrt0(dx.wrapping_mul(dx).wrapping_add(dz.wrapping_mul(dz)))
+                };
+                let (d1, d2) = (d(&a), d(&b));
+                let across = if d1 + d2 != 0 { (d1 << 7) / (d1 + d2) } else { 0 };
+                env.strip_kart(along as u8, across as u8);
+                let (ex, ez) = (b[0].wrapping_sub(a[0]) >> 5, b[2].wrapping_sub(a[2]) >> 5);
+                let l = t.sqrt0(ex.wrapping_mul(ex).wrapping_add(ez.wrapping_mul(ez)));
+                if l != 0 {
+                    let mut e = d1.min(0x1C00) - div_pow2(c_in.wrapping_mul(s), 12);
+                    let mut ox = e.wrapping_mul((ex << 12) / l);
+                    if e < 0 {
+                        e = 0;
+                        ox = 0;
+                    }
+                    goal[0] = goal[0].wrapping_add(ox >> 7);
+                    goal[2] = goal[2].wrapping_add(e.wrapping_mul((ez << 12) / l) >> 7);
+                }
+            }
+            // 0x80071804: weights (s6, s7, s4) = (128, 64, 128); fp =
+            // sp+0x48 = 16.
+            w_target = [128, 64, 128];
+        }
+        9 => {
+            // A stunt course's menu (0x80071844): the eye sweeps along the
+            // strip's first edge (a sine of a phase drawn on the change,
+            // running either way), 0x8000 up, looking at the second edge
+            // 0x8000 down; sp+0x48 = 0x20.
+            if changed {
+                cam.sweep = (env.rand() >> 3) as i16;
+                cam.rand_a = (env.rand() >> 14) as u8;
+            }
+            cam.sweep = if cam.rand_a == 0 { cam.sweep.wrapping_sub(dt as i16) } else { cam.sweep.wrapping_add(dt as i16) };
+            cam.sweep &= 0xFFF;
+            let ph = (div_pow2(t.sin14(cam.sweep as i32), 2) + 0x4000) as i16 as i32;
+            if let Some((a, b)) = env.strip_point(ph) {
+                goal = [a[0], a[1].wrapping_sub(0x8000), a[2]];
+                aim_at = [b[0], b[1].wrapping_add(0x8000), b[2]];
+            }
+            w_target = [64, 64, 64];
+            pitch_div = 32;
+            yaw_div = 32;
+        }
         m => unreachable_in_scope!(format!("camera mode {m}")),
     }
 
@@ -1173,7 +1264,8 @@ pub fn tick(cam: &mut CameraState, inp: &CameraInput, t: &CameraTables, env: &mu
                 (e & 0x3FF) << 2
             }
         }
-    } else if mode == 2 || mode == 12 || k.watch_target != -1 {
+    } else if !(mode == 0 || mode == 10) || k.watch_target != -1 {
+        // 0x80072640: only modes 0 and 10 bank (and the orbit above).
         0
     } else if k.roll_mode != 0 {
         // Airborne/spinning: bank against the remaining yaw error.

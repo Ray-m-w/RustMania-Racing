@@ -158,6 +158,16 @@ impl CourseInfo {
         Self::all(exe).into_iter().filter(|c| c.is_race()).collect()
     }
 
+    /// The stunt courses (cups 0..5, slot 3: race type 3, the stunt
+    /// trial; mr_sim::stunt).
+    pub fn stunts(exe: &ExeImage) -> Vec<CourseInfo> {
+        Self::all(exe).into_iter().filter(|c| c.is_stunt()).collect()
+    }
+
+    pub fn is_stunt(&self) -> bool {
+        self.race_type == 3 && self.mode == 3 && self.path.starts_with("STUNT")
+    }
+
     pub fn is_race(&self) -> bool {
         self.cup >= 0 && self.mode == 1 && self.path.starts_with("COURSE_")
     }

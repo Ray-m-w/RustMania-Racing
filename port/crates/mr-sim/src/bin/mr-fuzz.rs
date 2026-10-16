@@ -1,4 +1,5 @@
-//! Headless stability fuzz (Session 7): every race course and the title,
+//! Headless stability fuzz (Session 7): every race course, the stunt
+//! courses' trial (phase 3) and the title,
 //! at 30 and 60 Hz logic, with the player's pad mashed at random (all 16
 //! bits: holds and taps, idle stretches, reversing, turning round to drive
 //! the wrong way, TRIANGLE / SELECT / shoulder buttons, START), through the
@@ -253,7 +254,8 @@ fn main() {
     }));
     let mut disc = mr_disc::Disc::open_default().expect("open the owner's disc");
     let exe = mr_sim::tables::ExeImage::parse(&disc.read("SLUS_012.37").expect("exe")).expect("exe");
-    let mut courses: Vec<(CourseInfo, bool)> = CourseInfo::races(&exe).into_iter().map(|c| (c, false)).collect();
+    // Race courses and (phase 3) the stunt courses' trial.
+    let mut courses: Vec<(CourseInfo, bool)> = CourseInfo::races(&exe).into_iter().chain(CourseInfo::stunts(&exe)).map(|c| (c, false)).collect();
     if let Some(t) = CourseInfo::read(&exe, mr_sim::title::TITLE_COURSE) {
         courses.push((t, true));
     }

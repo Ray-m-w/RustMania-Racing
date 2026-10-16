@@ -366,6 +366,57 @@ fn knocked_out(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
     crate::collide::spin_out(k, g, w, 1);
 }
 
+/// FUN_80082450 (phase 6b): a BATTLE LEAGUE battle once every human is
+/// out: the AI karts still standing fight it out at random until one is
+/// left. Each round two standing karts (random bytes % 0x800B0DFE, the
+/// second another) - the first deals the second 100 damage (a random byte
+/// below 0x40) or a random byte + 1 (its best crash +0x478 then), adding
+/// to its +0x43C and the other's +0x43E / +0x440; at 1000 the other is
+/// knocked out (+0x440 = 1000 + place, the place 0x800B0CD8, then one
+/// fewer, AI-driven, out, spinning; a knock-out +0x4FB for the first).
+pub fn battle_league_finish(ks: &mut [KartState], g: &mut RaceGlobals, w: &World) {
+    let n = (g.karts.max(0) as usize).min(ks.len());
+    if n == 0 {
+        return;
+    }
+    let mut left = ks.iter().take(n).filter(|k| k.finished == 0).count();
+    while left > 1 {
+        let a = loop {
+            let b = crate::update::rng_next(g, w) as usize % n;
+            if ks[b].finished == 0 {
+                break b;
+            }
+        };
+        let b = loop {
+            let c = crate::update::rng_next(g, w) as usize % n;
+            if ks[c].finished == 0 && c != a {
+                break c;
+            }
+        };
+        let t = crate::update::rng_next(g, w);
+        let d: i16 = if t < 0x40 { 100 } else { crate::update::rng_next(g, w) as i16 + 1 };
+        ks[a].hits_dealt = ks[a].hits_dealt.wrapping_add(d);
+        if d != 100 && ks[a].max_hit < d {
+            ks[a].max_hit = d;
+        }
+        let old = ks[b].impact;
+        ks[b].impact = old.wrapping_add(d);
+        ks[b].stun = ks[b].stun.wrapping_add(d);
+        if 999 < old.wrapping_add(d) {
+            let k = &mut ks[b];
+            k.impact = (g.end_mode as i16).wrapping_add(1000);
+            k.flags |= 1;
+            k.race_pos = g.end_mode;
+            g.end_mode = g.end_mode.wrapping_sub(1);
+            k.finished = 2;
+            k.pause_bits = 0x80;
+            crate::collide::spin_out(k, g, w, 1);
+            left -= 1;
+            ks[a].knockouts = ks[a].knockouts.wrapping_add(1);
+        }
+    }
+}
+
 /// 0x80083004: the kart crossed the line for the last time (its last lap,
 /// or any lap once another kart has finished: 0x800B0CD8 > 1). It takes the
 /// next finishing place, the game hands it to the AI (flags bit 0) and its

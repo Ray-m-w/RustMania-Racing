@@ -142,6 +142,8 @@ pub struct SessionConfig {
     /// 0x800B0A10: the Doozers' vehicle turn (DOOZER BATTLE, race flag
     /// 0x100: each Doozer placed takes 0x800B0A14[turn] and steps it).
     pub doozer_turn: u8,
+    /// 0x800B07E4: a league race (TOURNAMENT - 1 PLAYER).
+    pub league: bool,
 }
 
 /// The Doozer (character 24): ADVENTURE's parked kart to rescue.
@@ -193,6 +195,7 @@ impl SessionConfig {
             boss_challenge: false,
             boss_pick: 0,
             doozer_turn: 0,
+            league: false,
         }
     }
 
@@ -679,6 +682,7 @@ impl Session {
                 time_limit: world.exe.i32(crate::globals::ADVENTURE_TIME + 4 * (race_type as u32 & 3)),
                 bosses: bosses as i16,
                 boss_cam: -1,
+                league: cfg.league,
             },
         };
         // FUN_8008C4AC: the first human's grid slot (*rng++ % karts), the
@@ -1243,6 +1247,11 @@ impl Session {
         if (g.mode == 1 || g.mode == 2 || g.mode == 3 || g.mode == 7 || adv_on) && g.race_over == 0 {
             let humans_done = ks.iter().filter(|x| (x.player_index as i32) < g.humans as i32 && x.finished != 0).count() as i32;
             if humans_done > 0 && humans_done == g.humans as i32 {
+                // 0x80079718 (phase 6b): a BATTLE LEAGUE battle with AI
+                // karts still standing settles them (FUN_80082450).
+                if g.adv.league && g.mode == 2 && (g.humans as i32) < g.karts as i32 {
+                    crate::progress::battle_league_finish(ks, g, w);
+                }
                 g.mode = 10;
                 g.results_clock = 0;
             }

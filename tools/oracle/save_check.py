@@ -2,6 +2,7 @@
 
     python tools/oracle/save_check.py unlock [OUTDIR]
     python tools/oracle/save_check.py league [OUTDIR]
+    python tools/oracle/save_check.py battle_league [OUTDIR]   (phase 6b)
 
 unlock: slot 1 (DOCK's course menu, read only) restored with RAM pokes on the
 save block 0x800E0190: DOCK's lap record 3000 (BEST LAP 0:10.00 on the
@@ -209,8 +210,96 @@ def league(out):
         shot(o, out, "league_points2", gp0=True)
 
 
+def battle_league(out):
+    """Phase 6b: the title state -> TOURNAMENT -> BATTLE LEAGUE (opened by a
+    poke of its flags 0x800E02B4 = 1 at the restore) -> CANYON's character
+    select -> CROSS -> START BATTLE 1 -> the battle; 300 VBlanks after GO
+    the player's kart is put out (+0x4C7 = 2, one TCP byte write), so the
+    game settles the five AI karts still standing (FUN_80082450) and goes
+    to the results; the VBlanks around it are recorded with the course
+    regions (OUT/battle: a capture.py directory) -> CROSS -> RACE POINTS:
+    league.txt as `league` writes it plus each kart's damage (+0x440 /
+    +0x43C / +0x43E), best crash +0x478 and knock-outs +0x4FB."""
+    import capture_route
+    with OracleLock():
+        o, b = Oracle(), Bridge()
+        slot = goto_course.SCRATCH
+        shutil.copyfile(os.path.join(ROOT, "analysis", "states", "title", "title_vb430.pst"), goto_course.slot_path(slot))
+        warm_up(o, b, slot)
+        regions = capture_route.REGIONS
+        b.set_regions(regions)
+        steps = [(0, 0)]
+        def st(vb, spec):
+            steps.extend([(vb, active_high(spec)), (vb + 6, 0)])
+        st(20, "start")
+        for k in range(3):
+            st(60 + 20 * k, "down")
+        st(130, "cross")
+        st(180, "down")
+        st(200, "down")
+        st(240, "cross")
+        b.arm_route([(v, m, 0x80, 0x80, 0x80, 0x80) for v, m in steps], end_vb=270)
+        b.arm_pokes([(BLOCK + 0x124, 1, 1, 1)])
+        g = b.restore_gen
+        seq0 = b.seq
+        o.load_state(slot)
+        b.wait_restore(g)
+        gen = b.restore_gen
+        wait_vb(b, 225)
+        shot(o, out, "battle_league_page")
+        at = wait_until(o, b, lambda: int.from_bytes(o.read(0x800B0FAC, 4), "little") == 5 and u16(o, 0x800B0AF4) == 0xFFFF, 4000, "CANYON")
+        wait_vb(b, at + 200)
+        print("CANYON at VB %d: mode %d, char select %d, league %d (%d)" % (at, u16(o, 0x800B0D46), o.read(0x800B07CB, 1)[0], u16(o, 0x800B07E4), o.read(0x800C1E4C, 1)[0]), flush=True)
+        press(o, "cross")
+        at = wait_until(o, b, lambda: u16(o, 0x800B0EA2) == 4 and o.read(0x800B07CB, 1)[0] == 0, 3000, "the league menu")
+        wait_vb(b, at + 60)
+        shot(o, out, "battle_league_menu", gp0=True)
+        press(o, "cross")
+        at = wait_until(o, b, lambda: u16(o, 0x800B0D46) == 2 and int.from_bytes(o.read(0x800B0C70, 4), "little") == 0, 6000, "GO")
+        wait_vb(b, at + 300)
+        out_vb = b.vb_since_restore
+        o.q("write_ram", addr="0x%08X" % (KART0 + 0x4C7), val=2)
+        at = wait_until(o, b, lambda: u16(o, 0x800B0D46) == 10, 2000, "results")
+        wait_vb(b, at + 60)
+        rows = {}
+        for sq, gg, vbr, vbt, data in b.slots(seq0):
+            if gg == gen and out_vb - 120 <= vbr <= at + 40:
+                rows[vbr] = data
+        keys = sorted(rows)
+        d = os.path.join(out, "battle")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "frames.bin"), "wb") as f:
+            for k in keys:
+                f.write(rows[k])
+        meta = {"route": {"name": "battle_league", "note": "save_check.py battle_league: the player put out (+0x4C7 = 2) at VB %d" % out_vb},
+                "regions": [[a, n] for a, n in regions], "vb": keys, "restore_gen": gen, "first_vb": keys[0], "last_vb": keys[-1],
+                "missing": [v for v in range(keys[0], keys[-1] + 1) if v not in rows]}
+        json.dump(meta, open(os.path.join(d, "meta.json"), "w"))
+        print("recorded VB %d..%d (%d rows), results at %d" % (keys[0], keys[-1], len(keys), at), flush=True)
+        shot(o, out, "battle_league_results")
+        press(o, "cross")
+        at = wait_until(o, b, lambda: u16(o, 0x800B0D46) == 0x11 and u16(o, 0x800B0A64) == 1, 3000, "RACE POINTS")
+        wait_vb(b, at + 30)
+        shot(o, out, "battle_league_points1", gp0=True)
+        n = u16(o, 0x800B0DFE)
+        order = [int.from_bytes(o.read(0x800D8F94 + 8 * i, 4), "little") for i in range(n)]
+        pts = o.read(0x800C1E08, 5 * 8)
+        tot = o.read(0x800C1E00, 8)
+        table = o.read(0x800C1E30, 8)
+        lines = []
+        for k in range(n):
+            r = o.read(KART0 + KSIZE * k, KSIZE)
+            i16 = lambda a: int.from_bytes(r[a:a + 2], "little", signed=True)
+            rank = order.index(k) if k in order else 9
+            lines.append("kart %d rank %d damage %d dealt %d taken %d crash %d kos %d game %s total %d" % (
+                k, rank, i16(0x440), i16(0x43C), i16(0x43E), i16(0x478), r[0x4FB], ",".join(str(x) for x in pts[5 * k:5 * k + 5]), tot[k]))
+        lines.append("table %s" % ",".join(str(x) for x in table[:n]))
+        open(os.path.join(out, "battle_league.txt"), "w").write(chr(10).join(lines) + chr(10))
+        print(chr(10).join(lines), flush=True)
+
+
 if __name__ == "__main__":
     what = sys.argv[1]
     out = sys.argv[2] if len(sys.argv) > 2 else os.path.join(ROOT, "analysis", "s7", "saves")
     os.makedirs(out, exist_ok=True)
-    {"unlock": unlock, "league": league}[what](out)
+    {"unlock": unlock, "league": league, "battle_league": battle_league}[what](out)

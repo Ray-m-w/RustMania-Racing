@@ -516,7 +516,8 @@ pub fn results_from_session(s: &mr_sim::session::Session) -> Option<hud::Results
     }
     let mut r = hud::Results::from_records(s.record(), leader, laps);
     let fastest = rows.iter().map(|k| k.best_lap).filter(|&b| b > 0).min().unwrap_or(0);
-    r.best_lap_record = r.best_lap > 0 && r.best_lap <= fastest;
+    // (no flash in a REVERSE RACE, race flag 2: FUN_8004CEA0)
+    r.best_lap_record = r.best_lap > 0 && r.best_lap <= fastest && s.globals.race_flags & 2 == 0;
     r.press_start = true;
     // FUN_80051698 case 10: the prompt blinks with 0x800B0AF0 (VBlanks
     // since the results began; oracle stunt/fx, phase 3)

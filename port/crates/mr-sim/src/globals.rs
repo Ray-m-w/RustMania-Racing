@@ -120,6 +120,9 @@ pub struct Adventure {
     pub bosses: i16,
     /// 0x800B0DCC: the boss the intro camera shows (mode 7; -1 none).
     pub boss_cam: i8,
+    /// 0x800B07E4: a league race (a BATTLE LEAGUE battle ends with
+    /// FUN_80082450 once every human is out).
+    pub league: bool,
 }
 
 /// 0x800ACF30: the ADVENTURE time limit per race type (race clock units,
@@ -263,6 +266,7 @@ impl RaceGlobals {
                 time_limit: m.i32(ADVENTURE_TIME + 4 * (m.i16(0x800B_0B9A) as u32 & 3)),
                 bosses: m.i16(0x800B_0C98),
                 boss_cam: m.i8(0x800B_0DCC),
+                league: m.i16(0x800B_07E4) != 0,
             },
             lap_record: m.i32(0x800E_0190u32.wrapping_add((8 * m.i8(0x800B_0E32) as i32 + 0x20 * m.i8(0x800B_0E38) as i32) as u32)),
         }

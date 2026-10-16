@@ -144,6 +144,7 @@ mod sp {
     pub const RACES: u32 = 0x800B_0430;
     pub const NEXT: u32 = 0x800B_0164;
     pub const START_RACE: u32 = 0x800B_03C8;
+    pub const START_BATTLE: u32 = 0x800B_03CC;
     pub const POINTS: u32 = 0x800B_0310;
     pub const QUIT_TOURNAMENT: u32 = 0x800B_02F0;
     pub const P1: u32 = 0x800B_05CC;
@@ -236,7 +237,7 @@ impl MenuTables {
             sp::GAME_MENU, sp::BACK_TO_MAIN_MENU, sp::BEST_LAP, sp::NOT_COLLECTED, sp::NOT_WON, sp::MUPPET, sp::VEHICLE, sp::PAUSED, sp::CONTINUE,
             sp::RETIRE, sp::RESTART, sp::YES, sp::NO, sp::MUSIC_VOLUME, sp::SOUND_VOLUME, sp::CONTROLLER, sp::JUMP, sp::BRAKE, sp::CONFIGURATION,
             sp::VIBRATION, sp::RACE_LEAGUE_A, sp::RACE_LEAGUE_B, sp::BATTLE_LEAGUE, sp::RANDOM_RACE_LEAGUE, sp::RACE_POINTS, sp::TOURNAMENT_POINTS,
-            sp::FINAL_TABLE, sp::AFTER, sp::RACES, sp::NEXT, sp::START_RACE, sp::POINTS, sp::QUIT_TOURNAMENT, sp::P1,
+            sp::FINAL_TABLE, sp::AFTER, sp::RACES, sp::NEXT, sp::START_RACE, sp::START_BATTLE, sp::POINTS, sp::QUIT_TOURNAMENT, sp::P1,
             sp::BEST_TIME, sp::ONE_PLAYER_STUNT_TRIAL, sp::TWO_PLAYER_STUNT_RACE, sp::ONE_PLAYER_BATTLE, sp::TWO_PLAYER_BATTLE,
             sp::REVERSE_RACE, sp::PLAY_MOVIE, sp::DOGFIGHT, sp::BOSS_CHALLENGE, sp::DOOZER_BATTLE, sp::BATTLE_AS_BOSS, sp::CHICKEN_CHASE,
             sp::REVERSE, sp::TWO_PLAYERS, sp::REVERSE_BATTLE_RACE,
@@ -837,8 +838,8 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
                     if p.0.league_flags(l) & 1 == 0 {
                         Item::new(t.st(si::QUESTION))
                     } else if l == mr_sim::save::LEAGUE_BATTLE {
-                        // the arenas: phase 4
-                        Item::new(txt(names[l])).grey(true)
+                        // the arenas (phase 6b): no laps
+                        Item::new(txt(names[l]))
                     } else {
                         let n = p.0.league_laps(l);
                         Item::new(format!("{} - {} {}", txt(names[l]), n, txt(if n == 1 { sp::LAP } else { sp::LAPS })))
@@ -865,7 +866,8 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
                 Page::LeagueMenu => {
                     sp_out.extend(select_button(t, 0x20, 0xD2, 2, false));
                     let list = [
-                        Item::new(format!("{} {}", txt(sp::START_RACE), race + 1)),
+                        // (the BATTLE LEAGUE: START BATTLE n, 0x800C1E4C)
+                        Item::new(format!("{} {}", txt(if fr.league.as_ref().is_some_and(|l| l.league as usize == mr_sim::save::LEAGUE_BATTLE) { sp::START_BATTLE } else { sp::START_RACE }), race + 1)),
                         Item::new(txt(sp::POINTS)),
                         Item::new(txt(sp::QUIT_TOURNAMENT)).tint([0xFF, 0x1F, 0x1F]),
                     ];
@@ -1164,7 +1166,10 @@ fn standings(t: &MenuTables, l: &crate::league::League, page: u8, here: Option<(
         out.extend(t.hud.text(course.as_bytes(), 0x1E0, 0xD2, 8, Size::from_arg(0), 4, 0x60));
         // 0x800B0D98: the mode's frame counter (here the menu's VBlanks)
         let row = if f < 0x3C { 0 } else { ((f - 0x3C) % 0xF0) / 0x3C };
-        out.extend(t.hud.text(t.headings[row as usize].as_bytes(), 0x100, row * 0xF + 0x78, 0, Size::from_arg(2), 4, 0x60));
+        // (the BATTLE LEAGUE's headings: POSITION, BEST CRASH, MOST
+        // KNOCKOUTS, MOST DAMAGE)
+        let h = row as usize + if l.league as usize == mr_sim::save::LEAGUE_BATTLE { 4 } else { 0 };
+        out.extend(t.hud.text(t.headings[h].as_bytes(), 0x100, row * 0xF + 0x78, 0, Size::from_arg(2), 4, 0x60));
         let mut x = 0x100 - (n - 1) * 0x1F;
         for (i, &k) in l.finish.iter().enumerate() {
             let k = k as usize;
@@ -1482,7 +1487,7 @@ impl Front {
                     confirm(&mut fx);
                     self.open(Page::Main);
                     self.row = 3;
-                } else if cross && flags & 1 != 0 && l != mr_sim::save::LEAGUE_BATTLE {
+                } else if cross && flags & 1 != 0 {
                     confirm(&mut fx);
                     let tables = crate::save::with(|s| s.tables.clone());
                     let mut seed = league_seed();

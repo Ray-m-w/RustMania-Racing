@@ -645,6 +645,61 @@ pub fn race_points(karts: &[LeagueKart], fastest: i32, start_mask: u8) -> Vec<Ra
         .collect()
 }
 
+/// One kart of a BATTLE LEAGUE battle, for its points (phase 6b).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BattleKart {
+    /// Finishing rank 0.. (0x800D8F94: by damage, least first).
+    pub rank: usize,
+    /// +0x43C damage dealt, +0x43E taken, +0x478 best crash, +0x4FB
+    /// knock-outs.
+    pub dealt: i16,
+    pub taken: i16,
+    pub best_crash: i16,
+    pub knockouts: u8,
+}
+
+/// FUN_8008C4AC (entering game mode 0x11 after a BATTLE LEAGUE battle,
+/// 0x800C1E4C = 1): place 3 / 2 / 1, +1 the best crash (+0x478, the
+/// biggest of all, above 0), +1 the most knock-outs (+0x4FB; nobody when
+/// two or more share it), +1 the most damage dealt (+0x43C, ties to the
+/// fewest taken +0x43E: the race league's most-hits loop). The fields of
+/// `RacePoints` keep the race's names: `fastest_lap` = best crash,
+/// `best_start` = most knock-outs, `most_hits` = most damage.
+pub fn battle_points(karts: &[BattleKart]) -> Vec<RacePoints> {
+    let (mut most, mut tie) = (0i16, -1i16);
+    let (mut ko, mut ko_n) = (0i32, 0);
+    let mut crash = 0i16;
+    for k in karts {
+        if most <= k.dealt {
+            if tie == -1 || most < k.dealt || k.taken < tie {
+                tie = k.taken;
+            }
+            most = k.dealt;
+        }
+        let v = k.knockouts as i8 as i32;
+        if ko < v {
+            ko_n = 1;
+            ko = v;
+        } else if ko != 0 && v == ko {
+            ko_n += 1;
+        }
+        crash = crash.max(k.best_crash);
+    }
+    if ko_n > 1 {
+        ko = 0;
+    }
+    karts
+        .iter()
+        .map(|k| {
+            let place = (3 - k.rank as i32).max(0) as u8;
+            let best = (crash > 0 && k.best_crash == crash) as u8;
+            let kos = (ko > 0 && k.knockouts as i8 as i32 == ko) as u8;
+            let dmg = (most > 0 && k.dealt == most && k.taken == tie) as u8;
+            RacePoints { place, fastest_lap: best, best_start: kos, most_hits: dmg, total: place + best + kos + dmg }
+        })
+        .collect()
+}
+
 /// The table order (0x800C1E30): kart slots by points, most first; the
 /// game's bubble sort keeps slot order among equals.
 pub fn table_order(points: &[u8]) -> Vec<usize> {
@@ -761,6 +816,34 @@ mod tests {
             }
         }
         let ours = race_points(&karts, fastest, mask);
+        assert_eq!(ours, game);
+        let totals: Vec<u8> = ours.iter().map(|p| p.total).collect();
+        assert_eq!(table_order(&totals), table);
+    }
+
+    /// Phase 6b: a BATTLE LEAGUE battle's points (oracle, local:
+    /// tools/oracle/save_check.py battle_league -> analysis/oracle/secrets/
+    /// battle_league/battle_league.txt: CANYON, the player put out 300
+    /// VBlanks after GO, FUN_80082450 settling the five AI karts) equal the
+    /// game's 0x800C1E08.. and its table 0x800C1E30.
+    #[test]
+    fn battle_league_points_match_oracle() {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../analysis/oracle/secrets/battle_league/battle_league.txt");
+        let Ok(text) = std::fs::read_to_string(p) else { return };
+        let num = |l: &str, key: &str| -> i64 { l.split_whitespace().skip_while(|w| *w != key).nth(1).unwrap().parse().unwrap() };
+        let mut karts = Vec::new();
+        let mut game = Vec::new();
+        let mut table = Vec::new();
+        for l in text.lines() {
+            if l.starts_with("kart") {
+                karts.push(BattleKart { rank: num(l, "rank") as usize, dealt: num(l, "dealt") as i16, taken: num(l, "taken") as i16, best_crash: num(l, "crash") as i16, knockouts: num(l, "kos") as u8 });
+                let g: Vec<u8> = l.split_whitespace().skip_while(|w| *w != "game").nth(1).unwrap().split(',').map(|x| x.parse().unwrap()).collect();
+                game.push(RacePoints { place: g[0], fastest_lap: g[1], best_start: g[2], most_hits: g[3], total: g[4] });
+            } else if let Some(t) = l.strip_prefix("table ") {
+                table = t.split(',').map(|x| x.parse::<usize>().unwrap()).collect();
+            }
+        }
+        let ours = battle_points(&karts);
         assert_eq!(ours, game);
         let totals: Vec<u8> = ours.iter().map(|p| p.total).collect();
         assert_eq!(table_order(&totals), table);

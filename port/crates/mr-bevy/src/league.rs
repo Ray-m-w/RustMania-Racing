@@ -101,6 +101,25 @@ impl League {
     /// kart's points from the session's finishing order, fastest lap
     /// (0x800B0DD0), best start (0x800B0E8C) and hits (+0x492 / +0x494).
     pub fn score(&mut self, s: &mr_sim::session::Session) {
+        if self.league as usize == mr_sim::save::LEAGUE_BATTLE {
+            // the BATTLE LEAGUE (phase 6b; 0x800C1E4C = 1): finishing
+            // order by damage, least first (0x800D8F94), its points from
+            // best crash, knock-outs and damage dealt
+            let ks: Vec<&mr_sim::kart::KartState> = std::iter::once(&s.kart).chain(s.others.iter().map(|o| &o.kart)).take(6).collect();
+            let mut order: Vec<usize> = (0..ks.len()).collect();
+            order.sort_by_key(|&i| ks[i].race_pos);
+            let mut karts = vec![mr_sim::save::BattleKart { rank: 5, ..Default::default() }; 6];
+            for (rank, &i) in order.iter().enumerate() {
+                let k = ks[i];
+                karts[i] = mr_sim::save::BattleKart { rank, dealt: k.hits_dealt, taken: k.stun, best_crash: k.max_hit, knockouts: k.knockouts };
+                self.finish[rank] = i as u8;
+            }
+            for (k, p) in mr_sim::save::battle_points(&karts).iter().enumerate() {
+                self.last[k] = *p;
+                self.points[k] = self.points[k].saturating_add(p.total);
+            }
+            return;
+        }
         let rows = s.results();
         let mut karts = vec![LeagueKart { rank: 5, best_lap: 0, hits: 0, hits_taken: 0 }; 6];
         for (rank, r) in rows.iter().enumerate() {

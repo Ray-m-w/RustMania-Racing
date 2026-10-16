@@ -44,11 +44,18 @@ frontend.md "Menus"):
   shows START RACE n / POINTS / QUIT TOURNAMENT; after each race RACE POINTS
   (place 3 / 2 / 1, fastest lap, best start, most hits) and TOURNAMENT
   POINTS; after six races the result (won when first in the table, best
-  points kept).
+  points kept);
+- the stunt courses (phase 3: the game's only timed mode, its "time
+  trial"; ../docs/spec/stunt-trial.md): a world's STUNT course (course
+  select / course list) -> 1 PLAYER STUNT TRIAL -> character select -> the
+  trial: one kart through the course's gates against the clock (FINISH THE
+  COURSE, the progress bar, the timer; the strip camera), the result
+  (COURSE FINISHED and the time, or OUT OF TIME after 10 minutes); a time
+  under the course's BEST TIME becomes the record (save.bin).
 Menu keys: arrows move, X (CROSS) selects, A (TRIANGLE) goes back; pad: D-pad,
 south, north. Shown greyed and not selectable (later phases): MEET THE
-MUPPETS, GAME STATUS, ADVENTURE, 2 PLAYER RACE, SECRETS, ADJUST SCREEN, MEMORY
-CARD, VIBRATION, BATTLE LEAGUE, MOVIE / MUSIC, stunt and battle courses.
+MUPPETS, GAME STATUS, ADVENTURE, 2 PLAYER RACE / STUNT RACE, SECRETS, ADJUST
+SCREEN, MEMORY CARD, VIBRATION, BATTLE LEAGUE, MOVIE / MUSIC, battle courses.
 Another course (or the title) restarts the program on it (`--course NAME
 --skip-title --menu --character C --vehicle V`, `--league` within a league;
 the scene is built at start-up).

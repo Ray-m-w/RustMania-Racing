@@ -193,6 +193,8 @@ pub struct HudTables {
     pub hits: String,
     pub press_start: String,
     pub you_beat: String,
+    /// "BEAT" (the "BEAT x" race's intro, FUN_80050F64).
+    pub beat: String,
     pub beat_you: String,
     pub names: Vec<String>,
     pub finish_the_course: String,
@@ -234,7 +236,8 @@ impl HudTables {
             press_start: exe_ptr_str(exe, addr::PTR_PRESS_START)?,
             you_beat: exe_ptr_str(exe, addr::PTR_YOU_BEAT)?,
             beat_you: exe_ptr_str(exe, addr::PTR_BEAT_YOU)?,
-            names: (0..12).map(|i| exe_ptr_str(exe, addr::NAMES + 8 * i)).collect::<Option<Vec<_>>>()?,
+            beat: exe_ptr_str(exe, 0x800B_031C)?,
+            names: (0..25).map(|i| exe_ptr_str(exe, addr::NAMES + 8 * i)).collect::<Option<Vec<_>>>()?,
             finish_the_course: exe_ptr_str(exe, addr::PTR_FINISH_THE_COURSE)?,
             course_finished: exe_ptr_str(exe, addr::PTR_COURSE_FINISHED)?,
             out_of_time: exe_ptr_str(exe, addr::PTR_OUT_OF_TIME)?,
@@ -450,6 +453,9 @@ pub struct HudState {
     /// Kart +0x4C7: finished (the race HUD gives way to results).
     pub finished: bool,
     pub minigame: Option<Minigame>,
+    /// The "BEAT x" race (race flag 0x10; phase 6): kart 1's character
+    /// (0x800C3A5E), named in the intro.
+    pub rival: Option<u8>,
     /// After the player's finish: the results panel (FUN_8004cea0) and
     /// "PRESS START". Drawn when `finished` or in mode 10.
     pub results: Option<Results>,
@@ -457,6 +463,33 @@ pub struct HudState {
     pub stunt: Option<StuntHud>,
     /// A battle (game mode 2; phase 4): its HUD instead of the race's.
     pub battle: Option<BattleHud>,
+    /// ADVENTURE (game mode 0xB; phase 6): its HUD instead of the race's.
+    pub adventure: Option<AdventureHud>,
+}
+
+/// What ADVENTURE's HUD reads (game modes 0xB and 10; FUN_8004F1C8,
+/// FUN_80050B2C, 0x800501E4).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AdventureHud {
+    /// 0x800B0FAC (the target icon per course).
+    pub course: u8,
+    /// The course's save flags (4 targets, 8 boxes, 0x10 tokens found).
+    pub course_flags: u16,
+    /// Left to collect: 0x800B0B60 - +0x4AD, 0x800B0A52 - +0x4AE,
+    /// 0x800B0EBC - +0x4AC.
+    pub boxes_left: i32,
+    pub tokens_left: i32,
+    pub targets_left: i32,
+    /// Kart +0x4F4 (the last token's colour), 0x800B0B90 (the spin).
+    pub token_colour: u8,
+    pub token_spin: i16,
+    /// 0x800ACF30[race type].
+    pub time_limit: i32,
+    /// 0x800B0803.
+    pub done: u8,
+    /// A stunt course (race type 3): the clock at (0x1C0, 0xD2), else
+    /// (0x100, 0x1E) (FUN_80050B2C).
+    pub stunt: bool,
 }
 
 /// What a battle's HUD reads (race type 2, game modes 2 and 10): the
@@ -568,6 +601,8 @@ impl Default for HudState {
             results: None,
             stunt: None,
             battle: None,
+            adventure: None,
+            rival: None,
         }
     }
 }
@@ -653,6 +688,11 @@ impl HudTables {
                     out.extend(self.text(self.ready.as_bytes(), 0x100, 0xD2, 0, Size::Large, 6, 0x60));
                 }
             } else if st.mode == 1 {
+                // the "BEAT x" race (race flag 0x10): "BEAT <kart 1>" above
+                if let Some(c) = st.rival {
+                    let line = format!("{} {}", self.beat, self.names.get(c as usize).cloned().unwrap_or_default());
+                    out.extend(self.text(line.as_bytes(), 0x100, 0x1E, 0, Size::Large, 7, 0x60));
+                }
                 let s = if st.laps == 1 { self.race_1_lap.clone() } else { self.race_n_laps.replace("%i", &st.laps.to_string()) };
                 out.extend(self.text(s.as_bytes(), 0x100, 0xD2, 0, Size::Large, 5, 0x60));
             }

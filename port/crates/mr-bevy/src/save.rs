@@ -156,18 +156,35 @@ pub fn race_tick(s: &mr_sim::session::Session, place: Option<(usize, usize)>, pl
             st.block.lap_record(w, t, s.globals.lap_record, s.kart.character, s.kart.vehicle);
             // 0x800832EC: player 1 first over the line; the bit is set as the
             // kart finishes (race flags 0, or DISCO's 8)
-            if plain_race && s.kart.finished == 1 && s.kart.race_pos == 1 && s.world.course.length.is_some() && st.block.race_won(w, t) {
+            if plain_race && s.globals.challenge == 0 && s.kart.finished == 1 && s.kart.race_pos == 1 && s.world.course.length.is_some() && st.block.race_won(w, t) {
                 info!("save: course {w}/{t} won");
             }
             // The stunt trial (FUN_80081DD8 @0x8008209C): through the last
             // gate with no race flags (not out of time): the won bit
-            if s.globals.race_type == 3 && s.globals.race_flags == 0 && s.kart.finished == 2 && s.world.course.gates.as_ref().is_some_and(|g| g.len() >= 4 && s.kart.gate as usize == g.len() / 2) && st.block.race_won(w, t) {
+            if s.globals.race_type == 3 && s.globals.race_flags == 0 && s.globals.challenge == 0 && s.kart.finished == 2 && s.world.course.gates.as_ref().is_some_and(|g| g.len() >= 4 && s.kart.gate as usize == g.len() / 2) && st.block.race_won(w, t) {
                 info!("save: stunt course {w}/{t} finished");
             }
             // A battle won (FUN_8007916C @0x80079398): a 1-player battle
             // with no race flags, the player the last kart standing
-            if s.globals.race_type == 2 && s.globals.race_flags == 0 && s.kart.finished == 1 && s.kart.race_pos == 1 && st.block.race_won(w, t) {
+            if s.globals.race_type == 2 && s.globals.race_flags == 0 && s.globals.challenge == 0 && s.kart.finished == 1 && s.kart.race_pos == 1 && st.block.race_won(w, t) {
                 info!("save: arena {w}/{t} won");
+            }
+        }
+        // ADVENTURE and its "BEAT x" race (phase 6): the secrets found
+        // (course flags 4 / 8 / 0x10 / 0x20 / 0x40 / 0x80) and the
+        // characters collected (0x800E02BC), as the race code set them
+        if s.globals.challenge != 0 || s.globals.race_flags & 0x10 != 0 {
+            if let Some((w, t)) = place {
+                let f = st.block.flags(w, t);
+                if s.globals.adv.course_flags & !f != 0 {
+                    st.block.or_flags(w, t, s.globals.adv.course_flags);
+                    info!("save: course {w}/{t} secrets {:#x}", s.globals.adv.course_flags);
+                }
+            }
+            let c = st.block.chars();
+            if s.globals.adv.characters & !c != 0 {
+                st.block.set_u32(0x12C, c | s.globals.adv.characters);
+                info!("save: characters {:#x}", c | s.globals.adv.characters);
             }
         }
         for c in 0..25u8 {

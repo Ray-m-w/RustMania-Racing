@@ -56,6 +56,11 @@ pub mod addr {
     pub const COURSE_FLAGS: u32 = 0x800A_CB38;
     /// Minimap per course, stride 0x14: u, v, w, h, x0, z0, x1, z1.
     pub const MAP: u32 = 0x800A_C6DC;
+    /// Turbo token sprites per colour, stride 8: u, v, w, h, slot, clut,
+    /// scale (FUN_8004F1C8's food icon; the 3D tokens' too).
+    pub const TOKENS: u32 = 0x800A_C1B8;
+    /// ADVENTURE target sprite per course, stride 6: u, v, w, h, slot, clut.
+    pub const TARGETS: u32 = 0x800A_C9C0;
 }
 
 /// A textured quad as FUN_8002fd04 builds it (POLY_FT4 0x2C, |2 unless abr
@@ -106,6 +111,11 @@ pub struct ItemTables {
     pub sparkle: [i16; 8],
     pub course_flags: Vec<u16>,
     pub maps: Vec<u8>,
+    pub tokens: Vec<u8>,
+    pub targets: Vec<u8>,
+    /// ADVENTURE's endings (0x800501E4): OUT OF TIME, TOKENS COLLECTED,
+    /// STARS COLLECTED, FOOD COLLECTED, DOOZER RESCUED, MOVIE COLLECTED.
+    pub adventure_done: Vec<String>,
 }
 
 fn cstr(exe: &[u8], a: u32) -> Option<String> {
@@ -138,6 +148,8 @@ impl ItemTables {
         sparkle.copy_from_slice(&i16s(addr::SPARKLE, 8)?);
         let course_flags = (0..0x25).map(|c| le::u16(exe, off(addr::COURSE_FLAGS) + 0xC * c + 2)).collect();
         let maps = exe.get(off(addr::MAP)..off(addr::MAP) + 0x14 * 0x25)?.to_vec();
+        let tokens = exe.get(off(addr::TOKENS)..off(addr::TOKENS) + 8 * 4)?.to_vec();
+        let targets = exe.get(off(addr::TARGETS)..off(addr::TARGETS) + 6 * 0x25)?.to_vec();
         Some(ItemTables {
             sin,
             anim,
@@ -155,6 +167,9 @@ impl ItemTables {
             sparkle,
             course_flags,
             maps,
+            tokens,
+            targets,
+            adventure_done: [0x800B_0258u32, 0x800B_0268, 0x800B_026C, 0x800B_0270, 0x800B_0274, 0x800B_0584].iter().map(|&a| pstr(exe, a)).collect::<Option<Vec<_>>>()?,
         })
     }
 
@@ -941,11 +956,92 @@ pub fn battle_hud(ht: &HudTables, t: &ItemTables, st: &crate::hud::HudState, s: 
     out
 }
 
+/// FUN_8004F1C8 (ADVENTURE, phase 6): what is left to collect, bottom
+/// left: the item boxes ("stars", colour 7, at (0x30, 0xD2) with the star
+/// icon above), the turbo tokens ("food", colour 6, the last token's
+/// colour spinning), the targets ("tokens", colour 5, the course's icon
+/// pulsing), each row only while its secret is not yet found, the next
+/// one 0x2D higher.
+pub fn adventure_counters(ht: &HudTables, t: &ItemTables, s: &ItemHud, a: &crate::hud::AdventureHud) -> Vec<Prim> {
+    let mut out = Vec::new();
+    let txt = |v: i32, y: i32, col: u8| ht.text(format!("{v}").as_bytes(), 0x30, y, 0, Size::Large, col, 0x60).into_iter().map(Prim::Sprt);
+    let mut y = 0xD2;
+    if a.course_flags & 8 == 0 {
+        y = 0xA5;
+        out.extend(txt(a.boxes_left, 0xD2, 7));
+        out.extend(quad(t, 0x30, 0xC2, 0xE, 0xE, 0, 0xC0, 0x80, 0x37, 0x37, [0x80; 3], 0x15, 0xB, 0x60).map(Prim::Ft4));
+    }
+    if a.course_flags & 0x10 == 0 {
+        out.extend(txt(a.tokens_left, y, 6));
+        let r = (a.token_colour as i8 as i32 & 3) as usize * 8;
+        let e = |k: usize| t.tokens.get(r + k).copied().unwrap_or(1) as i32;
+        let n = (e(6) * 4).max(1);
+        out.extend(quad(t, 0x30, y - 0x10, e(2) * 0x38 / n, e(3) * 0x38 / n, a.token_spin as i32, e(0) as u8, e(1) as u8, e(2) - 1, e(3) - 1, [0x80; 3], e(4) as u8, e(5) as u16, 0x60).map(Prim::Ft4));
+        y -= 0x2D;
+    }
+    if a.course_flags & 4 == 0 {
+        let c = a.course as usize * 6;
+        let e = |k: usize| t.targets.get(c + k).copied().unwrap_or(1) as i32;
+        let sv = t.sin(s.frame.rem_euclid(0x21) * 0x40);
+        out.extend(txt(a.targets_left, y, 5));
+        out.extend(quad(t, 0x30, y - 0x10, e(2) * sv / 0xC000, e(3) * sv / 0xC000, 0, e(0) as u8, e(1) as u8, e(2) - 1, e(3) - 1, [0x80; 3], e(4) as u8, e(5) as u16, 0x60).map(Prim::Ft4));
+    }
+    out
+}
+
+/// ADVENTURE's HUD (game mode 0xB; FUN_8004F688 case 0xB, case 10 ->
+/// 0x800501E4): the +0x4F9 icon; racing: SPECIAL MOVE / arrow, the weapon
+/// slots, the turbo meter, what is left to collect, the minimap; out or in
+/// game mode 10: what ended the run (0x800B0803: OUT OF TIME colour 7, else
+/// TOKENS / STARS / FOOD COLLECTED, DOOZER RESCUED, MOVIE COLLECTED, colour
+/// 5; large, (0x100, 0x1E)); racing: the time left (FUN_80050B2C, 0x800ACF30
+/// [race type] - the race clock, (0x100, 0x1E)); mode 10: "PRESS START".
+pub fn adventure_hud(ht: &HudTables, t: &ItemTables, st: &crate::hud::HudState, s: &ItemHud, a: &crate::hud::AdventureHud) -> Vec<Prim> {
+    let p = parts(ht, t, s);
+    let mut out = p.icon;
+    let sprites = |v: Vec<crate::hud::Sprite>| v.into_iter().map(Prim::Sprt);
+    if st.finished || st.mode == 10 {
+        let m = &t.adventure_done;
+        let (msg, col) = match a.done {
+            0 => (m.first(), 7),
+            1 => (m.get(1), 5),
+            2 => (m.get(2), 5),
+            4 => (m.get(3), 5),
+            8 => (m.get(4), 5),
+            0x10 => (m.get(5), 5),
+            _ => (None, 5),
+        };
+        if let Some(m) = msg {
+            out.extend(sprites(ht.text(m.as_bytes(), 0x100, 0x1E, 0, Size::Large, col, 0x60)));
+        }
+    } else {
+        out.extend(status(ht, t, s));
+        out.extend(weapons(t, s, 0x2D));
+        out.extend(meter(t, s));
+        out.extend(adventure_counters(ht, t, s, a));
+    }
+    if st.mode == 10 {
+        if let Some(r) = st.results {
+            if r.press_start && r.frame.rem_euclid(0x3C) < 0x2D {
+                out.extend(sprites(ht.text(ht.press_start.as_bytes(), 0x100, 0xD2, 0, Size::Medium, 4, 0x60)));
+            }
+        }
+        return out;
+    }
+    out.extend(minimap(t, s));
+    let (cx, cy) = if a.stunt { (0x1C0, 0xD2) } else { (0x100, 0x1E) };
+    out.extend(sprites(ht.text(crate::hud::timer_text((a.time_limit - st.race_time).max(0)).as_bytes(), cx, cy, 0, Size::Medium, 4, 0x60)));
+    out
+}
+
 /// The whole 1-player race HUD in the game's add order (FUN_80051698 ->
 /// FUN_8004f688 for the player, then the minimap; the timer FUN_80050b2c
 /// last): the minimal HUD of `HudTables::layout` with the item parts
 /// inserted where the game adds them.
 pub fn race_hud(ht: &HudTables, t: &ItemTables, st: &crate::hud::HudState, s: &ItemHud) -> Vec<Prim> {
+    if let Some(a) = &st.adventure {
+        return adventure_hud(ht, t, st, s, a);
+    }
     if let Some(sh) = &st.stunt {
         return stunt_hud(ht, t, st, s, sh);
     }

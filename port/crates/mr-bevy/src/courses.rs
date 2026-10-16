@@ -108,6 +108,68 @@ pub fn session_config(logic_hz: u8, character: u8, vehicle: u8) -> mr_sim::sessi
     cfg
 }
 
+/// The executable's tables (phase 6: the ADVENTURE / "BEAT x" set-ups).
+pub fn exe() -> &'static mr_sim::tables::ExeImage {
+    static E: OnceLock<mr_sim::tables::ExeImage> = OnceLock::new();
+    E.get_or_init(|| {
+        let mut disc = mr_disc::Disc::open_default().expect("open the disc");
+        mr_sim::tables::ExeImage::parse(&disc.read("SLUS_012.37").expect("read the executable")).expect("exe")
+    })
+}
+
+/// The Doozer's vehicles, one per ADVENTURE in turn (0x800B0A14, the turn
+/// 0x800B0A10).
+pub const DOOZER_VEHICLES: u32 = 0x800B_0A14;
+
+/// ADVENTURE on the loaded course (phase 6, game mode 0xB): the save's
+/// course flags and characters; `turn` picks the Doozer's vehicle.
+pub fn adventure_config(logic_hz: u8, character: u8, vehicle: u8, turn: u8) -> mr_sim::session::SessionConfig {
+    let mut cfg = mr_sim::session::SessionConfig { adventure: true, opponents: 0, lineup: None, ..session_config(logic_hz, character, vehicle) };
+    save_bits(&mut cfg);
+    cfg.doozer_vehicle = exe().u8(DOOZER_VEHICLES + (turn % 3) as u32);
+    cfg
+}
+
+/// The "BEAT x" race after an ADVENTURE's tag (race flag 0x10, game mode 1
+/// (2 in an arena)): the player against `rival` on its own vehicle (a
+/// random selectable one if it has none), the grid drawn, 3 laps
+/// (FUN_8008C4AC @0x8008DE8C, 0x8008E49C).
+pub fn beat_config(logic_hz: u8, character: u8, vehicle: u8, rival: u8) -> mr_sim::session::SessionConfig {
+    let mut cfg = session_config(logic_hz, character, vehicle);
+    let (_, mut v) = mr_sim::ai::character_entry(exe(), rival);
+    if v == 0xFF {
+        let mut seed = cfg.rand_seed;
+        loop {
+            v = (mr_sim::session::bios_rand(&mut seed) / 0x2AB) as u8;
+            if exe().u8(mr_sim::ai::addr::VEHICLES + 4 * v as u32 + 3) & 1 != 0 {
+                break;
+            }
+        }
+    }
+    cfg.opponents = 1;
+    cfg.lineup = Some([(rival, v); 5]);
+    cfg.draw_grid = true;
+    cfg.race_flags = 0x10;
+    cfg.laps = 3;
+    cfg.tagged = rival as i8;
+    save_bits(&mut cfg);
+    cfg
+}
+
+/// The save bits the race code reads and writes (course flags,
+/// characters collected).
+fn save_bits(cfg: &mut mr_sim::session::SessionConfig) {
+    if crate::menus::tool_run() {
+        return;
+    }
+    crate::save::with(|s| {
+        if let Some((w, t)) = s.tables.place(info().id) {
+            cfg.course_flags = s.block.flags(w, t);
+        }
+        cfg.characters = s.block.chars();
+    });
+}
+
 /// The course menu / character select session: the player's kart alone on
 /// grid slot 0 (FUN_80072D8C -> FUN_800609F4(kart, c, v, 0, 0)), ticked by
 /// `Session::menu_tick`.

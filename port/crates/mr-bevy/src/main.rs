@@ -273,6 +273,8 @@ pub struct SimRun {
     pub rows: Vec<(i64, u16, Vec<i64>)>,
     /// --route PATH: scripted input instead of the pad ((vb_start, mask) steps).
     pub route: Option<Vec<(u64, u16)>>,
+    /// ADVENTURE's tag: ticks of the fade before the "BEAT x" race.
+    pub fade: u32,
 }
 
 /// Parse an oracle route file's steps: [[vb, "cross+left"], ...] (tools/oracle).
@@ -371,14 +373,14 @@ impl SimRun {
         };
         let a: Vec<String> = std::env::args().collect();
         let route = a.iter().position(|x| x == "--route").and_then(|i| a.get(i + 1)).map(|p| parse_route(&std::fs::read_to_string(p).expect("read --route")));
-        SimRun { session, align: 0, buttons: vec![], rows: vec![], route }
+        SimRun { session, align: 0, buttons: vec![], rows: vec![], route, fade: 0 }
     }
 
     /// A play session with this configuration (the menus' requests).
     fn with_config(cfg: mr_sim::session::SessionConfig) -> SimRun {
         let mut disc = mr_disc::Disc::open_default().expect("open the disc (MRM_DISC or game.toml)");
         let session = mr_sim::session::Session::with_config(&mut disc, cfg).expect("start the mr-sim session");
-        SimRun { session, align: 0, buttons: vec![], rows: vec![], route: None }
+        SimRun { session, align: 0, buttons: vec![], rows: vec![], route: None, fade: 0 }
     }
 
     /// Write the driven inputs as an oracle route (tools/oracle/routes format):
@@ -700,7 +702,21 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
                 }
                 menus::Request::Race => {
                     let autopilot = run.session.autopilot;
-                    **run = SimRun::with_config(courses::session_config(pacing::logic_hz(), front.character, front.vehicle));
+                    let hz = pacing::logic_hz();
+                    let cfg = if front.adventure {
+                        // ADVENTURE (phase 6): the Doozer's vehicle turns
+                        // when it is placed (worlds 0..5, not yet rescued)
+                        let cfg = courses::adventure_config(hz, front.character, front.vehicle, front.doozer_turn);
+                        if cfg.cup < 6 && cfg.course_flags & 0x20 == 0 {
+                            front.doozer_turn = (front.doozer_turn + 1) % 3;
+                        }
+                        cfg
+                    } else if let Some(r) = front.beat {
+                        courses::beat_config(hz, front.character, front.vehicle, r)
+                    } else {
+                        courses::session_config(hz, front.character, front.vehicle)
+                    };
+                    **run = SimRun::with_config(cfg);
                     run.session.autopilot = autopilot;
                     // the vehicles won so far (0x800E02C0: the specials'
                     // "new vehicle" check)
@@ -752,6 +768,22 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
                     save::persist();
                 }
             }
+            // ADVENTURE's tag (phase 6): the "BEAT x" race after the game's
+            // fade (0x800B0CE0, ~35 VBlanks); on a stunt course the
+            // character is collected and the menus come back.
+            if run.route.is_none() && !menus::tool_run() && run.session.globals.challenge != 0 && run.session.globals.adv.tagged >= 0 {
+                run.fade += 1;
+                if run.fade * run.session.vblanks_per_tick() as u32 >= 35 {
+                    run.fade = 0;
+                    if run.session.globals.race_type == 3 {
+                        front.to_course_menu();
+                    } else {
+                        front.adventure = false;
+                        front.beat = Some(run.session.globals.adv.tagged as u8);
+                        front.request = menus::Request::Race;
+                    }
+                }
+            }
             crash::test_trigger(tick);
             let s = &run.session;
             // Every kart's record to the renderer (karts.rs, shadows).
@@ -767,7 +799,9 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
             hud_g.mode = s.globals.mode as u8;
             hud_g.stunt = hud::stunt_from_session(s);
             hud_g.battle = hud::battle_from_session(s);
-            if hud_g.stunt.is_some() || hud_g.battle.is_some() {
+            hud_g.adventure = hud::adventure_from_session(s);
+            hud_g.rival = (s.globals.race_flags & 0x10 != 0 && s.globals.adv.tagged >= 0).then_some(s.globals.adv.tagged as u8);
+            if hud_g.stunt.is_some() || hud_g.battle.is_some() || hud_g.adventure.is_some() {
                 // the stunt trial's / battle's results: "PRESS START" in mode 10
                 hud_g.results = (s.globals.mode == 10).then(|| mr_assets::hud::Results { press_start: true, frame: s.globals.results_clock, ..Default::default() });
             }

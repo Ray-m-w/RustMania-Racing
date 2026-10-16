@@ -469,6 +469,13 @@ pub struct Front {
     pub lap_record: i32,
     /// The league being played (league.rs; `--league`).
     pub league: Option<crate::league::League>,
+    /// Phase 6: GAME MENU -> ADVENTURE chose this character select's run
+    /// (0x800B07E6; game mode 0xB).
+    pub adventure: bool,
+    /// The "BEAT x" race after an ADVENTURE's tag: the rival (0x800B07FE).
+    pub beat: Option<u8>,
+    /// 0x800B0A10: the Doozer's vehicle turn (0..2).
+    pub doozer_turn: u8,
 }
 
 impl Front {
@@ -529,6 +536,9 @@ impl Default for Front {
             course: info.id,
             lap_record: info.lap_record,
             league: crate::league::League::load(),
+            adventure: false,
+            beat: None,
+            doozer_turn: 0,
         };
         if crate::title::on_title() { f } else { f.on_course(info.id, info.lap_record) }
     }
@@ -577,6 +587,8 @@ impl Front {
     /// menu session (the save re-read: records, won bits). In a league the
     /// results go to the standings instead (`League::score` first).
     pub fn to_course_menu(&mut self) {
+        self.adventure = false;
+        self.beat = None;
         self.refresh();
         let page = if self.league.as_ref().is_some_and(|l| l.started) { Page::Standings(1) } else { Page::CourseMenu };
         self.open(page);
@@ -912,7 +924,7 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
                     ]
                 }
                 Page::GameMenu => vec![
-                    Item::new(txt(sp::ADVENTURE)).grey(true),
+                    Item::new(txt(sp::ADVENTURE)),
                     Item::new(txt(sp::GAME_STATUS)).grey(true),
                     Item::new(txt(sp::CHANGE_COURSE)),
                     Item::new(format!("{} - {}", txt(sp::TOURNAMENT), txt(sp::ONE_PLAYER))).grey(true),
@@ -1502,6 +1514,14 @@ impl Front {
                 } else if cross && self.row == 2 {
                     confirm(&mut fx);
                     self.open(Page::WorldList);
+                } else if cross && self.row == 0 {
+                    // 0x80077958: ADVENTURE (0x800B07E6 = 1), the character
+                    // select (0x800B07CB = 1); its CROSS starts game mode
+                    // 0xB (FUN_80073E44 case 6).
+                    confirm(&mut fx);
+                    self.adventure = true;
+                    self.open(Page::CharSelect);
+                    self.request = Request::Menu { keep_camera: true };
                 }
             }
             Page::WorldList => {
@@ -1574,6 +1594,7 @@ impl Front {
                         self.league = None;
                         crate::league::League::clear();
                     }
+                    self.adventure = false;
                     self.open(Page::CourseMenu);
                     self.request = Request::Menu { keep_camera: true };
                 } else if cross && self.progress.char_open(self.character) && self.progress.vehicle_open(self.character, self.vehicle) {

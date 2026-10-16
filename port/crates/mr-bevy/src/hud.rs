@@ -58,11 +58,15 @@ pub struct HudGlobals {
     pub stunt: Option<hud::StuntHud>,
     /// A battle's HUD inputs (`battle_from_session`); None in a race.
     pub battle: Option<hud::BattleHud>,
+    /// ADVENTURE's HUD inputs (`adventure_from_session`; phase 6).
+    pub adventure: Option<hud::AdventureHud>,
+    /// The "BEAT x" race's rival (race flag 0x10): the intro's name.
+    pub rival: Option<u8>,
 }
 
 impl Default for HudGlobals {
     fn default() -> Self {
-        HudGlobals { countdown: 0, countdown_start: 300, laps: 3, mode: 1, race_time: None, flicker: 0, results: None, stunt: None, battle: None }
+        HudGlobals { countdown: 0, countdown_start: 300, laps: 3, mode: 1, race_time: None, flicker: 0, results: None, stunt: None, battle: None, adventure: None, rival: None }
     }
 }
 
@@ -323,6 +327,8 @@ fn state_from_player(
     st.results = g.results;
     st.stunt = g.stunt;
     st.battle = g.battle;
+    st.adventure = g.adventure;
+    st.rival = g.rival;
     if input.state != Some(st) {
         input.state = Some(st);
     }
@@ -515,7 +521,34 @@ pub fn results_from_session(s: &mr_sim::session::Session) -> Option<hud::Results
     // FUN_80051698 case 10: the prompt blinks with 0x800B0AF0 (VBlanks
     // since the results began; oracle stunt/fx, phase 3)
     r.frame = s.globals.results_clock;
+    // the "BEAT x" race (race flag 0x10): "YOU BEAT x" / "x BEAT YOU"
+    if s.globals.race_flags & 0x10 != 0 && s.globals.adv.tagged >= 0 {
+        r.rival = Some(s.globals.adv.tagged as u8);
+        r.rival_blink = s.globals.results_clock;
+    }
     Some(r)
+}
+
+/// ADVENTURE's HUD inputs from a live session (game mode 0xB; phase 6):
+/// what is left to collect, the time limit, what ended the run.
+pub fn adventure_from_session(s: &mr_sim::session::Session) -> Option<hud::AdventureHud> {
+    let g = &s.globals;
+    if g.challenge == 0 || crate::title::on_title() {
+        return None;
+    }
+    let k = &s.kart;
+    Some(hud::AdventureHud {
+        course: s.world.info.id,
+        course_flags: g.adv.course_flags,
+        boxes_left: g.items.boxes as i32 - k.adv_boxes as i32,
+        tokens_left: g.items.tokens as i32 - k.adv_tokens as i32,
+        targets_left: g.items.challenge[0] as i32 - k.adv_targets as i32,
+        token_colour: k.token_colour,
+        token_spin: g.items.token_spin[0],
+        time_limit: g.adv.time_limit,
+        done: g.adv.done,
+        stunt: g.race_type == 3,
+    })
 }
 
 /// The stunt trial's HUD inputs from a live session (race type 3; else
@@ -524,7 +557,7 @@ pub fn results_from_session(s: &mr_sim::session::Session) -> Option<hud::Results
 /// (the session's, lowered by this run's finish as the game's save block).
 /// 0x800B0C20 (the first finisher's time) is the player's own (one kart).
 pub fn stunt_from_session(s: &mr_sim::session::Session) -> Option<hud::StuntHud> {
-    if s.globals.race_type != 3 {
+    if s.globals.race_type != 3 || s.globals.challenge != 0 {
         return None;
     }
     let k = &s.kart;
@@ -551,7 +584,7 @@ pub fn stunt_from_session(s: &mr_sim::session::Session) -> Option<hud::StuntHud>
 /// +0x38C, place, clock and the course record (the session's, lowered by
 /// this win as the game's save block).
 pub fn battle_from_session(s: &mr_sim::session::Session) -> Option<hud::BattleHud> {
-    if s.globals.race_type != 2 || crate::title::on_title() {
+    if s.globals.race_type != 2 || s.globals.challenge != 0 || crate::title::on_title() {
         return None;
     }
     let k = &s.kart;

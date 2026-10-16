@@ -189,6 +189,31 @@ pub fn states(c: &Cap, vb: u32) -> (HudState, ItemHud, [(u16, u16); 32]) {
             st.results = Some(mr_assets::hud::Results { press_start: f88, frame: i32at(0x800B_0AF0), ..Default::default() });
         }
     }
+    // ADVENTURE (game modes 0xB / 10 with 0x800B07E6; phase 6): its HUD
+    // state (the course's save flags from MR_HUDX_FLAGS, default 0x101: the
+    // captures do not hold the save block).
+    if le::i16(&c.read(vb, 0x800B_07E6, 2), 0) != 0 && matches!(st.mode, 0xB | 10) {
+        let r = &it.kart;
+        let rt = c.read(vb, 0x800B_0B9A, 1)[0] as u32 & 3;
+        st.stunt = None;
+        st.battle = None;
+        st.adventure = Some(mr_assets::hud::AdventureHud {
+            course: it.course,
+            course_flags: std::env::var("MR_HUDX_FLAGS").ok().and_then(|v| u16::from_str_radix(v.trim_start_matches("0x"), 16).ok()).unwrap_or(0x101),
+            boxes_left: c.read(vb, 0x800B_0B60, 1)[0] as i32 - r[0x4AD] as i32,
+            tokens_left: c.read(vb, 0x800B_0A52, 1)[0] as i32 - r[0x4AE] as i32,
+            targets_left: c.read(vb, 0x800B_0EBC, 1)[0] as i32 - r[0x4AC] as i32,
+            token_colour: r[0x4F4],
+            token_spin: le::i16(&c.read(prev, 0x800B_0B90, 2), 0),
+            time_limit: std::env::var("MR_HUDX_LIMIT").ok().and_then(|v| v.parse().ok()).unwrap_or([72000, 72000, 54000, 180000][rt as usize]),
+            done: c.read(vb, 0x800B_0803, 1)[0],
+            stunt: rt == 3,
+        });
+        if st.mode == 10 {
+            let f88 = c.read(vb, 0x800B_0F88, 1)[0] != 0 || c.read(vb, 0x800B_0EBE, 1)[0] != 0;
+            st.results = Some(mr_assets::hud::Results { press_start: f88, frame: i32at(0x800B_0AF0), ..Default::default() });
+        }
+    }
     let tab = c.read(vb, 0x800D_FF00, 0x160);
     let mut slots = [(0u16, 0u16); 32];
     for (i, s) in slots.iter_mut().enumerate().take(0x16) {

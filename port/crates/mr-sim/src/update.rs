@@ -13,6 +13,9 @@ use crate::progress;
 
 /// The "Copy the buttons" target buttons, halfwords [exe 0x800B077C].
 pub const COPY_BUTTONS: u32 = 0x800B_077C;
+/// Challenge mode's race-clock limit per race type (0x800B0B9A), words
+/// [exe 0x800ACF30] (read at 0x80067FD0).
+pub const CHALLENGE_TIME_LIMITS: u32 = 0x800A_CF30;
 
 /// Read the next pseudo-random byte (`*rng++`).
 pub fn rng_next(g: &mut RaceGlobals, w: &World) -> u8 {
@@ -1078,15 +1081,19 @@ pub fn kart_update_full(k: &mut KartState, others: &mut Others, g: &mut RaceGlob
         if g.race_type == 3 {
             unreachable_in_scope!("time-trial ghost FUN_8006F64C");
         }
+        // 0x80067EC0: the time limits (race clock 300 a second: 179999 =
+        // 10 minutes; a race (mode 1) ends for every kart still short of
+        // the laps), and challenge mode's per-race-type limit (exe table
+        // 0x800ACF30): the kart is out (+0x4C7 = 2) and the AI takes it.
         if g.game_state != 0x1E && k.finished == 0 {
             let m = g.mode as i32;
             let end = ((m - 2) as u32) < 2 && 179_999 < k.race_time
                 || (m == 7 && 89_999 < k.race_time)
                 || (m == 0x14 && 179_999 < g.race_clock)
                 || (m == 1 && 179_999 < g.race_clock && (k.lap as i16) < g.laps)
-                || (g.challenge != 0);
+                || (g.challenge != 0 && g.race_clock >= w.exe.i32(CHALLENGE_TIME_LIMITS + 4 * g.race_type as u32));
             if end {
-                unreachable_in_scope!("race over: kart handed to the AI (+0x4C7 = 2)");
+                time_up(k, g, w);
             }
         }
         if k.respawn_timer != 0 {
@@ -1341,6 +1348,20 @@ fn boost_lurch(k: &mut KartState, dt: i32) {
 }
 
 /// FUN_800434C8(kart, strength): pad rumble request (kept: it is kart state).
+/// 0x80067FE4..0x80068044: time is up for a kart still racing: it is out
+/// (+0x4C7 = 2), the view toggle is latched (+0x4F9 = 0x80), the AI drives
+/// it (+0x496 | 1), one random byte picks its voice bit (+0x4DD | 0x10 for a
+/// byte >= 0, | 0x20 below: every kart, the player too) and
+/// FUN_8009192C(kart, 1) re-rolls its special-move preference.
+pub fn time_up(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
+    k.finished = 2;
+    k.pause_bits = 0x80;
+    k.flags |= 1;
+    let b = rng_next(g, w) as i8;
+    k.event_bits |= if b < 0 { 0x20 } else { 0x10 };
+    crate::ai::reroll(k, g, w, g.karts);
+}
+
 pub fn rumble(k: &mut KartState, g: &RaceGlobals, strength: i32) {
     if g.game_state == 0x1E {
         return;

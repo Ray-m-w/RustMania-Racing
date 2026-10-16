@@ -344,3 +344,38 @@ fn finished_player_is_driven_by_the_ai() {
     let d = ((s.kart.x - p0.0) as i64).abs() + ((s.kart.z - p0.1) as i64).abs();
     assert!(d > 100_000, "the finished kart did not drive on ({d})");
 }
+
+/// The 10-minute limit (0x80067F64: race clock 0x800B0A94 > 179999 with
+/// laps to go): every kart still racing is out (+0x4C7 = 2), driven by the
+/// AI, and the race goes to the results in the same frame's simulation
+/// (oracle: analysis/oracle/tri/DOCK_TIMEUP, `mr-course-check --dir`).
+#[test]
+fn ten_minute_limit_ends_the_race() {
+    std::env::set_current_dir(oracle::repo_root()).unwrap();
+    let Ok(mut disc) = mr_disc::Disc::open_default() else {
+        eprintln!("skip: no disc");
+        return;
+    };
+    for hz in [30u8, 60] {
+        let mut s = mr_sim::session::Session::new(&mut disc).unwrap();
+        s.set_logic_hz(hz);
+        while s.countdown() != 0 {
+            s.tick(0).unwrap();
+        }
+        s.globals.race_clock = 179_000;
+        let mut t = 0;
+        while s.globals.mode != 10 {
+            s.tick(0).unwrap();
+            t += 1;
+            assert!(t < 400, "{hz} Hz: no time-up");
+        }
+        assert!(s.globals.race_clock > 179_999);
+        assert_eq!((s.kart.finished, s.kart.flags & 1, s.kart.pause_bits), (2, 1, 0x80));
+        assert!(s.others.iter().all(|o| o.kart.finished == 2 && o.kart.flags & 1 == 1));
+        let p0 = (s.kart.x, s.kart.z);
+        for _ in 0..200 {
+            s.tick(0).unwrap();
+        }
+        assert_ne!((s.kart.x, s.kart.z), p0, "{hz} Hz: the AI drives the kart on");
+    }
+}

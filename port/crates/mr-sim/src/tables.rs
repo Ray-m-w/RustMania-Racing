@@ -51,6 +51,10 @@ impl ExeImage {
         i16::from_le_bytes([self.u8(addr), self.u8(addr + 1)])
     }
 
+    pub fn i32(&self, addr: u32) -> i32 {
+        i32::from_le_bytes([self.u8(addr), self.u8(addr + 1), self.u8(addr + 2), self.u8(addr + 3)])
+    }
+
     pub fn i16s(&self, addr: u32, n: usize) -> Vec<i16> {
         (0..n).map(|i| self.i16(addr + 2 * i as u32)).collect()
     }

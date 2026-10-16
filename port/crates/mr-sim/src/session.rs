@@ -876,16 +876,18 @@ impl Session {
         // with dt 3).
         g.dt = dt;
         // FUN_8007916C's start: once every human has finished (+0x4C7) the
-        // race goes to the results (mode 10): that frame runs no race
-        // simulation (0x800792xx, FUN_800606D0, then LAB_80079A58).
+        // race goes to the results (mode 10: 0x8007975C, FUN_800606D0 (not
+        // ported: results / sound set-up), 0x80079858) and the frame goes on
+        // to LAB_80079A58, which in mode 10 runs the race simulation as any
+        // other frame (0x80079A84 -> 0x80079D50). (Until Session 7 the
+        // session skipped the frame's simulation; oracle captures
+        // tri/DOCK_FINISH and tri/DOCK_TIMEUP show the karts moving in it.)
+        // With two humans and one finished the game just goes on
+        // (0x80079708).
         if g.mode == 1 && g.race_over == 0 {
             let humans_done = ks.iter().filter(|x| (x.player_index as i32) < g.humans as i32 && x.finished != 0).count() as i32;
-            if humans_done > 0 {
-                if humans_done < g.humans as i32 {
-                    crate::unreachable_in_scope!("one of two human players finished (split screen)");
-                }
+            if humans_done > 0 && humans_done == g.humans as i32 {
                 g.mode = 10;
-                return;
             }
         }
         // 1. Water animation.

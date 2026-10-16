@@ -11,8 +11,8 @@ teacher-forced + free run on one capture), tests green, docs + log updated.
 
 | # | phase | contents | status |
 |---|---|---|---|
-| 0 | Stability | TRIANGLE lock-on (A-key freeze), every reachable stub ported, fuzz, crash log instead of freeze | in progress |
-| 1 | Front end | main menu, 1P race flow: character, vehicle, course select (replaces the pick-list), pause menu, options menu (= our settings, incl. faithful toggles) | |
+| 0 | Stability | TRIANGLE lock-on (A-key freeze), every reachable stub ported, fuzz, crash log instead of freeze | DONE 2026-10-16 (1,520 fuzz runs, 0 panics) |
+| 1 | Front end | main menu, 1P race flow: character, vehicle, course select (replaces the pick-list), pause menu, options menu (= our settings, incl. faithful toggles) | in progress |
 | 2 | Saves + progression | memory-card-style save file (progress, unlocks, lap records, options), cups / tournament flow and standings, unlocks (secret courses, world 7), rival races ("YOU BEAT x") | |
 | 3 | Time trial | time trial mode, ghosts (FUN_8006F64C), records | |
 | 4 | Battle | the 10 arenas (ARENA/* + VOLCANO, HOUSE, WHATEVER), battle rules, Chicken Chase | |

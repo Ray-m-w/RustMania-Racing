@@ -21,8 +21,9 @@ use crate::world::World;
 pub struct ContactRules {
     /// 0x800B0DFE: karts in the race (humans + AI).
     pub karts: i32,
-    /// 0x800B07FE: challenge "tagged" kart (-1 in a race).
-    pub tagged: i8,
+    /// Kart 0's +0x4C7 (0x800C356F) at the contact pass: ADVENTURE tags
+    /// only while the player is still in.
+    pub kart0_finished: u8,
 }
 
 /// FUN_800418D8 for kart 0 against `others` (slots 1..).
@@ -38,7 +39,8 @@ pub fn frame_contacts(k: &mut KartState, others: &mut [KartState], g: &mut RaceG
         o.close_kart = 0;
     }
     for o in others.iter_mut() {
-        pair(k, o, g, w, rules, &mut nearest);
+        let mut k0 = false;
+        pair(k, o, g, w, rules, &mut nearest, &mut k0);
     }
 }
 
@@ -56,7 +58,11 @@ pub fn frame_contacts_all(karts: &mut [KartState], g: &mut RaceGlobals, w: &Worl
     for j in 0..n {
         let (head, tail) = karts.split_at_mut(j + 1);
         for o in tail.iter_mut() {
-            pair(&mut head[j], o, g, w, rules, &mut nearest);
+            let mut k0 = false;
+            pair(&mut head[j], o, g, w, rules, &mut nearest, &mut k0);
+            if k0 {
+                head[0].event_bits = 8;
+            }
         }
     }
 }
@@ -91,7 +97,40 @@ pub fn spin_out(k: &mut KartState, g: &mut RaceGlobals, w: &World, turns: i32) {
 }
 
 /// FUN_80040018(a, b).
-fn pair(a: &mut KartState, b: &mut KartState, g: &mut RaceGlobals, w: &World, r: &ContactRules, nearest: &mut [u32]) {
+/// 0x80040908 / 0x80041788 (ADVENTURE, phase 6): while the player is in,
+/// touching the parked kart with flag 0x20 (the course's character to
+/// collect) tags its character (0x800B07FE); FUN_8007916C then starts the
+/// "BEAT x" challenge race (a stunt course: the character is collected
+/// at once, course secret 0x40). Once tagged, every contact sets kart 0's
+/// event bits to 8.
+fn tag(a: &mut KartState, b: &mut KartState, g: &mut RaceGlobals, r: &ContactRules, k0: &mut bool) {
+    if g.challenge != 0 && r.kart0_finished == 0 {
+        if a.flags & 0x20 == 0 {
+            if b.flags & 0x20 != 0 {
+                g.adv.tagged = b.character as i8;
+            }
+        } else {
+            g.adv.tagged = a.character as i8;
+        }
+    }
+    if g.adv.tagged == -1 {
+        return;
+    }
+    if g.race_type == 3 {
+        g.adv.course_flags |= 0x40;
+        crate::sound::play(g, 0x24, 5000, 0x80, 0x80);
+    }
+    if a.player_index == 0 {
+        a.event_bits = 8;
+    } else if b.player_index == 0 {
+        b.event_bits = 8;
+    } else {
+        *k0 = true;
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn pair(a: &mut KartState, b: &mut KartState, g: &mut RaceGlobals, w: &World, r: &ContactRules, nearest: &mut [u32], k0: &mut bool) {
     let t = &w.tables;
     if a.special != 0 || b.special != 0 || a.item_e7 != -1 || b.item_e7 != -1 || a.item_ee != -1 || b.item_ee != -1 {
         return;
@@ -234,9 +273,7 @@ fn pair(a: &mut KartState, b: &mut KartState, g: &mut RaceGlobals, w: &World, r:
         a.obj_e5 = 1;
         b.obj_e5 = 1;
         crate::sound::kart_land(a, b, g, w);
-        if g.challenge != 0 || r.tagged != -1 {
-            crate::unreachable_in_scope!("challenge tag on kart contact");
-        }
+        tag(a, b, g, r, k0);
     }
     if b.own_bit & a.hit_mask != 0 || a.own_bit & b.hit_mask != 0 {
         // 0x80040774: still overlapping: push apart.
@@ -407,9 +444,7 @@ fn pair(a: &mut KartState, b: &mut KartState, g: &mut RaceGlobals, w: &World, r:
             crate::items::spark(g, [px, py, pz], v, 0x18, 0x10, [0xFF, 0x7F, 0]);
         }
     }
-    if g.challenge != 0 || r.tagged != -1 {
-        crate::unreachable_in_scope!("challenge tag on kart contact");
-    }
+    tag(a, b, g, r, k0);
 }
 
 /// 0x80040FE0: spin impulse from the angle between a kart's heading and

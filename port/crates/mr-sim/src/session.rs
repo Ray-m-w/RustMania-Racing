@@ -117,7 +117,28 @@ pub struct SessionConfig {
     /// None: the seeds just before `rand_seed` (a race straight after the
     /// course load). mr-course-check finds it per capture (`--course-load`).
     pub course_load_seed: Option<u32>,
+    /// Phase 6 (docs/spec/adventure.md): ADVENTURE on this course (game
+    /// mode 0xB, 0x800B07E6 = 1): the player alone with the parked Doozer
+    /// and the course's character, collecting secrets against the clock.
+    pub adventure: bool,
+    /// The "BEAT x" race (race flag 0x10) after a tag: the character
+    /// raced (0x800B07FE), -1 none.
+    pub tagged: i8,
+    /// The save block the race code reads and writes: the course's flags
+    /// (0x800E0196 + 8 * slot + 0x20 * world) and the characters
+    /// collected (0x800E02BC).
+    pub course_flags: u16,
+    pub characters: u32,
+    /// ADVENTURE: the Doozer's vehicle (0x800B0A14[0x800B0A10]: 6, 25, 27
+    /// in turn, one step per ADVENTURE).
+    pub doozer_vehicle: u8,
 }
+
+/// The Doozer (character 24): ADVENTURE's parked kart to rescue.
+pub const DOOZER: u8 = 24;
+/// 0x800ACB3C + 0xC * course: the course's character to collect in its
+/// ADVENTURE (-1 none) [RAM].
+pub const COURSE_CHARACTER: u32 = 0x800A_CB3C;
 
 /// The opponents of the oracle's slot-2 DOCK race (analysis/ai/*): Clifford
 /// on the TRIKE, Bobo W_BUGGY, Sal FLAME, Beaker M_BUGGY, Chef HOTDOG.
@@ -154,6 +175,11 @@ impl SessionConfig {
             faces: None,
             race_flags: 0,
             course_load_seed: None,
+            adventure: false,
+            tagged: -1,
+            course_flags: 0,
+            characters: 0xFF,
+            doozer_vehicle: 6,
         }
     }
 
@@ -522,21 +548,25 @@ impl Session {
         let race_type = world.info.race_type;
         // Race courses (mode 1) and the stunt courses' 1 PLAYER STUNT TRIAL
         // (race type 3, mode 3: one kart, FUN_8008C4AC).
-        let stunt = world.info.mode == 3;
+        // ADVENTURE (phase 6): game mode 0xB on any course (one player; the
+        // parked karts are added below).
+        let adventure = cfg.adventure && !title;
+        let stunt = world.info.mode == 3 && !adventure;
         // The arenas' 1 PLAYER BATTLE (race type 2, mode 2; phase 4,
         // docs/spec/battle.md): 6 karts (5 above cup 6), grid draws
         // modulo 6, 0x800B0CD8 = the karts left standing.
-        let battle = world.info.mode == 2 && !title;
-        if world.info.mode != 1 && !stunt && !battle && !title {
+        let battle = world.info.mode == 2 && !title && !adventure;
+        if world.info.mode != 1 && !stunt && !battle && !title && !adventure {
             return Err(SessionError::OutOfScope(format!("course {} is not a race course (mode {})", world.info.name, world.info.mode)));
         }
-        let n = if stunt { 1 } else { n };
+        let n = if stunt || adventure { 1 } else { n };
         // FUN_8008C4AC @0x8008DE48: the grid draw's modulus (6 in modes 2 /
         // 7 / 0x14, else the kart count).
         let grid_mod = if battle { 6 } else { n };
         let race_flags = if title { crate::title::TITLE_RACE_FLAGS } else { cfg.race_flags };
-        let mode = if title { crate::title::TITLE_MODE } else { world.info.mode };
-        let setup = RaceSetup { mode, race_type, race_flags, challenge: 0, humans: 1, karts: n as i16 };
+        let mode = if title { crate::title::TITLE_MODE } else if adventure { 0xB } else { world.info.mode };
+        let challenge = adventure as i16;
+        let setup = RaceSetup { mode, race_type, race_flags, challenge, humans: 1, karts: n as i16 };
         let mut rand_state = cfg.rand_seed;
         let mut globals = RaceGlobals {
             dt: if cfg.logic_hz == 60 { 1 } else { 2 },
@@ -545,10 +575,11 @@ impl Session {
             // FUN_8008C4AC @0x8008DA4C: 300 + 180 VBlanks to GO (none on
             // the title: 0x800B0C70 = 0 for course 0x1E).
             // Mode 3 (the stunt trial): 0x78 + 180 (0x8008DA2C).
-            countdown: if title { 0 } else if stunt || battle { 0x78 + 180 } else { crate::race::COUNTDOWN_START },
-            countdown_len: if stunt || battle { 0x78 } else { 300 },
+            // ADVENTURE: no countdown (0x8008DA44: 0x800B0C70 = 0).
+            countdown: if title || adventure { 0 } else if stunt || battle { 0x78 + 180 } else { crate::race::COUNTDOWN_START },
+            countdown_len: if stunt || battle || adventure { 0x78 } else { 300 },
             race_flags,
-            challenge: 0,
+            challenge,
             race_type,
             race_over: 0,
             game_state: cfg.event,
@@ -581,11 +612,27 @@ impl Session {
             // FUN_800616A0 (hooks); the turntables' draws below.
             objects: crate::objects::ObjectState { jets: crate::objects::jets_load(&world), hooks: crate::hooks::load(&world), weather: crate::weather::Weather::load(&world), lifts: world.course.objects.lifts.clone(), group_enabled: crate::breakables::race_load(world.info.id, world.ter.groups.len(), &world.course.objects.breakables), ..Default::default() },
             hud_gauge_rgb: None,
+            adv: crate::globals::Adventure {
+                tagged: if adventure { -1 } else { cfg.tagged },
+                done: 0,
+                course_flags: cfg.course_flags,
+                characters: cfg.characters,
+                time_limit: world.exe.i32(crate::globals::ADVENTURE_TIME + 4 * (race_type as u32 & 3)),
+            },
         };
         // FUN_8008C4AC: the first human's grid slot (*rng++ % karts), the
         // other karts on the following slots; with no opponents the
         // configured slot.
-        let grid0 = if (n > 1 || stunt) && (cfg.lineup.is_none() || cfg.draw_grid) { crate::ai::grid_start(&mut globals, &world, grid_mod as i16) } else { cfg.grid };
+        let grid0 = if adventure {
+            // (the draw *rng++ % 1 is still taken; the player's grid point
+            // is drawn in FUN_800609F4)
+            crate::ai::grid_start(&mut globals, &world, 1);
+            0
+        } else if (n > 1 || stunt) && (cfg.lineup.is_none() || cfg.draw_grid) {
+            crate::ai::grid_start(&mut globals, &world, grid_mod as i16)
+        } else {
+            cfg.grid
+        };
         // The title's kart 0 is an AI kart like the others (FUN_8008C4AC
         // @0x8008DCC4: the same draw for every slot).
         let mut title_first: Option<(u8, u8)> = None;
@@ -646,10 +693,75 @@ impl Session {
                 });
             }
         }
+        // ADVENTURE (FUN_8008C4AC @0x8008E8A4): the parked karts. Worlds
+        // 0..5 until the Doozer is rescued (secret 0x20): the Doozer (24) on
+        // its vehicle, flags 0x41; then the course's character (0x800ACB3C
+        // + 0xC * course) while not collected: its own vehicle (a random
+        // selectable one if it has none), flags 0x21.
+        let mut n = n;
+        if adventure {
+            let tpl = crate::ai::vehicle_templates(&world.exe, &world.tables).map_err(|e| SessionError::Disc(e.0))?;
+            let mut parked: Vec<(u8, u8, u16)> = Vec::new();
+            if cfg.cup < 6 && cfg.course_flags & 0x20 == 0 {
+                parked.push((DOOZER, cfg.doozer_vehicle, 0x41));
+            }
+            let c = world.exe.u8(COURSE_CHARACTER + 0xC * cfg.course as u32) as i8;
+            let mut extra = parked.len();
+            let char_kart = c >= 0 && cfg.characters & (1 << (c as u32 & 0x1F)) == 0;
+            if char_kart {
+                extra += 1;
+            }
+            for k in 0..extra {
+                let slot = n + k;
+                let (pc, pv, pf) = if k < parked.len() {
+                    parked[k]
+                } else {
+                    let (_, mut v) = crate::ai::character_entry(&world.exe, c as u8);
+                    if v == 0xFF {
+                        let mut rand = || bios_rand(&mut rand_state);
+                        loop {
+                            v = (rand() / 0x2AB) as u8;
+                            if world.exe.u8(crate::ai::addr::VEHICLES + 4 * v as u32 + 3) & 1 != 0 {
+                                break;
+                            }
+                        }
+                    }
+                    (c as u8, v, 0x21)
+                };
+                let vpath = crate::ai::model_path(&world.exe, crate::ai::addr::VEHICLE_PATHS, pv, "MDL").ok_or_else(|| SessionError::Disc(format!("vehicle {pv}: no model")))?;
+                let cpath = crate::ai::model_path(&world.exe, crate::ai::addr::CHARACTER_PATHS, pc, "MDL").ok_or_else(|| SessionError::Disc(format!("character {pc}: no model")))?;
+                let mut t = tpl[pv as usize];
+                crate::ai::place_wheels(&mut t, &read_mdl(disc, &vpath)?);
+                let cm = read_mdl(disc, &cpath)?;
+                // (0x800B0DFE counts the karts made so far: the parked
+                // karts get no history ring)
+                let ps = RaceSetup { karts: slot as i16, ..setup };
+                let (rec, k) = {
+                    let mut rand = || bios_rand(&mut rand_state);
+                    init_kart(
+                        &KartInit { world: &world, template: &t, setup: ps, slot: slot as u8, character: pc, vehicle: pv, grid: 0, flags: pf, character_pivot_y: cm.parts[0].record.pivot[1] },
+                        &mut globals.rng,
+                        &mut rand,
+                    )
+                };
+                others.push(OtherKart {
+                    ai: crate::ai::AiState::from_record(&rec),
+                    kart: k,
+                    record: rec,
+                    character: pc,
+                    vehicle: pv,
+                    driver: crate::render::DriverModel { part0_pivot: cm.parts[0].record.pivot },
+                    vehicle_model: vpath,
+                    character_model: cpath,
+                });
+            }
+            n += extra;
+            globals.karts = n as i16;
+        }
         // FUN_8009192C(&kart0, karts): every kart's special-move roll (not
         // on the title: the course-0x1E branch skips it; the stunt trial's
         // single kart too: oracle MOUNTAIN, +0x47A = 3000).
-        if !title && (n > 1 || stunt) {
+        if !title && (n > 1 || stunt || adventure) {
             let mut ks: Vec<KartState> = std::iter::once(kart.clone()).chain(others.iter().map(|o| o.kart.clone())).collect();
             crate::ai::race_load_roll(&mut ks, &mut globals, &world, n as i16);
             let mut it = ks.into_iter();
@@ -732,6 +844,9 @@ impl Session {
             let mut rand = || bios_rand(&mut seed);
             if cfg.items {
                 crate::items::pickups::init(&mut s.globals.items, &s.world.pickups, false, &mut rand);
+                if s.globals.challenge != 0 {
+                    crate::items::pickups::adventure_load(&mut s.globals.items, cfg.course_flags);
+                }
             } else {
                 for _ in 0..n_tok {
                     rand();
@@ -988,6 +1103,11 @@ impl Session {
                 k.finished = 1;
                 k.shown_pos = 1;
                 k.race_pos = 1;
+                // 0x8007926C: an arena's "BEAT x" battle (race flag 0x10)
+                // won by player 1 collects the character.
+                if g.race_flags & 0x10 != 0 && k.player_index == 0 {
+                    g.adv.characters |= 1 << (g.adv.tagged as u32 & 0x1F);
+                }
                 let t = k.race_time;
                 k.race_time = (t / 3) * 3 + if t % 3 > 1 { 3 } else { 0 };
                 // 0x80079318: a 1-player battle with no race flags (the
@@ -1001,7 +1121,29 @@ impl Session {
                 k.flags |= 1;
             }
         }
-        if (g.mode == 1 || g.mode == 2 || g.mode == 3 || g.mode == 7) && g.race_over == 0 {
+        // ADVENTURE (0x800795A4, phase 6): a secret found (0x800B0803)
+        // puts the player out, the AI drives on. A tagged character
+        // (0x800B07FE) instead asks for its "BEAT x" race (0x800797xx: race
+        // flag 0x10, game mode 1; the caller starts it): no results.
+        if g.challenge != 0 && !(0x1D..=0x1E).contains(&g.game_state) && ks[0].finished == 0 && g.adv.done != 0 {
+            ks[0].finished = 1;
+            ks[0].pause_bits = 0x80;
+            ks[0].flags |= 1;
+        }
+        if g.challenge != 0 && g.adv.tagged != -1 && !(0x1D..=0x1E).contains(&g.game_state) {
+            if g.race_type == 3 {
+                // 0x800796xx: on a stunt course the character is collected
+                // at once (0x800B07FF = 1) and the game returns to the menus.
+                g.adv.characters |= 1 << (g.adv.tagged as u32 & 0x1F);
+            } else {
+                // 0x800797xx: race flag 0x10 for the coming "BEAT x" race
+                // (game mode 1; 2 in an arena); the run goes on under the
+                // fade until the caller loads it.
+                g.race_flags = 0x10;
+            }
+        }
+        let adv_on = g.mode == 0xB && g.adv.tagged == -1;
+        if (g.mode == 1 || g.mode == 2 || g.mode == 3 || g.mode == 7 || adv_on) && g.race_over == 0 {
             let humans_done = ks.iter().filter(|x| (x.player_index as i32) < g.humans as i32 && x.finished != 0).count() as i32;
             if humans_done > 0 && humans_done == g.humans as i32 {
                 g.mode = 10;
@@ -1019,7 +1161,7 @@ impl Session {
         }
         // 2. Contact pass over every pair (FUN_800418D8), then the human's
         //    look-at target (FUN_80041A20 / FUN_80041CC4).
-        let rules = crate::collide::ContactRules { karts: n as i32, tagged: -1 };
+        let rules = crate::collide::ContactRules { karts: n as i32, kart0_finished: ks[0].finished };
         crate::collide::frame_contacts_all(ks, g, w, &rules);
         for k in ks.iter_mut() {
             crate::render::aim_at_course(k, g, w);
@@ -1194,7 +1336,7 @@ impl Session {
         let ck = CameraKart::from_record(&self.record, Some(k.trail));
         let watched = {
             let (rec0, others) = (&self.record, &self.others);
-            camera::resolve_watch(ck.watch_target, |n| if n == 0 { Some(rec0.as_slice()) } else { others.get(n - 1).map(|o| o.record.as_slice()) }, &w.course.look_points)
+            camera::resolve_watch(ck.watch_target, |n| if n == 0 { Some(rec0.as_slice()) } else { others.get(n - 1).map(|o| o.record.as_slice()) }, &w.course.look_points, w.pickups.challenge.as_ref().map_or(&[][..], |l| &l.points[..]))
         };
         let inp = CameraInput {
             watched,
@@ -1207,6 +1349,9 @@ impl Session {
                 laps: g.laps,
                 game_state: self.camera_menu.map_or(g.mode, |m| m.0),
                 menu_row: self.camera_menu.map_or(0, |m| m.1),
+                // ADVENTURE's finish rule (0x800706E0): 0x800B07E6, 0x800B0803.
+                finish_gate_a: g.challenge,
+                finish_gate_b: g.adv.done as i8,
                 ..self.camera_globals.clone()
             },
         };
@@ -1511,6 +1656,14 @@ impl Session {
         self.load_frame = false;
         self.rand_state = m.u32(0x8000_9010);
         self.sync_ter();
+    }
+
+    /// Analysis (mr-course-check): the round robin as a sample that already
+    /// holds the next frame's FUN_8005C2EC step left it (0x800C3058[n]
+    /// stepped; `load_mem` assumes it was not).
+    pub fn round_robin_stepped(&mut self, m: &crate::mem::Mem) {
+        let n = 1 + self.others.len();
+        self.pick = m.u8(0x800C_3058 + n as u32) as usize % n;
     }
 
     /// Analysis: write the race state into memory `m` (the fields the port

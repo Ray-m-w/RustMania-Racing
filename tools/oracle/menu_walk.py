@@ -36,16 +36,17 @@ shots = []
 for s in filter(None, sys.argv[3].split(",")):
     vb, _, name = s.partition(":")
     shots.append((int(vb), name.replace("+gp0", ""), name.endswith("+gp0")))
-out_dir = sys.argv[4] if len(sys.argv) > 4 else os.path.join(ROOT, "analysis", "s7", "menus", "oracle")
+out_dir = os.path.abspath(sys.argv[4]) if len(sys.argv) > 4 else os.path.join(ROOT, "analysis", "s7", "menus", "oracle")
 os.makedirs(out_dir, exist_ok=True)
 
 
 def globals_(o):
     r = o.read(0x800B0D46, 2) + o.read(0x800B0E8A, 2) + o.read(0x800B0E24, 2) + \
-        o.read(0x800B0FAC, 2) + o.read(0x800B07AB, 1)
-    return "mode %#x sub %d cursor %d,%d course %d rows %d" % (
+        o.read(0x800B0FAC, 2) + o.read(0x800B07AB, 1) + o.read(0x800B0EA2, 2) +         o.read(0x800B07E6, 2)
+    return "mode %#x sub %d cursor %d,%d course %d rows %d csub %d adv %d" % (
         int.from_bytes(r[0:2], "little"), int.from_bytes(r[2:4], "little", signed=True),
-        r[4], r[5], int.from_bytes(r[6:8], "little"), r[8])
+        r[4], r[5], int.from_bytes(r[6:8], "little"), r[8],
+        int.from_bytes(r[9:11], "little", signed=True), int.from_bytes(r[11:13], "little"))
 
 
 with OracleLock():

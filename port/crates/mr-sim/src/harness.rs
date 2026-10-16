@@ -200,7 +200,7 @@ impl<'a> Run<'a> {
     fn others(m: &Mem) -> (Vec<KartState>, ContactRules) {
         let n = m.i16(0x800B_0DFE) as u32 + m.i16(0x800B_0C98) as u32;
         let others = (1..n).map(|s| oracle::load_kart(m, s)).collect();
-        (others, ContactRules { karts: m.i16(0x800B_0DFE) as i32, tagged: m.i8(0x800B_07FE) })
+        (others, ContactRules { karts: m.i16(0x800B_0DFE) as i32, kart0_finished: m.u8(0x800C_356F) })
     }
 
     /// Overwrite `fields` of `k` with the record `src`.

@@ -330,7 +330,7 @@ fn run(cap: &Capture, t: &CameraTables, o: &Opts) -> Report {
         // TRIANGLE's watch target: the other karts' records of the tick (a
         // capture with all six), the course's look points.
         let lp: Vec<[i32; 3]> = o.world.map(|w| w.course.look_points.clone()).unwrap_or_default();
-        let watched = resolve_watch(kart.watch_target, |n| cap.rd(vb, KART0 + (KART_SIZE * n) as u32, KART_SIZE), &lp);
+        let watched = resolve_watch(kart.watch_target, |n| cap.rd(vb, KART0 + (KART_SIZE * n) as u32, KART_SIZE), &lp, &[]);
         let inp = CameraInput { kart, globals, watched };
         // The camera is the frame's last reader of the random byte pointer:
         // when it draws a byte, the captured end-of-frame pointer is one past.

@@ -92,6 +92,39 @@ pub struct RaceGlobals {
     /// with this frame (three random bytes while +0x43E is 0x321..0x3E7;
     /// None = 0x80 grey). Render side.
     pub hud_gauge_rgb: Option<[u8; 3]>,
+    /// Phase 6: ADVENTURE (game mode 0xB) and the challenge races it leads
+    /// to (docs/spec/adventure.md).
+    pub adv: Adventure,
+}
+
+/// ADVENTURE state (game mode 0xB, 0x800B07E6 != 0) and the save bits the
+/// race code writes (docs/spec/adventure.md).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Adventure {
+    /// 0x800B07FE: the character a collision tagged (the parked kart with
+    /// flag 0x20), -1 none; the challenge race ("BEAT x", race flag 0x10)
+    /// is against it.
+    pub tagged: i8,
+    /// 0x800B0803: what ended the adventure (1 the ten targets, 2 every
+    /// item box, 4 every turbo token, 8 the Doozer at its goal, 0x10 the
+    /// movie object), 0 none yet.
+    pub done: u8,
+    /// The course's save flags (0x800E0196 + 8 * slot + 0x20 * world).
+    pub course_flags: u16,
+    /// 0x800E02BC: characters collected (bit per character).
+    pub characters: u32,
+    /// 0x800ACF30[race type]: the adventure's time limit (race clock).
+    pub time_limit: i32,
+}
+
+/// 0x800ACF30: the ADVENTURE time limit per race type (race clock units,
+/// 300 = 1 s): 4:00 on races A / B, 3:00 in an arena, 10:00 on a stunt
+/// course [RAM].
+pub const ADVENTURE_TIME: u32 = 0x800A_CF30;
+
+/// The save block's course flags word of the current course slot.
+pub fn course_flags_addr(m: &Mem) -> u32 {
+    0x800E_0196u32.wrapping_add((8 * m.i8(0x800B_0E32) as i32 + 0x20 * m.i8(0x800B_0E38) as i32) as u32)
 }
 
 /// The 60 Hz logic mode: every tick is one VBlank (dt = 1); two ticks make
@@ -217,6 +250,13 @@ impl RaceGlobals {
             hz60: Hz60::default(),
             objects: crate::objects::ObjectState::read(m),
             hud_gauge_rgb: None,
+            adv: Adventure {
+                tagged: m.i8(0x800B_07FE),
+                done: m.u8(0x800B_0803),
+                course_flags: m.u16(course_flags_addr(m)),
+                characters: m.u32(0x800E_02BC),
+                time_limit: m.i32(ADVENTURE_TIME + 4 * (m.i16(0x800B_0B9A) as u32 & 3)),
+            },
             lap_record: m.i32(0x800E_0190u32.wrapping_add((8 * m.i8(0x800B_0E32) as i32 + 0x20 * m.i8(0x800B_0E38) as i32) as u32)),
         }
     }
@@ -225,5 +265,8 @@ impl RaceGlobals {
     pub fn write(&self, m: &mut Mem) {
         m.put_u32(addr::RNG, self.rng);
         m.put_u8(addr::SOUND_EVENT, self.sound_event);
+        m.put_u8(0x800B_07FE, self.adv.tagged as u8);
+        m.put_u8(0x800B_0803, self.adv.done);
+        m.put_u32(0x800E_02BC, self.adv.characters);
     }
 }

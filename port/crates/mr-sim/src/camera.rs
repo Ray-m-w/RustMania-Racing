@@ -659,7 +659,7 @@ pub enum Watched {
 /// Resolve a watch target (+0x4FE) for the camera: `kart(n)` returns kart
 /// record n (as the race frame left it), `look_points` the course's DAT
 /// chunk 7.
-pub fn resolve_watch<'a>(target: i8, kart: impl Fn(usize) -> Option<&'a [u8]>, look_points: &[[i32; 3]]) -> Watched {
+pub fn resolve_watch<'a>(target: i8, kart: impl Fn(usize) -> Option<&'a [u8]>, look_points: &[[i32; 3]], challenge: &[[i32; 3]]) -> Watched {
     match target {
         -1 => Watched::None,
         0x7F => unreachable_in_scope!("watch target 0x7F (mode 0x14 point 0x800CB658)"),
@@ -668,7 +668,7 @@ pub fn resolve_watch<'a>(target: i8, kart: impl Fn(usize) -> Option<&'a [u8]>, l
             let k = CameraKart::from_record(rec, None);
             Watched::Kart { pos: k.pos, mount: k.mount, matrix: k.matrix }
         }
-        t if t < 0x1E => unreachable_in_scope!(format!("watch target {t}: challenge object (0x800D1C78)")),
+        t if t < 0x1E => Watched::Point(*challenge.get(t as usize - 10).unwrap_or_else(|| unreachable_in_scope!(format!("watch target {t}: no such challenge object")))),
         t => Watched::Point(*look_points.get(t as usize - 0x1E).unwrap_or_else(|| unreachable_in_scope!(format!("watch target {t} past the look points")))),
     }
 }
@@ -698,6 +698,17 @@ pub fn nearest_point_all(pts: &[[i32; 3]], x: i32, y: i32, z: i32) -> Option<usi
     idx
 }
 
+/// What ADVENTURE's TRIANGLE look-at needs besides the kart: the challenge
+/// objects (DAT chunk 0x0C, TER units), the nearest kart's position (+0x4DC
+/// set) and whether the Doozer is in the race (more than one kart and kart
+/// 1's +0x496 & 0x40).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LookAdventure<'a> {
+    pub points: &'a [[i32; 3]],
+    pub nearest_kart: Option<[i32; 3]>,
+    pub doozer: bool,
+}
+
 /// FUN_800728C0(kart): TRIANGLE's camera lock (called from the kart update
 /// FUN_80064B5C @0x800651F0 on the press). Sets the watch target +0x4FE:
 /// - mode 0x14: 0x7F (the fixed point 0x800CB658);
@@ -709,7 +720,7 @@ pub fn nearest_point_all(pts: &[[i32; 3]], x: i32, y: i32, z: i32) -> Option<usi
 ///   0x800D1C64) of fewer than 96 points, the look point nearest to the
 ///   driver position (+0x330 / +0x338 / +0x340 >> 5, FUN_80081170 mode 1):
 ///   target 0x1E + i. With no list, or 96 or more points, it stays -1.
-pub fn look_at_search(k: &mut crate::kart::KartState, g: &crate::globals::RaceGlobals, look_points: &[[i32; 3]]) {
+pub fn look_at_search(k: &mut crate::kart::KartState, g: &crate::globals::RaceGlobals, look_points: &[[i32; 3]], adv: &LookAdventure) {
     // 0x800728D0
     if g.mode == 0x14 {
         k.look_target = 0x7F;
@@ -724,7 +735,29 @@ pub fn look_at_search(k: &mut crate::kart::KartState, g: &crate::globals::RaceGl
     // compared by the challenge-object loop.
     // 0x800729B8: challenge objects.
     if g.challenge != 0 {
-        unreachable_in_scope!("TRIANGLE look-at: challenge objects (FUN_800728C0 @0x800729CC)");
+        // ADVENTURE (phase 6): the nearest of the challenge objects still
+        // out (state 1: the targets and the movie object; the Doozer goals
+        // while the Doozer is in the race), compared at the kart's >> 10
+        // and the object's >> 5, against the nearest kart's distance
+        // (only when that kart is the target already).
+        let mut best = adv.nearest_kart.map_or(0, |o| {
+            let d = [(k.x - o[0]) >> 10, (k.y - o[1]) >> 10, (k.z - o[2]) >> 10];
+            d[0].wrapping_mul(d[0]).wrapping_add(d[1].wrapping_mul(d[1])).wrapping_add(d[2].wrapping_mul(d[2]))
+        });
+        let (ten, goals) = (g.items.challenge[0] as usize, g.items.challenge[1] as usize);
+        for i in 0..ten + goals + 1 {
+            let take = if i < ten || ten + goals <= i { g.items.pickups[crate::items::FIRST_CHALLENGE + i].state == 1 } else { adv.doozer };
+            let Some(p) = take.then(|| adv.points.get(i).copied()).flatten() else { continue };
+            let d = [(k.drv_x >> 10) - (p[0] >> 5), (k.ref_y >> 10) - (p[1] >> 5), (k.drv_z >> 10) - (p[2] >> 5)];
+            let d2 = d[0].wrapping_mul(d[0]).wrapping_add(d[1].wrapping_mul(d[1])).wrapping_add(d[2].wrapping_mul(d[2]));
+            if k.look_target as i8 == -1 || d2 < best {
+                k.look_target = (i as u8).wrapping_add(10);
+                best = d2;
+            }
+        }
+        if k.look_target as i8 != -1 {
+            return;
+        }
     }
     // 0x80072B94: the look points (no chunk 7: the pointer is null; an
     // empty list finds nothing either).

@@ -38,12 +38,36 @@ pub fn contact_phase(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &Ti
             crate::objects::jet_push(k, g, w);
         }
         if k.flags & 0x40 != 0 && k.item_ee != -1 {
-            unreachable_in_scope!("FUN_800627E0");
+            doozer_goal(k, g, w);
         }
     }
     // FUN_80062E38: the mirror planes (stunt.rs; lists 0x800D1C68 /
     // 0x800D1CA4, null on the race courses: +0x4F8 = -1).
     crate::stunt::mirrors(k, w);
+}
+
+/// FUN_800627E0 (ADVENTURE, phase 6): the rescued Doozer (the parked kart
+/// with flag 0x40, +0x4EE = its goal among the challenge objects after the
+/// ten targets) eases onto the goal point, 1/16 of the way per VBlank, its
+/// velocity cleared and its engine (+0x442) running down by 0x40 a VBlank.
+fn doozer_goal(k: &mut KartState, g: &RaceGlobals, w: &World) {
+    let (ten, goals) = (g.items.challenge[0] as usize, g.items.challenge[1]);
+    if ten == 0 || goals == 0 {
+        return;
+    }
+    let Some(p) = w.pickups.challenge.as_ref().and_then(|l| l.points.get((ten as i32 + k.item_ee as i32) as usize)).copied() else {
+        return;
+    };
+    for _ in 0..substeps(g.dt) {
+        k.x = k.x.wrapping_add(div_pow2((p[0] << 5).wrapping_sub(k.x), 4));
+        k.y = k.y.wrapping_add(div_pow2((p[1] << 5).wrapping_sub(k.y), 4));
+        k.z = k.z.wrapping_add(div_pow2((p[2] << 5).wrapping_sub(k.z), 4));
+    }
+    k.vx = 0;
+    k.vy = 0;
+    k.vz = 0;
+    let e = (k.engine as u16 as i32).wrapping_sub(g.dt.wrapping_mul(0x40));
+    k.engine = if (e << 16) < 0 { 0 } else { e as i16 };
 }
 
 /// FUN_80061FC0: touching a trigger object (within 16 units >> 10 of its
@@ -359,7 +383,11 @@ fn race_finished(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
         k.event_bits |= bits;
     }
     if g.race_flags & 0x10 != 0 && k.race_pos == 1 && k.player_index == 0 {
-        unreachable_in_scope!("challenge win bits (race flag 0x10)");
+        // 0x800830xx: the "BEAT x" race won: the character is collected
+        // (0x800E02BC) and the course's boss is beaten (secret 0x40).
+        g.adv.characters |= 1 << (g.adv.tagged as u32 & 0x1F);
+        g.adv.course_flags |= 0x40;
+        crate::sound::play(g, 0x24, 5000, 0x80, 0x80);
     }
     if (k.lap as i32) < g.laps as i32 {
         // Finished early (someone else already has): count the karts still

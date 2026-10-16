@@ -109,7 +109,7 @@ fn main() {
         patch(&mut k, cap.read(vb, KART_ARRAY, RECORD_SIZE).unwrap());
         let nk = ma.i16(0x800B_0DFE) as u32 + ma.i16(0x800B_0C98) as u32;
         let mut others: Vec<KartState> = (1..nk).map(|s| oracle::load_kart(&ma, s)).collect();
-        let rules = mr_sim::collide::ContactRules { karts: ma.i16(0x800B_0DFE) as i32, tagged: ma.i8(0x800B_07FE) };
+        let rules = mr_sim::collide::ContactRules { karts: ma.i16(0x800B_0DFE) as i32, kart0_finished: ma.u8(0x800C_356F) };
         let w = &world;
         if a.iter().any(|x| x == "--all-karts") {
             // Every kart: the contact pass over all pairs, kart 0's update,

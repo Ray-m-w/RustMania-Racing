@@ -192,7 +192,7 @@ pub fn teacher_force_update(cap: &Capture, base: &[u8], w: &World, ticks: &[u32]
         let inp = inputs(&ma, &mb);
         let n = ma.i16(KARTS) as usize;
         let mut karts: Vec<KartState> = (0..n).map(|s| oracle::load_kart(&ma, s as u32)).collect();
-        let rules = ContactRules { karts: n as i32, tagged: ma.i8(0x800B_07FE) };
+        let rules = ContactRules { karts: n as i32, kart0_finished: ma.u8(0x800C_356F) };
         contacts(&mut karts, &mut g, w, &rules);
         for slot in 1..n {
             let rb = mb.slice(kaddr(slot), RECORD_SIZE);
@@ -344,7 +344,7 @@ pub fn free_run(cap: &Capture, base: &[u8], w: &World, ticks: &[u32], seed: Opti
     }
     let mut rr = m0.u8(ROUND_ROBIN + 6) as usize;
     let mut fr = FreeRun { rows: Vec::new(), stopped: None, laps: BTreeMap::new(), lap_times: BTreeMap::new() };
-    let rules = ContactRules { karts: n as i32, tagged: m0.i8(0x800B_07FE) };
+    let rules = ContactRules { karts: n as i32, kart0_finished: m0.u8(0x800C_356F) };
     for i in 0..ticks.len() - 1 {
         let mb = cap.mem_at(ticks[i + 1], Some(base));
         let ma = cap.mem_at(ticks[i], Some(base));

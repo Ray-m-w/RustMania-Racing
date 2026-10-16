@@ -213,7 +213,10 @@ pub fn kart_update_full(k: &mut KartState, others: &mut Others, g: &mut RaceGlob
             } else if k.item_fire == 0 {
                 // FUN_800728C0: lock the camera onto the nearest kart, or
                 // the nearest look point when no kart is near.
-                crate::camera::look_at_search(k, g, &w.course.look_points);
+                let nearest = if k.nearest_kart >= 0 { others.get_mut(k.nearest_kart as usize).map(|o| [o.x, o.y, o.z]) } else { None };
+                let doozer = g.karts > 1 && others.get_mut(1).is_some_and(|o| o.flags & 0x40 != 0);
+                let adv = crate::camera::LookAdventure { points: w.pickups.challenge.as_ref().map_or(&[][..], |l| &l.points[..]), nearest_kart: nearest, doozer };
+                crate::camera::look_at_search(k, g, &w.course.look_points, &adv);
                 k.item_fire = 1;
             }
         }

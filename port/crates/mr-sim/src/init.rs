@@ -98,15 +98,43 @@ pub fn init_kart(p: &KartInit, rng: &mut u32, rand: &mut dyn FnMut() -> i32) -> 
     let title = s.mode == 0x10 && s.race_type == 2;
     let stunt = s.mode == 3 && s.race_type == 3;
     let battle = s.mode == 2 && s.race_type == 2;
-    if !(s.mode == 1 && (0..=1).contains(&s.race_type) || title || stunt || battle) || s.race_flags & 7 != 0 || s.challenge != 0 || p.flags & 0x60 != 0 {
-        crate::unreachable_in_scope!("grid placement outside a plain one-player race");
-    }
-    let gi = (p.grid + if stunt && s.karts == 1 { 2 } else { 0 }) as usize;
-    let Some(g) = w.course.grid.get(gi) else {
-        crate::unreachable_in_scope!("grid index past the course's grid (centre-of-course start)");
+    // ADVENTURE (phase 6, game mode 0xB, 0x800B07E6): the parked karts
+    // take the grid points after the race grid (flag 0x40, the Doozer: 18
+    // on a race course, 6 in an arena, 12 on a stunt course; flag 0x20, the
+    // character to collect: the next), the player a random one of the six
+    // before (12 + rand() / 0x1556; arenas 0, stunt courses 6).
+    let base = match s.race_type {
+        2 => 6,
+        3 => 0xC,
+        _ => 0x12,
     };
-    let (x, y0, z) = (g.pos[0] << 5, g.pos[1] << 5, g.pos[2] << 5);
-    let heading = ratan2(t, g.pos[0] - g.behind[0], g.pos[2] - g.behind[2]) & 0xFFF;
+    let gi = if p.flags & 0x40 != 0 {
+        base
+    } else if p.flags & 0x20 != 0 {
+        base + 1
+    } else if s.challenge != 0 {
+        let b = match s.race_type {
+            2 => 0,
+            3 => 6,
+            _ => 0xC,
+        };
+        b + rand() / 0x1556
+    } else {
+        if !(s.mode == 1 && (0..=1).contains(&s.race_type) || title || stunt || battle) || s.race_flags & 7 != 0 {
+            crate::unreachable_in_scope!("grid placement outside a plain one-player race");
+        }
+        p.grid + if stunt && s.karts == 1 { 2 } else { 0 }
+    } as usize;
+    // 0x80060BE0: past the course's grid list (an ADVENTURE's parked or
+    // random points on a course with a short list): the centre of the
+    // TER's bounds (0x800B0B6C.. min / max), heading 0.
+    let (x, y0, z, heading) = match w.course.grid.get(gi) {
+        Some(g) => (g.pos[0] << 5, g.pos[1] << 5, g.pos[2] << 5, ratan2(t, g.pos[0] - g.behind[0], g.pos[2] - g.behind[2]) & 0xFFF),
+        None => {
+            let (lo, hi) = (w.ter.min, w.ter.max);
+            (lo[0].wrapping_add(hi[0]).wrapping_mul(16), lo[1].wrapping_add(hi[1]).wrapping_mul(16), lo[2].wrapping_add(hi[2]).wrapping_mul(16), 0)
+        }
+    };
     put32(&mut r, 0x000, x);
     put32(&mut r, 0x004, y0);
     put32(&mut r, 0x008, z);

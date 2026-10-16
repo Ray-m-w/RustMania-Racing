@@ -279,6 +279,9 @@ kart_fields! {
     /// 0x800B0AE8 of FUN_8006FB2C); +0x4A9: across it (0x40 at the load).
     strip_along: u8 @ 0x4A8, strip_across: u8 @ 0x4A9,
     throttle_hold: u8 @ 0x4AA, coast_hold: u8 @ 0x4AB, brake_hold: u8 @ 0x4AF,
+    /// ADVENTURE (phase 6, FUN_8007BBF0): targets, item boxes and turbo
+    /// tokens this kart collected.
+    adv_targets: u8 @ 0x4AC, adv_boxes: u8 @ 0x4AD, adv_tokens: u8 @ 0x4AE,
     blink_count: u8 @ 0x4B0,
     vehicle: u8 @ 0x4B1,
     character: u8 @ 0x4B2,

@@ -118,6 +118,22 @@ pub fn init(items: &mut super::ItemState, c: &CoursePickups, challenge_mode: boo
     }
 }
 
+/// FUN_8008C4AC @0x8008EB58 (an ADVENTURE's race load, phase 6): every
+/// challenge object shown (state 1), then the ones already found hidden
+/// (state 2): the targets with the course's secret 4, the Doozer goals
+/// with 0x20, the movie object with 0x80.
+pub fn adventure_load(items: &mut super::ItemState, course_flags: u16) {
+    let [ten, goals, extra] = items.challenge.map(|c| c as usize);
+    for i in 0..ten + goals + extra {
+        let p = &mut items.pickups[FIRST_CHALLENGE + i];
+        p.state = 1;
+        let hide = (i < ten && course_flags & 4 != 0) || ((ten..ten + goals).contains(&i) && course_flags & 0x20 != 0) || (i == ten + goals && course_flags & 0x80 != 0);
+        if hide {
+            p.state = 2;
+        }
+    }
+}
+
 /// FUN_80081170(x, y, z, list, 0x20, 0, r): the first object of the list
 /// whose list position is within `r` of (x, y, z) on every axis (TER units).
 fn touching(list: &PickupList, x: i32, y: i32, z: i32, r: u32) -> Option<usize> {
@@ -137,7 +153,8 @@ pub fn frame(karts: &mut [KartState], g: &mut RaceGlobals, w: &World, c: &Course
     // 30 Hz sampling of their positions (every tick: +8 % tokens).
     if g.mode != 0x12 && g.hz60.beat() {
         for s in 0..karts.len() {
-            collect(&mut karts[s], s, g, w, c, cams, rand);
+            let k0 = karts[0].finished;
+            collect(&mut karts[s], s, k0, g, w, c, cams, rand);
         }
     }
     if g.items.challenge[0] != 0 && g.items.challenge[1] != 0 {
@@ -151,7 +168,21 @@ pub fn frame(karts: &mut [KartState], g: &mut RaceGlobals, w: &World, c: &Course
     }
 }
 
-fn collect(k: &mut KartState, slot: usize, g: &mut RaceGlobals, w: &World, c: &CoursePickups, cams: &Cameras, rand: &mut dyn FnMut() -> i32) {
+/// ADVENTURE (0x800B07E6): a secret found ends the run: `done`
+/// (0x800B0803), the course's save bit, the chime, and the player is out
+/// (+0x4C7 = 1, the AI takes it).
+fn adventure_done(k: &mut KartState, g: &mut RaceGlobals, done: u8, bit: u16, event: u8) {
+    g.adv.done = done;
+    crate::sound::play(g, 0x24, 5000, 0x80, 0x80);
+    g.adv.course_flags |= bit;
+    k.pause_bits = 0x80;
+    k.finished = 1;
+    k.event_bits |= event;
+    k.flags |= 1;
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect(k: &mut KartState, slot: usize, kart0_finished: u8, g: &mut RaceGlobals, w: &World, c: &CoursePickups, cams: &Cameras, rand: &mut dyn FnMut() -> i32) {
     // 0x8007BC54: no special move, no pickup animation, no carried object,
     // no effect.
     if !(k.special == 0 && (k.pickup == -1 || k.wall_flag != 0) && k.item_e7 == -1 && k.effect == -1) {
@@ -160,6 +191,7 @@ fn collect(k: &mut KartState, slot: usize, g: &mut RaceGlobals, w: &World, c: &C
     let (x, y, z) = (k.drv_x >> 5, k.ref_y >> 5, k.drv_z >> 5);
     // A human camera close by: the pickup bursts into particles.
     let near = cams.near(k.x >> 5, k.y >> 5, k.z >> 5, 10000);
+    let adv = g.challenge != 0;
     if g.items.boxes != 0 {
         // The radius is unsigned in the game (0x800C3068 = 0 < r).
         let r = (k.spark_offset as i32 + 0x80) as u32;
@@ -177,13 +209,20 @@ fn collect(k: &mut KartState, slot: usize, g: &mut RaceGlobals, w: &World, c: &C
                         k.weapons[3] = w.tables.weapon_pick[(rand() >> 10) as usize];
                         k.weapons[5] = 0;
                         take = true;
-                    } else if g.challenge != 0 && k.player_index == 0 {
-                        crate::unreachable_in_scope!("challenge-mode item box");
+                    } else if adv && k.player_index == 0 {
+                        // ADVENTURE: the player takes a box with both slots
+                        // full too (0x8007BED8).
+                        take = true;
                     }
                 }
                 if take {
-                    if g.challenge != 0 {
-                        crate::unreachable_in_scope!("challenge-mode item box count");
+                    // 0x8007BF38: ADVENTURE counts the player's boxes; the
+                    // last one is the course's secret 8 (0x800B0803 = 2).
+                    if adv && k.player_index == 0 && k.finished == 0 && g.adv.course_flags & 8 == 0 {
+                        k.adv_boxes = k.adv_boxes.wrapping_add(1);
+                        if k.adv_boxes == g.items.boxes {
+                            adventure_done(k, g, 2, 8, 2);
+                        }
                     }
                     let p = &mut g.items.pickups[i];
                     p.state = 3;
@@ -204,17 +243,83 @@ fn collect(k: &mut KartState, slot: usize, g: &mut RaceGlobals, w: &World, c: &C
             }
         }
     }
-    if g.challenge != 0 && g.items.challenge[0] != 0 && g.items.challenge[1] != 0 {
-        crate::unreachable_in_scope!("challenge objects (FUN_8007BBF0 @0x8007C0B0)");
+    // 0x8007C0B0: ADVENTURE's challenge objects (DAT chunk 0x0C, slots
+    // 0x30..): `ten` targets, then `goals` Doozer goals, then the movie
+    // object (and any extras).
+    let (ten, goals) = (g.items.challenge[0] as usize, g.items.challenge[1] as usize);
+    if adv && ten != 0 && goals != 0 {
+        let r = (k.spark_offset as i32 + 0x80) as u32;
+        if let Some(t) = c.challenge.as_ref().and_then(|l| touching(l, x, y, z, r)) {
+            let i = FIRST_CHALLENGE + t;
+            if g.items.pickups[i].state == 1 && 0 < r {
+                let goal = (FIRST_CHALLENGE + ten..FIRST_CHALLENGE + ten + goals).contains(&i);
+                if !goal {
+                    if k.player_index == 0 && k.finished == 0 {
+                        let movie = FIRST_CHALLENGE + ten + goals;
+                        if i < movie {
+                            // A target: the count, a cheer (event bits).
+                            k.adv_targets = k.adv_targets.wrapping_add(1);
+                            let b = rng_next(g, w);
+                            if b < 0x55 {
+                                k.event_bits |= 2;
+                            } else if b < 0xAA {
+                                k.event_bits |= 4;
+                            }
+                            k.event_bits |= 8;
+                            if k.adv_targets as usize == ten {
+                                adventure_done(k, g, 1, 4, 0);
+                            }
+                        } else if i == movie {
+                            // The movie object: secret 0x80 (0x800B0803 =
+                            // 0x10; FUN_8007916C ends the run).
+                            g.adv.done = 0x10;
+                            g.adv.course_flags |= 0x80;
+                            crate::sound::play(g, 0x24, 5000, 0x80, 0x80);
+                            k.event_bits |= 8;
+                        }
+                        let p = &mut g.items.pickups[i];
+                        p.state = 3;
+                        p.scale_vel = 0;
+                        if near {
+                            p.burst = 5;
+                        }
+                        rumble(k, g, 0x96);
+                        crate::sound::at(g, w, 0x16, 0x1600, 0x70, [k.x, k.y, k.z], -1);
+                    }
+                } else if kart0_finished == 0 {
+                    if k.flags & 0x40 == 0 {
+                        // Anyone else at the goal: the kart flashes.
+                        if k.player_index == 0 {
+                            k.flash_timer = 0xC;
+                            k.blink_count = 0;
+                        }
+                    } else {
+                        // The Doozer (the parked kart with flag 0x40) pushed
+                        // onto its goal: rescued (secret 0x20, 0x800B0803 =
+                        // 8); +0x4EE = the goal (FUN_800627E0 takes it in).
+                        k.event_bits |= 1;
+                        k.item_ee = (i - FIRST_CHALLENGE - ten) as i8;
+                        g.adv.done = 8;
+                        crate::sound::play(g, 0x24, 5000, 0x80, 0x80);
+                        g.adv.course_flags |= 0x20;
+                    }
+                }
+            }
+        }
     }
     if g.items.tokens != 0 {
         let r = (k.spark_offset as i32 + 0x60) as u32;
         if let Some(t) = c.tokens.as_ref().and_then(|l| touching(l, x, y, z, r)) {
             let i = FIRST_TOKEN + t;
             if g.items.pickups[i].state == 1 && 0 < r {
-                if k.flags & 0x60 == 0 && (k.start_timer < METER_FULL || (g.challenge != 0 && k.player_index == 0)) {
-                    if g.challenge != 0 {
-                        crate::unreachable_in_scope!("challenge-mode token count");
+                if k.flags & 0x60 == 0 && (k.start_timer < METER_FULL || (adv && k.player_index == 0)) {
+                    // 0x8007C5xx: ADVENTURE counts the player's tokens; the
+                    // last one is secret 0x10 (0x800B0803 = 4).
+                    if adv && k.player_index == 0 && k.finished == 0 && g.adv.course_flags & 0x10 == 0 {
+                        k.adv_tokens = k.adv_tokens.wrapping_add(1);
+                        if k.adv_tokens == g.items.tokens {
+                            adventure_done(k, g, 4, 0x10, 2);
+                        }
                     }
                     if g.mode != 7 || (k.player_index as i32) < g.karts as i32 {
                         k.start_timer = k.start_timer.wrapping_add(TOKEN_METER);

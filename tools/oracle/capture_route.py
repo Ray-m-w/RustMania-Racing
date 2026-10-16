@@ -27,7 +27,9 @@ REGIONS = [r for r in capture_course.COURSE_REGIONS if not (HISTORY[0] <= r[0] a
 
 def main():
     route, outdir = json.load(open(sys.argv[1])), sys.argv[2]
-    m = capture.run(route, outdir, regions=REGIONS)
+    # Session 7, phase 6: "save": true adds the save block 0x800E0190.
+    regions = REGIONS + ([(0x800E0190, 0x140)] if route.get("save") else [])
+    m = capture.run(route, outdir, regions=regions)
     print(outdir, "vb", m["first_vb"], "..", m["last_vb"], "missing", len(m["missing"]), flush=True)
 
 

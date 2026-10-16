@@ -110,6 +110,16 @@ fn mode3_ends(cap: &Capture, vbs: &[u32], start: u32, base: (u32, u32)) -> Vec<u
     ends
 }
 
+/// The game's catch-up reads the leader as kart 0x800D8F94, which the
+/// ranking (FUN_800837F8) only writes once the race clock runs: before
+/// that a stale index from the previous session can name a kart slot this
+/// race does not have (the "BEAT x" race after an ADVENTURE: slot 3, whose
+/// stale record still holds a progress). That progress, else None.
+fn stale_leader(m: &mr_sim::mem::Mem, karts: usize) -> Option<i32> {
+    let i = m.i16(0x800D_8F94);
+    (i >= 0 && i as usize >= karts && (i as usize) < 6).then(|| m.i32(KART_ARRAY + 0x504 * i as u32 + 0x388))
+}
+
 thread_local! {
     /// Mode 3 captures: per frame-end VBlank, (frames done, clock steps
     /// done) since the load (`frames`).
@@ -260,16 +270,22 @@ fn main() {
     let mut names = Vec::new();
     let mut show_fields = false;
     let mut dir_mode: Option<String> = None;
+    let mut adv_load: Option<String> = None;
     let mut course_load_mode = false;
     let mut seq_mode = false;
+    let mut from_vb = 0u32;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--frames" => nframes = it.next().and_then(|x| x.parse().ok()).unwrap(),
             "--fields" => show_fields = true,
             "--dir" => dir_mode = it.next().cloned(),
+            "--adv-load" => adv_load = it.next().cloned(),
             "--course-load" => course_load_mode = true,
             "--seq" => seq_mode = true,
+            // --dir: start at this VBlank (e.g. the "BEAT x" race after an
+            // ADVENTURE capture's tag).
+            "--from" => from_vb = it.next().and_then(|x| x.parse().ok()).unwrap(),
             _ => names.push(a.to_ascii_uppercase()),
         }
     }
@@ -287,6 +303,41 @@ fn main() {
         course_load(&mut disc, &exe, &dir, &names);
         return;
     }
+    if let Some(d) = adv_load {
+        // Phase 6: an ADVENTURE capture's race load (game mode 0xB, from
+        // the course menu): the session built from the VBlank before
+        // (seeds, save bits, the Doozer's vehicle) against the loaded
+        // records.
+        let name = names.first().expect("--adv-load DIR COURSE");
+        let info = CourseInfo::find(&exe, name).expect("course");
+        let cap = Capture::open(root.join(&d)).expect("capture");
+        let load = *cap.vbs.iter().find(|&&v| cap.read(v, 0x800B_0D46, 2).unwrap() == [11, 0] && cap.read(v, 0x800B_0D80, 1).unwrap()[0] & 1 != 0).expect("no ADVENTURE load");
+        let pre = cap.mem_at(load - 1, None);
+        let mut cfg = SessionConfig::course(&info);
+        cfg.rand_seed = pre.u32(0x8000_9010);
+        cfg.rng_start = pre.u32(0x800B_0BCC);
+        cfg.faces = Some(pre.u32(0x800B_0FA4));
+        cfg.round_robin_start = pre.u8(0x800C_3058 + 1);
+        cfg.adventure = true;
+        cfg.course_flags = pre.u16(mr_sim::globals::course_flags_addr(&pre));
+        cfg.characters = pre.u32(0x800E_02BC);
+        cfg.doozer_vehicle = pre.u8(0x800B_0A14 + pre.u8(0x800B_0A10) as u32);
+        let s0 = Session::with_config(&mut disc, cfg).expect("session");
+        let m = cap.mem_at(load, None);
+        println!("## {d} ({name}): ADVENTURE load at VB {load}, {} karts (oracle {})", 1 + s0.others.len(), m.i16(0x800B_0DFE));
+        println!("   random state after the load: port ({:08X}, {:08X}) oracle ({:08X}, {:08X})", s0.globals.rng, s0.rand_seed(), m.u32(0x800B_0BCC), m.u32(0x8000_9010));
+        let mut bad = 0;
+        for (slot, k) in std::iter::once(&s0.kart).chain(s0.others.iter().map(|o| &o.kart)).enumerate() {
+            let o = KartState::from_record(cap.read(load, KART_ARRAY + (RECORD_SIZE * slot) as u32, RECORD_SIZE).unwrap());
+            let dd: Vec<_> = k.diff(&o).into_iter().filter(|d| !d.starts_with("trail") && !d.starts_with("model_slot") && !d.starts_with("char_slot") && !d.starts_with("token_colour")).collect();
+            if !dd.is_empty() {
+                bad += 1;
+                println!("   load kart {slot} ({} {}): {dd:?}", k.character, k.vehicle);
+            }
+        }
+        println!("   ADVENTURE load: {}", if bad == 0 { "exact (every kart, every named field)".to_string() } else { format!("{bad} karts differ") });
+        return;
+    }
     if let Some(d) = dir_mode {
         // A capture that starts mid-race (a grid savestate, maybe poked:
         // tools/oracle/capture_poked.py): the session loads the oracle's
@@ -300,12 +351,25 @@ fn main() {
         // the race clock stops, the frame counter runs on).
         let key = |vb: u32| (cap.i32(vb, 0x800B_0C70).unwrap(), cap.i32(vb, 0x800B_0A94).unwrap(), cap.i32(vb, 0x800B_0D90).unwrap());
         let mode = |v: u32| cap.read(v, 0x800B_0D46, 2).unwrap().to_vec();
-        let vbs: Vec<u32> = cap.vbs.iter().copied().filter(|&v| mode(v) == [1, 0] || mode(v) == [2, 0] || mode(v) == [3, 0] || mode(v) == [10, 0]).collect();
+        let vbs: Vec<u32> = cap.vbs.iter().copied().filter(|&v| v >= from_vb).filter(|&v| mode(v) == [1, 0] || mode(v) == [2, 0] || mode(v) == [3, 0] || mode(v) == [10, 0] || mode(v) == [11, 0]).collect();
         let mut ends: Vec<u32> = vbs.windows(2).filter(|w| key(w[0]) != key(w[1])).map(|w| w[0]).collect();
         // A stunt-trial capture (mode 3): its samples hold the next frame's
         // clock step (mode3_ends; the first sample taken as frame 0 with
         // its next clock step done).
         if mode(vbs[0]) == [3, 0] {
+            ends = mode3_ends(&cap, &vbs, vbs[0], (0, 1));
+        }
+        // An ADVENTURE capture (game mode 0xB, phase 6) from the course
+        // menu: from the race load on (0x800B0D80 bit 0), sampled as mode 3.
+        if from_vb > 0 && std::env::var("MR_KEY_ENDS").is_err() {
+            // A capture taken on from another session (the "BEAT x" race
+            // after an ADVENTURE capture's tag): its VBlank samples
+            // straddle the frame boundary as mode 3's; frame ends by the
+            // random pointer.
+            ends = mode3_ends(&cap, &vbs, vbs[0], (0, 1));
+        }
+        if mode(vbs[0]) == [11, 0] {
+            let vbs: Vec<u32> = vbs.iter().copied().filter(|&v| cap.read(v, 0x800B_0D80, 1).unwrap()[0] & 1 != 0).collect();
             ends = mode3_ends(&cap, &vbs, vbs[0], (0, 1));
         }
         let n = ends.len().min(nframes);
@@ -336,6 +400,10 @@ fn main() {
             return;
         }
         let mut s = mk(&mut disc);
+        s.leader_progress_override = stale_leader(&cap.mem_at(ends[0], None), 1 + s.others.len());
+        if ends.len() > 1 && clock_plan(Some(ends[0]), ends[1]).is_some_and(|p| !p.0) {
+            s.round_robin_stepped(&cap.mem_at(ends[0], None));
+        }
         free_run(&mut s, &cap, &ends[1..], n - 1, show_fields);
         let mut s = mk(&mut disc);
         teacher_forced(&mut s, &cap, &ends, n, show_fields);
@@ -414,10 +482,40 @@ fn free_run(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_fields:
             err = Some((j, e.to_string()));
             break;
         }
+        if s.globals.race_clock != 0 {
+            s.leader_progress_override = None;
+        }
         if cam_first.is_none() && cap.read(vb, 0x800C_4F40, mr_sim::camera::CAMERA_SIZE).is_some() {
             let d = camera_diff(s, &m);
             if !d.is_empty() {
                 cam_first = Some((j, d));
+            }
+        }
+        if std::env::var("MR_GDIFF").is_ok() {
+            // Analysis: the race globals the port carries vs the oracle's.
+            let o = mr_sim::globals::RaceGlobals::read(&m);
+            let g = &s.globals;
+            let mut d = Vec::new();
+            for (n, same) in [
+                ("mode", g.mode == o.mode), ("race_clock", g.race_clock == o.race_clock), ("countdown", g.countdown == o.countdown),
+                ("race_flags", g.race_flags == o.race_flags), ("challenge", g.challenge == o.challenge), ("race_over", g.race_over == o.race_over),
+                ("frame", g.frame == o.frame), ("end_mode", g.end_mode == o.end_mode), ("results_clock", g.results_clock == o.results_clock),
+                ("adv", g.adv == o.adv), ("pickups", g.items.pickups == o.items.pickups), ("special", (g.items.special, g.items.special_clock) == (o.items.special, o.items.special_clock)),
+                ("blink", g.items.blink == o.items.blink), ("lap_threshold", g.lap_threshold == o.lap_threshold),
+            ] {
+                if !same {
+                    d.push(n);
+                }
+            }
+            if !d.is_empty() {
+                println!("      gdiff {j}: {d:?} adv {:?} vs {:?}", g.adv, o.adv);
+            }
+            for (slot, k) in std::iter::once(&s.kart).chain(s.others.iter().map(|o| &o.kart)).enumerate() {
+                let ok = KartState::from_record(m.slice(KART_ARRAY + (RECORD_SIZE * slot) as u32, RECORD_SIZE));
+                let kd: Vec<_> = k.diff(&ok).into_iter().filter(|x| !x.starts_with("rumble") && !x.starts_with("trail")).collect();
+                if !kd.is_empty() {
+                    println!("      kdiff {j} k{slot}: {kd:?}");
+                }
             }
         }
         if rng_first.is_none() && (s.globals.rng, s.rand_seed()) != (m.u32(0x800B_0BCC), m.u32(0x8000_9010)) {
@@ -630,6 +728,11 @@ fn teacher_forced(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_f
         // the session's own.
         let keep_trails = cap.read(ends[j - 1], 0x800D_4098, 16).is_none().then(|| (s.kart.trail, s.others.iter().map(|o| o.kart.trail).collect::<Vec<_>>()));
         s.load_mem(&mprev);
+        s.leader_progress_override = stale_leader(&mprev, 1 + s.others.len());
+        // (a sample past the next frame's clock step: its round robin too)
+        if clock_plan(Some(ends[j - 1]), ends[j]).is_some_and(|p| !p.0) {
+            s.round_robin_stepped(&mprev);
+        }
         if let Some((t0, ts)) = keep_trails {
             s.kart.trail = t0;
             for (o, t) in s.others.iter_mut().zip(ts) {

@@ -76,7 +76,10 @@ fn startup_movies() -> Vec<u8> {
     let mut out = Vec::new();
     if seen.is_none() {
         // power-on (main: 0x800B0804 = 0x1C -> 0x1C, 0x1D)
-        if crate::title::first_screen() == crate::title::Screen::Title && !skip {
+        // (scripted title / menu runs keep their timing: no logos)
+        let script = ["--menu-keys", "--menu-shots", "--title-shot", "--title-press-start", "--title-oracle"];
+        let scripted = std::env::args().any(|x| script.contains(&x.as_str()));
+        if crate::title::first_screen() == crate::title::Screen::Title && !skip && !scripted {
             out.extend(movies::BOOT);
         }
     } else {

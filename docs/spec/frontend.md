@@ -213,7 +213,7 @@ local, not committed).
 | options | 0x1E / 0x10 / 3 (5 rows, 4 drawn) | ADJUST SOUND, SET CONTROLLERS, ADJUST SCREEN (sub-state 4), MEMORY CARD | yes; 3, 4 greyed; 5th row = the port's PORT SETTINGS |
 | adjust sound | 0x800B07CD | MUSIC VOLUME - n, SOUND VOLUME - n (0..15; levels 0x800AC118 / 0x800AC138, default 12 = 0x6C / 0x60; FUN_80074850: LEFT / RIGHT, CROSS keeps, TRIANGLE restores) | yes (settings music_volume / sound_volume; bus gains level / level(12)) |
 | set controllers | 0x800B07CC | CONTROLLER 1, s JUMP / BRAKE o, CONFIGURATION - A/B, VIBRATION - ON/OFF | configuration only (settings controller_config -> SessionConfig::alt_controls); one controller |
-| course select | 0x1E / 0xC | world name (0x100, 0x3C), the slot's type RACE A / RACE B / BATTLE / STUNT (worlds 0..5; RACE / BATTLE / RACE / BATTLE RACE above; 0x80058E30) (0x9F, size 2, colour 1), course name (0xB4, size 1, colour 5) or "?" (colour 7); s MOVIE, x SELECT, o MUSIC (0xD2); camera mode 5 (0x80070E4C): eye (0xA000, (row * 10000 - 25000) * 32, -0x28000) looking along +z, angles fixed at 0 on event 0x1E (0x80072394) | yes; CROSS on an open race, stunt or arena course restarts on it; MOVIE / MUSIC greyed; the backdrop (sky, ship) and the world's 3D prop not drawn |
+| course select | 0x1E / 0xC | world name (0x100, 0x3C), the slot's type RACE A / RACE B / BATTLE / STUNT (worlds 0..5; RACE / BATTLE / RACE / BATTLE RACE above; 0x80058E30) (0x9F, size 2, colour 1), course name (0xB4, size 1, colour 5) or "?" (colour 7); s MOVIE, x SELECT, o MUSIC (0xD2); camera mode 5 (0x80070E4C): eye (0xA000, (row * 10000 - 25000) * 32, -0x28000) looking along +z, angles fixed at 0 on event 0x1E (0x80072394) | yes; CROSS on an open race, stunt or arena course restarts on it; SQUARE = MOVIE (phase 9, fmv.md: bright and playing once the course's movie object is found, flags & 0x80); MUSIC greyed; the backdrop (sky, ship) and the world's 3D prop not drawn |
 | course menu | course / 0 / 0x800B0EA2 = 0 | 1 PLAYER RACE - n LAPS, 2 PLAYER RACE - n LAPS, COURSE SECRETS, GAME MENU, BACK TO MAIN MENU; course name (0x1E0, 0x1E, right), BEST LAP m:ss.hh (the save's record / 3 = hundredths), SELECT bottom left; LEFT / RIGHT on the race rows: laps 1..10 (0x800E038C) once the course is won (flags & 3 == 3); camera mode 1 (orbit, DAT chunks 0x0B / 0x0A). A stunt course (race type 3): 1 PLAYER STUNT TRIAL, 2 PLAYER STUNT RACE, COURSE SECRETS, GAME MENU, BACK TO MAIN MENU, "BEST TIME" (race types 2 / 3, 0x80052D90), no laps, camera mode 9 (stunt-trial.md). An arena (race type 2, phase 4): 1 PLAYER BATTLE, 2 PLAYER BATTLE, COURSE SECRETS, GAME MENU, BACK TO MAIN MENU, BEST TIME (cups above 6: sub-state 0xC, 1 PLAYER BATTLE, 2 PLAYER BATTLE, CHICKEN CHASE, BACK TO CREDITS; battle.md) | yes (2, 3 greyed); BACK TO MAIN MENU restarts on the title (or on a course the progression check opened) |
 | game menu | course / 0 / (BACK shown) | ADVENTURE, GAME STATUS, CHANGE COURSE, TOURNAMENT - 1 PLAYER | ADVENTURE (phase 6: the character select, then game mode 0xB; adventure.md), CHANGE COURSE |
 | world list | course / 0 / 1 | the 7 world names (cursor on the current world) | yes; + world 7 (SPEEDWAY, RALLY, GLACIER) once DISCO is won and world 8 (VOLCANO, HOUSE, WHATEVER) once everything is complete (the game's secret screen 0x1D, not ported, offers them) |
@@ -247,8 +247,8 @@ game's everything code applied to a copy.
 MEET THE MUPPETS (game mode 0xD, camera mode 6: the 5 x 5 character
 gallery, TEST DRIVE, voice clips FUN_80060580), 2 PLAYER RACE / STUNT
 RACE (phase 7), 2 PLAYER BATTLE / CHICKEN CHASE (phase 7; battle.md), MEMORY CARD and GAME STATUS CHANGED - SAVE
-GAME (the port autosaves), ADJUST SCREEN, VIBRATION, MOVIE / MUSIC in the
-course select (phases 9 / 8), the fades and LOADING screen between screens.
+GAME (the port autosaves), ADJUST SCREEN, VIBRATION, MUSIC in the
+course select (MOVIE: phase 9, fmv.md), the fades and LOADING screen between screens.
 
 
 # Saves (Session 7, phase 2)
@@ -473,7 +473,7 @@ Port: port/crates/mr-bevy/src/league.rs, menus.rs (`Leagues`, `LeagueMenu`,
 - The secret pickups' bits (0x4 / 0x20 / 0x80 / 0x8 / 0x10) as races set
   them; the cheat codes (FUN_8008F884: everything, all characters, ...).
 - The "new course" announcement after a league race (0x800B0801,
-  FUN_8004CEA0) and the course intro movies (phase 9).
+  FUN_8004CEA0); the course movies: ported in phase 9 (fmv.md).
 
 # Phase 6b (Session 7): COURSE SECRETS, GAME STATUS, the secret screen's course menus, BATTLE LEAGUE
 - <COURSE> SECRETS (course menu row 2, worlds 0..6; menus.rs `Page::Secrets`):
@@ -663,3 +663,15 @@ Port: port/crates/mr-bevy/src/league.rs, menus.rs (`Leagues`, `LeagueMenu`,
   CRDIT_01.XA voice.
 - The fades and LOADING screen between screens; the course select's sky
   backdrop and world props (leftovers).
+
+# Phase 9 (Session 7): movies
+docs/spec/fmv.md has the decoder, the player's rules and the triggers. In
+the front end:
+- power-on: HI_15 then TT_15 before the title (main: 0x800B0804 = 0x1C);
+  START / CROSS skips each after its frame 75; `skip_intro_movies` skips them;
+- a course's first load since power-on (open courses): its movie (row + 9)
+  before the course menu (or the demo / the league's race);
+- course select: SQUARE = MOVIE on a course whose movie object was found
+  (the label bright then); COURSE SECRETS: PLAY MOVIE (row 3, the same
+  bit) plays the course's movie; both return to the same page (the game
+  reloads it).

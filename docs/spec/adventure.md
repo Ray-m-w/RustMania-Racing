@@ -167,7 +167,7 @@ the game mode FUN_80073E44 then loads):
 | ARENA/BATTLE | 0 | 8 | DOGFIGHT - 1 PLAYER | race flag 0x80: every kart on vehicle 8 (the PLANE), mode 2 |
 | ARENA/BATTLE | 1 | 0x10 | DOOZER BATTLE - 1 PLAYER | race flag 0x100: every kart a Doozer, mode 2 at once |
 | arena | 2 | 4 | CHICKEN CHASE | two players (greyed) |
-| all | 3 | 0x80 (the movie object) | PLAY MOVIE | the course's FMV 0x800ACB3D[course] (phase 9; greyed) |
+| all | 3 | 0x80 (the movie object) | PLAY MOVIE | the course's FMV 0x800ACB3D[course] (phase 9: plays, fmv.md) |
 
 Note (correction): race flag 1 is the menu's "BATTLE" (the race course as
 an arena, game mode 2) and flag 8 its "BATTLE RACE" (the damage race);
@@ -271,7 +271,7 @@ analysis/oracle/secrets, routes tools/oracle/routes/*.json):
   against GP0).
 
 ## Not ported (listed)
-- PLAY MOVIE (phase 9) and the two-player choices ("- n PLAYERS", LEFT /
+- (PLAY MOVIE: ported in phase 9, fmv.md.) The two-player choices ("- n PLAYERS", LEFT /
   RIGHT on the 1-player rows); phase 7 opened CHICKEN CHASE and the stunt
   course's BATTLE (two players) on this page.
 - (The secret screen, course 0x1D, the credits scene choosing world 7 /

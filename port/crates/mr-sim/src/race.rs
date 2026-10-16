@@ -177,21 +177,19 @@ pub fn race_progress(g: &RaceGlobals, w: &World, karts: &mut [&mut KartState], p
     if g.mode == 0xB || g.mode == 0x14 {
         return None;
     }
-    if g.race_flags & 1 != 0 {
-        crate::unreachable_in_scope!("race progress with race flag 1");
-    }
     // Race type 3 (the stunt trial, stunt.rs): along the strip, then the
     // ranking as a race's (0x800838A0).
-    if g.race_type == 3 {
+    if g.race_type == 3 && g.race_flags & 1 == 0 {
         if crate::stunt::strip_quads(w) == 0 || g.race_clock == 0 {
             return None;
         }
         crate::stunt::progress(&mut *karts[pick], g, w);
         return Some(rank(g, karts));
     }
-    // Race type 2 (battles, the title's frontend course 0x1E): no course
-    // progress; FUN_800834C0(1) ranks by +0x440, lowest first (0x80083A1C).
-    if g.race_type == 2 {
+    // Race type 2 (battles, the title's frontend course 0x1E) or race flag
+    // 1 (BATTLE RACE on a race course, phase 6b): no course progress;
+    // FUN_800834C0(1) ranks by +0x440, lowest first (0x80083A1C).
+    if g.race_type == 2 || g.race_flags & 1 != 0 {
         let n = karts.len();
         let mut order: Vec<(i32, usize)> = karts.iter().enumerate().map(|(i, k)| (k.impact as i32, i)).collect();
         for _ in 0..n.saturating_sub(1) {
@@ -254,7 +252,9 @@ fn rank(g: &RaceGlobals, karts: &mut [&mut KartState]) -> usize {
 /// 0x80083A60: a position change shows for 0x1E VBlanks (+0x4FF), the
 /// shown position +0x4CA follows when the flash starts.
 fn position_flash(g: &RaceGlobals, karts: &mut [&mut KartState]) {
-    for k in karts.iter_mut() {
+    // (over 0x800B0DFE karts: a BOSS CHALLENGE's bosses are left out)
+    let n = if g.adv.bosses > 0 { g.karts.max(0) as usize } else { karts.len() };
+    for k in karts.iter_mut().take(n) {
         let mut run = k.pos_flash != 0;
         if k.race_pos != k.shown_pos && k.pos_flash == 0 {
             k.shown_pos = k.race_pos;
@@ -347,7 +347,9 @@ pub fn result(slot: usize, k: &KartState) -> KartResult {
 /// runs (0 < countdown < 0x800B07F8) FUN_8004E8E8 flickers the face button
 /// to copy (+0x4DA, one byte) and jitters the two hand sprites (three bytes
 /// each) [CODE 8004e8e8].
-pub fn hud_draws(g: &mut RaceGlobals, w: &World, k: &KartState) {
+/// `bosses`: a BOSS CHALLENGE's boss karts (game mode 7: their gauges at
+/// the bottom draw too).
+pub fn hud_draws(g: &mut RaceGlobals, w: &World, k: &KartState, bosses: &[KartState]) {
     if g.mode == 1 && g.countdown != 0 && g.countdown < g.countdown_len {
         let n = if (0..4).contains(&k.copy_button) { 7 } else { 6 };
         g.rng = g.rng.wrapping_add(n);
@@ -362,5 +364,19 @@ pub fn hud_draws(g: &mut RaceGlobals, w: &World, k: &KartState) {
         // (render side: the colour the gauge's heart is drawn with)
         g.hud_gauge_rgb = Some([w.rng_byte(g.rng), w.rng_byte(g.rng.wrapping_add(1)), w.rng_byte(g.rng.wrapping_add(2))]);
         g.rng = g.rng.wrapping_add(3);
+    }
+    // A BOSS CHALLENGE (mode 7, FUN_8004F688 case 7, phase 6b): the
+    // player's gauge whether out or not, then each boss's small gauge
+    // (FUN_80049FD8(x, 0xD2, boss, 0)), three bytes each in the same range.
+    if g.mode == 7 && g.countdown <= 0 {
+        if ((k.stun as u16).wrapping_sub(0x321)) < 199 {
+            g.hud_gauge_rgb = Some([w.rng_byte(g.rng), w.rng_byte(g.rng.wrapping_add(1)), w.rng_byte(g.rng.wrapping_add(2))]);
+            g.rng = g.rng.wrapping_add(3);
+        }
+        for b in bosses {
+            if ((b.stun as u16).wrapping_sub(0x321)) < 199 {
+                g.rng = g.rng.wrapping_add(3);
+            }
+        }
     }
 }

@@ -642,6 +642,9 @@ pub struct CameraInput {
     /// is, resolved by the caller with [`resolve_watch`]. Read in mode 0
     /// while the kart has not finished.
     pub watched: Watched,
+    /// Game mode 7 (a BOSS CHALLENGE): the boss kart 0x800B0DFE +
+    /// 0x800B0DCC the intro camera (mode 10) shows; None otherwise.
+    pub intro_kart: Option<CameraKart>,
 }
 
 /// The object a kart's watch target +0x4FE names (FUN_80070418
@@ -891,6 +894,12 @@ pub fn tick(cam: &mut CameraState, inp: &CameraInput, t: &CameraTables, env: &mu
     if changed {
         cam.mode_changed = 1;
     }
+    // 0x8007098C (phase 6b): the intro camera of a BOSS CHALLENGE (game
+    // mode 7, 0x800B0DCC != -1) follows that boss's kart instead.
+    let k = match (&inp.intro_kart, mode) {
+        (Some(b), 10) => b,
+        _ => k,
+    };
 
     // Defaults before the per-mode block (0x80070824..0x80070844).
     let mut goal = g.scene_center; // eye goal (sp+0x18)

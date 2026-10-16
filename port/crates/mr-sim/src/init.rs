@@ -95,9 +95,6 @@ pub fn init_kart(p: &KartInit, rng: &mut u32, rand: &mut dyn FnMut() -> i32) -> 
     // A battle (mode 2, race type 2; phase 4): 0x80060B04 takes 6 + 1,
     // then the plain path again (flags 0x20 / 0x40 and race flags 1/2/4
     // clear, no challenge): index = `grid`.
-    let title = s.mode == 0x10 && s.race_type == 2;
-    let stunt = s.mode == 3 && s.race_type == 3;
-    let battle = s.mode == 2 && s.race_type == 2;
     // ADVENTURE (phase 6, game mode 0xB, 0x800B07E6): the parked karts
     // take the grid points after the race grid (flag 0x40, the Doozer: 18
     // on a race course, 6 in an arena, 12 on a stunt course; flag 0x20, the
@@ -120,10 +117,20 @@ pub fn init_kart(p: &KartInit, rng: &mut u32, rand: &mut dyn FnMut() -> i32) -> 
         };
         b + rand() / 0x1556
     } else {
-        if !(s.mode == 1 && (0..=1).contains(&s.race_type) || title || stunt || battle) || s.race_flags & 7 != 0 {
-            crate::unreachable_in_scope!("grid placement outside a plain one-player race");
+        // 0x80060B3C..0x80060BC8 (phase 6b, COURSE SECRETS): race flag 1
+        // (BATTLE RACE) grid + 0xC (+6 on a stunt course), flag 2 (REVERSE
+        // RACE) + 6, flag 4 (the reversed stunt trial) + 3; the stunt
+        // trial's single kart first + 2.
+        let i = p.grid + if s.race_type == 3 && s.karts == 1 { 2 } else { 0 };
+        if s.race_flags & 1 != 0 {
+            i + if s.race_type == 3 { 6 } else { 0xC }
+        } else if s.race_flags & 2 != 0 {
+            i + 6
+        } else if s.race_flags & 4 != 0 {
+            i + 3
+        } else {
+            i
         }
-        p.grid + if stunt && s.karts == 1 { 2 } else { 0 }
     } as usize;
     // 0x80060BE0: past the course's grid list (an ADVENTURE's parked or
     // random points on a course with a short list): the centre of the

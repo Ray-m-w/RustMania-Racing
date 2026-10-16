@@ -274,15 +274,16 @@ pub fn lap_timing(k: &mut KartState, g: &mut RaceGlobals, w: &World, rand: &mut 
     let s = side(px, pz, q(7), q(9), q(4), q(6))
         | side(px, pz, q(1), q(3), q(4), q(6)) << 1
         | side(px, pz, q(7), q(9), q(10), q(12)) << 2;
-    if g.race_flags & 2 != 0 {
-        unreachable_in_scope!("finish line with race flag 2");
-    }
-    if s == 7 && k.line_side == 6 {
+    // REVERSE RACE (race flag 2, phase 6b; 0x80083378..0x80083438): the
+    // line counts the other way round (6 after 7 completes a lap, 7 after
+    // 6 is the wrong way); +0x4C0 starts at 7.
+    let (fwd, back) = if g.race_flags & 2 != 0 { ((6, 7), (7, 6)) } else { ((7, 6), (6, 7)) };
+    if (s, k.line_side) == fwd {
         if k.line_flag == 0 {
             lap_completed(k, g, w);
         }
         k.line_flag = 0;
-    } else if s == 6 && k.line_side == 7 {
+    } else if (s, k.line_side) == back {
         // 0x80083458: crossed backwards: remember it so the next forward
         // crossing does not count a lap; a second backward crossing adds a
         // course length to the race progress.
@@ -458,7 +459,9 @@ pub fn path_ahead(w: &World, seg: i16, pt: i16, n: i32) -> Option<(i16, i16)> {
 /// points ahead (further at higher speed).
 /// `karts`: every kart's (x, z) as the loop has left them (the battle's
 /// target is read live).
-pub fn track_direction(k: &mut KartState, g: &mut RaceGlobals, w: &World, karts: &[(i32, i32)]) {
+/// `rand`: the BIOS rand() a backward walk (REVERSE RACE, +0x4DF = 1) may
+/// draw past a segment without predecessors.
+pub fn track_direction(k: &mut KartState, g: &mut RaceGlobals, w: &World, karts: &[(i32, i32)], rand: &mut dyn FnMut() -> i32) {
     if g.race_type == 3 {
         return;
     }
@@ -483,10 +486,15 @@ pub fn track_direction(k: &mut KartState, g: &mut RaceGlobals, w: &World, karts:
         let v = s16(k.speed_est >> 5).clamp(0x18, 0x37);
         n = v >> 3;
     }
-    if k.path_mode != 0 {
-        unreachable_in_scope!("FUN_80090670 path mode");
-    }
-    let Some((seg, pt)) = path_ahead(w, k.path_seg, k.path_pt, n) else { return };
+    // +0x4DF = 1 (REVERSE RACE, phase 6b): FUN_80090670(seg, pt, n + 1)
+    // with 0x800B0A20 set.
+    let ahead = if k.path_mode != 0 {
+        let wk = crate::ai::walk_backward_first(w, k.path_seg, k.path_pt, (n + 1) as i16, true, rand);
+        (wk.seg != -1).then_some((wk.seg, wk.pt))
+    } else {
+        path_ahead(w, k.path_seg, k.path_pt, n)
+    };
+    let Some((seg, pt)) = ahead else { return };
     let ter = &w.ter;
     let s = &ter.path_segments[seg as usize];
     let p = &ter.path_points[s16(s.first as u16 as i32 + pt as i32) as usize];

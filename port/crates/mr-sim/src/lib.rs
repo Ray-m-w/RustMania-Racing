@@ -44,6 +44,7 @@ pub mod race;
 pub mod save;
 pub mod render;
 pub mod scenery;
+pub mod secrets;
 pub mod session;
 pub mod sound;
 pub mod stunt;
@@ -65,7 +66,7 @@ pub use world::{TickInputs, World};
 /// `buttons` is the active-high PS1 pad word the game saw this tick.
 pub fn tick(k: &mut KartState, g: &mut RaceGlobals, w: &World, inp: &TickInputs, buttons: u16) {
     update::kart_update(k, g, w, inp, buttons, 0);
-    progress::track_direction(k, g, w, &[]);
+    progress::track_direction(k, g, w, &[], &mut || unreachable_in_scope!("rand() in the track direction walk"));
 }
 
 /// A race-frame tick with other karts on the track: the kart-kart contact

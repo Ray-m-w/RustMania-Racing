@@ -132,6 +132,16 @@ pub struct SessionConfig {
     /// ADVENTURE: the Doozer's vehicle (0x800B0A14[0x800B0A10]: 6, 25, 27
     /// in turn, one step per ADVENTURE).
     pub doozer_vehicle: u8,
+    /// Phase 6b (COURSE SECRETS, docs/spec/adventure.md): an arena's BOSS
+    /// CHALLENGE (0x800B07E8 = 1: game mode 7, the player against the
+    /// course's bosses, `secrets::bosses`).
+    pub boss_challenge: bool,
+    /// 0x800B07F3: BATTLE AS BOSS's pick among the course's bosses (race
+    /// flag 0x20: the player drives that boss on its vehicle).
+    pub boss_pick: u8,
+    /// 0x800B0A10: the Doozers' vehicle turn (DOOZER BATTLE, race flag
+    /// 0x100: each Doozer placed takes 0x800B0A14[turn] and steps it).
+    pub doozer_turn: u8,
 }
 
 /// The Doozer (character 24): ADVENTURE's parked kart to rescue.
@@ -180,6 +190,9 @@ impl SessionConfig {
             course_flags: 0,
             characters: 0xFF,
             doozer_vehicle: 6,
+            boss_challenge: false,
+            boss_pick: 0,
+            doozer_turn: 0,
         }
     }
 
@@ -512,6 +525,26 @@ impl Session {
 
     pub fn with_config(disc: &mut mr_disc::Disc, cfg: SessionConfig) -> Result<Session, SessionError> {
         let mut world = World::course(disc, cfg.course).map_err(SessionError::World)?;
+        // Phase 6b: the player's kart in the COURSE SECRETS modes
+        // (FUN_8008C4AC @0x8008E3xx): BATTLE AS BOSS (race flag 0x20) the
+        // boss 0x800B0C7E[0x800B07F3] on 0x800B0D2C[..]; DOOZER BATTLE
+        // (0x100) the Doozer on the vehicle turn; DOGFIGHT (0x80) the PLANE.
+        let mut cfg = cfg;
+        let mut doozer_turn = cfg.doozer_turn;
+        if cfg.course != crate::title::TITLE_COURSE && !cfg.adventure {
+            if cfg.race_flags & 0x20 != 0 {
+                let (b, _) = crate::secrets::bosses(cfg.course);
+                if let Some(&(c, v)) = b.get(cfg.boss_pick as usize).filter(|p| p.0 != 0xFF && p.1 != 0xFF) {
+                    (cfg.character, cfg.vehicle) = (c, v);
+                }
+            } else if cfg.race_flags & 0x100 != 0 {
+                cfg.character = crate::secrets::DOOZER;
+                cfg.vehicle = crate::secrets::doozer_vehicle(&world.exe, doozer_turn);
+                doozer_turn = (doozer_turn + 1) % 3;
+            } else if cfg.race_flags & 0x80 != 0 {
+                cfg.vehicle = crate::secrets::PLANE;
+            }
+        }
         if let Some(f) = cfg.faces {
             world.heap.faces = f;
         }
@@ -551,20 +584,46 @@ impl Session {
         // ADVENTURE (phase 6): game mode 0xB on any course (one player; the
         // parked karts are added below).
         let adventure = cfg.adventure && !title;
-        let stunt = world.info.mode == 3 && !adventure;
+        // Phase 6b: COURSE SECRETS. An arena's BOSS CHALLENGE is game mode
+        // 7 (FUN_80073E44: 0x800B0F10 = 7 with 0x800B07E8); BATTLE RACE
+        // (race flag 1) is game mode 2 on a race or stunt course
+        // (0x800B0F10 = 2); the reversed stunt trial (flag 4) mode 3.
+        let boss = cfg.boss_challenge && race_type == 2 && !title && !adventure;
+        let battle_race = cfg.race_flags & 1 != 0 && !title && !adventure;
+        let stunt = world.info.mode == 3 && !adventure && !battle_race;
         // The arenas' 1 PLAYER BATTLE (race type 2, mode 2; phase 4,
         // docs/spec/battle.md): 6 karts (5 above cup 6), grid draws
         // modulo 6, 0x800B0CD8 = the karts left standing.
-        let battle = world.info.mode == 2 && !title && !adventure;
+        let battle = (world.info.mode == 2 || battle_race || boss) && !title && !adventure;
         if world.info.mode != 1 && !stunt && !battle && !title && !adventure {
             return Err(SessionError::OutOfScope(format!("course {} is not a race course (mode {})", world.info.name, world.info.mode)));
         }
-        let n = if stunt || adventure { 1 } else { n };
+        // 0x800B0DFE: BATTLE RACE (race type 2 or race flag 1) 6 karts (5
+        // above cup 6), as a battle; a BOSS CHALLENGE the player alone,
+        // its bosses counted apart (0x800B0C98, `secrets::boss_count`).
+        let n = if stunt || adventure || boss {
+            1
+        } else if battle_race && cfg.opponents == 0 {
+            if cfg.cup > 6 { 5 } else { 6 }
+        } else {
+            n
+        };
+        let bosses = if boss { crate::secrets::boss_count(&world.exe, cfg.course) as usize } else { 0 };
         // FUN_8008C4AC @0x8008DE48: the grid draw's modulus (6 in modes 2 /
         // 7 / 0x14, else the kart count).
         let grid_mod = if battle { 6 } else { n };
         let race_flags = if title { crate::title::TITLE_RACE_FLAGS } else { cfg.race_flags };
-        let mode = if title { crate::title::TITLE_MODE } else if adventure { 0xB } else { world.info.mode };
+        let mode = if title {
+            crate::title::TITLE_MODE
+        } else if adventure {
+            0xB
+        } else if boss {
+            7
+        } else if battle_race {
+            2
+        } else {
+            world.info.mode
+        };
         let challenge = adventure as i16;
         let setup = RaceSetup { mode, race_type, race_flags, challenge, humans: 1, karts: n as i16 };
         let mut rand_state = cfg.rand_seed;
@@ -592,7 +651,7 @@ impl Session {
             sound_event: 0,
             // 0x800B0CD8 is 1 during a race (finishing order counter); in
             // race type 2 the karts left (FUN_8008C4AC @0x8008D9F0).
-            end_mode: if battle { n as u8 } else { 1 },
+            end_mode: if battle { (n + bosses) as u8 } else { 1 },
             lap_threshold: 0,
             lap_record: cfg.lap_record,
             karts: n as i16,
@@ -618,6 +677,8 @@ impl Session {
                 course_flags: cfg.course_flags,
                 characters: cfg.characters,
                 time_limit: world.exe.i32(crate::globals::ADVENTURE_TIME + 4 * (race_type as u32 & 3)),
+                bosses: bosses as i16,
+                boss_cam: -1,
             },
         };
         // FUN_8008C4AC: the first human's grid slot (*rng++ % karts), the
@@ -628,7 +689,7 @@ impl Session {
             // is drawn in FUN_800609F4)
             crate::ai::grid_start(&mut globals, &world, 1);
             0
-        } else if (n > 1 || stunt) && (cfg.lineup.is_none() || cfg.draw_grid) {
+        } else if (n > 1 || stunt || boss) && (cfg.lineup.is_none() || cfg.draw_grid) {
             crate::ai::grid_start(&mut globals, &world, grid_mod as i16)
         } else {
             cfg.grid
@@ -655,12 +716,29 @@ impl Session {
         // The opponents: each slot's character / vehicle draw, then its
         // FUN_800609F4 (both use rand(), in this order).
         let mut others = Vec::new();
-        if n > 1 {
+        if n + bosses > 1 {
             let tpl = crate::ai::vehicle_templates(&world.exe, &world.tables).map_err(|e| SessionError::Disc(e.0))?;
             let mut taken = vec![title_first.map_or(cfg.character, |f| f.0)];
-            for s in 1..n {
+            let boss_list = crate::secrets::bosses(cfg.course).0;
+            for s in 1..n + bosses {
                 let (c, v) = match cfg.lineup {
+                    // A BOSS CHALLENGE's bosses (0x8008E7C8): after the
+                    // 0x800B0DFE karts, from FUN_8008A9AC's tables.
+                    _ if s >= n => boss_list[s - n],
                     Some(l) => l[(s - 1) % 5],
+                    // DOOZER BATTLE (race flag 0x100, 0x8008E4xx): Doozers
+                    // on the vehicle turn, no draws.
+                    None if race_flags & 0x100 != 0 && !title => {
+                        let v = crate::secrets::doozer_vehicle(&world.exe, doozer_turn);
+                        doozer_turn = (doozer_turn + 1) % 3;
+                        (crate::secrets::DOOZER, v)
+                    }
+                    // DOGFIGHT (race flag 0x80): the character drawn, the
+                    // PLANE.
+                    None if race_flags & 0x80 != 0 && !title => {
+                        let mut rand = || bios_rand(&mut rand_state);
+                        (crate::ai::pick_character(&world.exe, &taken, &|_| true, &mut rand), crate::secrets::PLANE)
+                    }
                     None => {
                         let mut rand = || bios_rand(&mut rand_state);
                         if title {
@@ -761,7 +839,8 @@ impl Session {
         // FUN_8009192C(&kart0, karts): every kart's special-move roll (not
         // on the title: the course-0x1E branch skips it; the stunt trial's
         // single kart too: oracle MOUNTAIN, +0x47A = 3000).
-        if !title && (n > 1 || stunt || adventure) {
+        // (mode 7: the bosses past 0x800B0DFE roll "no preference")
+        if !title && (n > 1 || stunt || adventure || boss) {
             let mut ks: Vec<KartState> = std::iter::once(kart.clone()).chain(others.iter().map(|o| o.kart.clone())).collect();
             crate::ai::race_load_roll(&mut ks, &mut globals, &world, n as i16);
             let mut it = ks.into_iter();
@@ -770,6 +849,15 @@ impl Session {
                 o.kart = k;
             }
         }
+        // FUN_8008C4AC @0x8008ECxx (mode 7): the boss the intro camera
+        // shows, 0x800B0DCC = *rng++ % 0x800B0C98.
+        if boss && bosses > 0 {
+            let b = world.rng_byte(globals.rng);
+            globals.rng = globals.rng.wrapping_add(1);
+            globals.adv.boss_cam = (b as usize % bosses) as i8;
+        }
+        // From here `n` counts every kart (0x800B0DFE + 0x800B0C98).
+        let n = n + bosses;
         let player_ai = crate::ai::AiState::from_record(&record);
         kart.to_record(&mut record);
         let water = WaterAnim::from_exe(&world.exe);
@@ -919,6 +1007,7 @@ impl Session {
         let ck = CameraKart::from_record(&self.record, Some(self.kart.trail));
         let inp = CameraInput {
             watched: camera::Watched::None,
+            intro_kart: None,
             kart: ck,
             globals: CameraGlobals { dt, num_karts: 1, countdown: 0, game_state: self.camera_menu.map_or(0, |m| m.0), menu_row: self.camera_menu.map_or(0, |m| m.1), ..self.camera_globals.clone() },
         };
@@ -1099,7 +1188,8 @@ impl Session {
         // place 1, its clock rounded to a multiple of 3, the AI takes it.
         // (The course record / won bit: SaveBlock::battle_won, outside.)
         if (g.mode == 2 || g.mode == 7) && g.challenge == 0 && g.end_mode == 1 {
-            for k in ks.iter_mut().filter(|x| (x.player_index as i32) < g.humans as i32 && x.finished == 0) {
+            let humans = g.humans as i32;
+            for k in ks.iter_mut().filter(|x| (x.player_index as i32) < humans && x.finished == 0) {
                 k.finished = 1;
                 k.shown_pos = 1;
                 k.race_pos = 1;
@@ -1116,6 +1206,13 @@ impl Session {
                 // (SaveBlock::lap_record from `lap_record`).
                 if g.race_type == 2 && g.mode == 2 && g.race_flags == 0 && g.split_screen == 0 && k.flags & 1 == 0 && k.race_time < g.lap_record {
                     g.lap_record = k.race_time;
+                }
+                // 0x800793E0 (phase 6b): a BOSS CHALLENGE won (mode 7, a
+                // human in place 1) sets the course's flag 0x100 (BATTLE
+                // AS BOSS opens) and plays sound 0x24.
+                if g.mode == 7 {
+                    g.adv.course_flags |= 0x100;
+                    crate::sound::play(g, 0x24, 5000, 0x80, 0x80);
                 }
                 k.pause_bits = 0x80;
                 k.flags |= 1;
@@ -1161,7 +1258,11 @@ impl Session {
         }
         // 2. Contact pass over every pair (FUN_800418D8), then the human's
         //    look-at target (FUN_80041A20 / FUN_80041CC4).
-        let rules = crate::collide::ContactRules { karts: n as i32, kart0_finished: ks[0].finished };
+        // 0x800B0DFE: the karts before a BOSS CHALLENGE's bosses (the
+        // contacts, damage, AI and special-move rolls compare slots with
+        // it; every loop runs over all n = 0x800B0DFE + 0x800B0C98).
+        let dfe = n - g.adv.bosses.max(0) as usize;
+        let rules = crate::collide::ContactRules { karts: dfe as i32, kart0_finished: ks[0].finished };
         crate::collide::frame_contacts_all(ks, g, w, &rules);
         for k in ks.iter_mut() {
             crate::render::aim_at_course(k, g, w);
@@ -1180,7 +1281,7 @@ impl Session {
         }
         // 4. The kart loop, slot order. The leader's progress feeds the
         //    catch-up.
-        g.karts = n as i16;
+        g.karts = dfe as i16;
         let leader = self.leader_progress_override.unwrap_or_else(|| ks.iter().find(|x| x.race_pos == 1).map(|x| x.progress).unwrap_or(ks[0].progress));
         let inp = TickInputs { leader_progress: leader, water_normal: wn, alt_normal: an, aim: None, cameras: [self.camera.pos, [0; 3]] };
         for s in 0..n {
@@ -1196,7 +1297,7 @@ impl Session {
                 // An AI kart, or the player's after the finish: FUN_800912F8
                 // picks the buttons, the update runs with player -1. Items
                 // are out of scope: their buttons are dropped.
-                let ctx = crate::ai::AiContext { karts: n as i16, kart0_flags: ks[0].flags, kart0_race_pos: ks[0].race_pos, difficulty: g.difficulty, cup: g.cup, driver_pos: &drivers };
+                let ctx = crate::ai::AiContext { karts: dfe as i16, kart0_flags: ks[0].flags, kart0_race_pos: ks[0].race_pos, difficulty: g.difficulty, cup: g.cup, driver_pos: &drivers };
                 let ai = if s == 0 { &mut self.player_ai } else { &mut self.others[s - 1].ai };
                 let seed = &mut self.rand_state;
                 let mut rand = || bios_rand(seed);
@@ -1227,7 +1328,7 @@ impl Session {
                 let seed = &mut self.rand_state;
                 let mut rand = || bios_rand(seed);
                 let b = if s == 0 && self.autopilot {
-                    let ctx = crate::ai::AiContext { karts: n as i16, kart0_flags: ks[0].flags, kart0_race_pos: ks[0].race_pos, difficulty: g.difficulty, cup: g.cup, driver_pos: &drivers };
+                    let ctx = crate::ai::AiContext { karts: dfe as i16, kart0_flags: ks[0].flags, kart0_race_pos: ks[0].race_pos, difficulty: g.difficulty, cup: g.cup, driver_pos: &drivers };
                     let items = self.cfg.items;
                     ai_tick(g, 0, |g| {
                         let b = crate::ai::ai_buttons(&mut ks[0], &mut self.player_ai, g, &ctx, w, &mut rand);
@@ -1240,7 +1341,9 @@ impl Session {
             }
             if s < g.humans as usize {
                 let pos: Vec<(i32, i32)> = ks.iter().map(|x| (x.x, x.z)).collect();
-                crate::progress::track_direction(&mut ks[s], g, w, &pos);
+                let seed = &mut self.rand_state;
+                let mut rand = || bios_rand(seed);
+                crate::progress::track_direction(&mut ks[s], g, w, &pos, &mut rand);
             }
         }
         // 5. After the kart loop: wheel / driver part matrices (FUN_80086DF0),
@@ -1338,8 +1441,12 @@ impl Session {
             let (rec0, others) = (&self.record, &self.others);
             camera::resolve_watch(ck.watch_target, |n| if n == 0 { Some(rec0.as_slice()) } else { others.get(n - 1).map(|o| o.record.as_slice()) }, &w.course.look_points, w.pickups.challenge.as_ref().map_or(&[][..], |l| &l.points[..]))
         };
+        let boss = g.adv.boss_cam;
+        let dfe = n - g.adv.bosses.max(0) as usize;
+        let intro_kart = (g.mode == 7 && boss >= 0).then(|| self.others.get(dfe + boss as usize - 1).map(|o| CameraKart::from_record(&o.record, None))).flatten();
         let inp = CameraInput {
             watched,
+            intro_kart,
             kart: ck,
             globals: CameraGlobals {
                 dt: g.dt,
@@ -1421,8 +1528,9 @@ impl Session {
         if g.hz60.beat() {
             let renders = if self.camera.mode_changed != 0 { 2 } else { 1 };
             for _ in 0..renders {
+                let dfe = n - g.adv.bosses.max(0) as usize;
                 for k in ks.iter().take(g.humans.max(0) as usize) {
-                    crate::race::hud_draws(g, w, k);
+                    crate::race::hud_draws(g, w, k, &ks[dfe..]);
                 }
             }
         }

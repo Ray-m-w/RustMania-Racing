@@ -183,6 +183,15 @@ pub fn walk_forward(w: &World, seg: i16, pt: i16, n: i16, first_only: bool, rand
 /// predecessor (random among several) is entered at its second-to-last
 /// point; none: point 0.
 pub fn walk_backward(w: &World, seg: i16, pt: i16, n: i16, rand: &mut dyn FnMut() -> i32) -> Walk {
+    walk_backward_first(w, seg, pt, n, false, rand)
+}
+
+/// `walk_backward` with the global 0x800B0A20 (`first_only`, the player's
+/// track-direction walk, FUN_80086B7C): a predecessor is the first link
+/// outright. A forward step out of a segment without predecessors
+/// (FUN_80090424) clears it.
+pub fn walk_backward_first(w: &World, seg: i16, pt: i16, n: i16, first_only: bool, rand: &mut dyn FnMut() -> i32) -> Walk {
+    let mut first_only = first_only;
     let mut out = Walk { seg, pt, turn: 0 };
     if seg == -1 {
         out.seg = -1;
@@ -204,7 +213,8 @@ pub fn walk_backward(w: &World, seg: i16, pt: i16, n: i16, rand: &mut dyn FnMut(
                 out.turn = turn as i16;
                 return out;
             }
-            let wk = walk_forward(w, seg as i16, pt as i16, 1, false, rand);
+            let wk = walk_forward(w, seg as i16, pt as i16, 1, first_only, rand);
+            first_only = false;
             n -= 1;
             seg = wk.seg as i32;
             pt = wk.pt as u16 as i32;
@@ -221,7 +231,7 @@ pub fn walk_backward(w: &World, seg: i16, pt: i16, n: i16, rand: &mut dyn FnMut(
         let h0 = point_heading(w, seg, cur);
         if pt < 0 {
             let prev = if s.n_prev > 0 {
-                pick_link(w, s.link_start as i32 + s.n_next as i32, s.n_prev as i32, false, rand)
+                pick_link(w, s.link_start as i32 + s.n_next as i32, s.n_prev as i32, first_only, rand)
             } else {
                 -1
             };
@@ -660,16 +670,7 @@ pub fn pick_opponent(
     vehicle_loaded: &dyn Fn(u8) -> bool,
     rand: &mut dyn FnMut() -> i32,
 ) -> (u8, u8) {
-    let c = loop {
-        let c = s16(rand() / 0x2AB) as u8;
-        if taken.contains(&c) {
-            continue;
-        }
-        let (racer, _) = character_entry(exe, c);
-        if available(c) && racer {
-            break c;
-        }
-    };
+    let c = pick_character(exe, taken, available, rand);
     let (_, mut v) = character_entry(exe, c);
     while v == 0xFF || !vehicle_loaded(v) {
         loop {
@@ -680,6 +681,21 @@ pub fn pick_opponent(
         }
     }
     (c, v)
+}
+
+/// The character half of `pick_opponent` (0x8008E4FC): DOGFIGHT (race
+/// flag 0x80) then puts every kart on the PLANE without a vehicle draw.
+pub fn pick_character(exe: &ExeImage, taken: &[u8], available: &dyn Fn(u8) -> bool, rand: &mut dyn FnMut() -> i32) -> u8 {
+    loop {
+        let c = s16(rand() / 0x2AB) as u8;
+        if taken.contains(&c) {
+            continue;
+        }
+        let (racer, _) = character_entry(exe, c);
+        if available(c) && racer {
+            break c;
+        }
+    }
 }
 
 /// `pick_opponent` for slots humans..karts in a row (grid slots continue

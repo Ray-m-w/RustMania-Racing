@@ -115,6 +115,11 @@ pub struct Adventure {
     pub characters: u32,
     /// 0x800ACF30[race type]: the adventure's time limit (race clock).
     pub time_limit: i32,
+    /// Phase 6b: 0x800B0C98, the boss karts after the 0x800B0DFE karts
+    /// (game mode 7, the arenas' BOSS CHALLENGE; docs/spec/adventure.md).
+    pub bosses: i16,
+    /// 0x800B0DCC: the boss the intro camera shows (mode 7; -1 none).
+    pub boss_cam: i8,
 }
 
 /// 0x800ACF30: the ADVENTURE time limit per race type (race clock units,
@@ -256,6 +261,8 @@ impl RaceGlobals {
                 course_flags: m.u16(course_flags_addr(m)),
                 characters: m.u32(0x800E_02BC),
                 time_limit: m.i32(ADVENTURE_TIME + 4 * (m.i16(0x800B_0B9A) as u32 & 3)),
+                bosses: m.i16(0x800B_0C98),
+                boss_cam: m.i8(0x800B_0DCC),
             },
             lap_record: m.i32(0x800E_0190u32.wrapping_add((8 * m.i8(0x800B_0E32) as i32 + 0x20 * m.i8(0x800B_0E38) as i32) as u32)),
         }

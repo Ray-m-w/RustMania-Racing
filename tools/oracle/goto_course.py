@@ -81,6 +81,8 @@ COURSES = {
     "MOUNTAIN": (12, 4, 3, "MUPPET TREASURE ISLAND / STUNT"),
     # Session 7, battle (race type 2, game mode 2): world 4's arena.
     "LAGOON": (21, 4, 2, "MUPPET TREASURE ISLAND / BATTLE"),
+    # Session 7, phase 6b (COURSE SECRETS: DOGFIGHT / DOOZER BATTLE).
+    "BATTLE": (27, 6, 1, "SECRET COURSES / BATTLE"),
 }
 GRID_SLOTS = {n: 3 + i for i, n in enumerate(list(COURSES)[:8])}
 

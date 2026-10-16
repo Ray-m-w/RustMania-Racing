@@ -60,7 +60,7 @@ fn frames(cap: &Capture) -> Option<Ends> {
     // (a mode-3 capture's clock plan must not leak into the next course)
     CLOCKS.with(|c| c.borrow_mut().clear());
     let key = |vb: u32| (cap.i32(vb, 0x800B_0C70).unwrap(), cap.i32(vb, 0x800B_0A94).unwrap());
-    let load = *cap.vbs.iter().find(|&&v| (key(v).0 == 480 || key(v).0 == 300) && matches!(cap.read(v, 0x800B_0D46, 2).unwrap(), [1, 0] | [2, 0] | [3, 0]))?;
+    let load = *cap.vbs.iter().find(|&&v| (key(v).0 == 480 || key(v).0 == 300) && matches!(cap.read(v, 0x800B_0D46, 2).unwrap(), [1, 0] | [2, 0] | [3, 0] | [7, 0]))?;
     let vbs: Vec<u32> = cap.vbs.iter().copied().filter(|&v| v >= load).collect();
     let mut ends: Vec<u32> = vbs.windows(2).filter(|w| key(w[0]) != key(w[1])).map(|w| w[0]).collect();
     // The stunt trial (mode 3): its VBlank samples fall either side of the
@@ -69,7 +69,7 @@ fn frames(cap: &Capture) -> Option<Ends> {
     // stepped once a frame, has changed), which may already hold the next
     // frame's clock step (the frame counter 0x800B0D90 changed). The
     // session is told where the clock steps go (clock_plan).
-    if cap.read(load, 0x800B_0D46, 2).unwrap() == [3, 0] {
+    if cap.read(load, 0x800B_0D46, 2).unwrap() == [3, 0] || (std::env::var("MR_KEY_ENDS").is_err() && cap.read(load, 0x800B_0D46, 2).unwrap() == [7, 0]) {
         ends = mode3_ends(cap, &vbs, load, (0, 0));
     }
     Some(Ends { load, ends })
@@ -155,9 +155,27 @@ pub fn session_at_load(disc: &mut mr_disc::Disc, info: &CourseInfo, cap: &Captur
     cfg.rng_start = pre.u32(0x800B_0BCC);
     cfg.logic_hz = 30;
     cfg.faces = Some(pre.u32(0x800B_0FA4));
+    // Phase 6b: the COURSE SECRETS modes, as the menus left them before
+    // the load (race flags 0x800B07E2, BOSS CHALLENGE 0x800B07E8, BATTLE
+    // AS BOSS's pick 0x800B07F3, the Doozers' turn 0x800B0A10); the
+    // player's character / vehicle from the loaded record.
+    let ml = cap.mem_at(load, None);
+    if pre.u16(0x800B_07E2) != 0 {
+        cfg.race_flags = pre.u16(0x800B_07E2);
+    }
+    cfg.boss_challenge = pre.u16(0x800B_07E8) != 0;
+    cfg.boss_pick = pre.u8(0x800B_07F3);
+    cfg.doozer_turn = pre.u8(0x800B_0A10);
+    cfg.course_flags = pre.u16(mr_sim::globals::course_flags_addr(&pre));
+    cfg.characters = pre.u32(0x800E_02BC);
+    if cfg.race_flags & 0x120 == 0 {
+        cfg.character = ml.u8(KART_ARRAY + 0x4B2);
+        cfg.vehicle = ml.u8(KART_ARRAY + 0x4B1);
+    }
+    let karts = (ml.i16(0x800B_0DFE) + ml.i16(0x800B_0C98)).max(1) as u32;
     // The path / progress round robin 0x800C3058[karts] keeps counting
     // between races.
-    cfg.round_robin_start = pre.u8(0x800C_3058 + info.karts as u32);
+    cfg.round_robin_start = pre.u8(0x800C_3058 + karts);
     // The course load (token colours, turntable spins) ran before the
     // capture, from a seed some menu frames before the race load's: the
     // session draws them itself from that seed (track S), found from the
@@ -253,6 +271,9 @@ pub fn session_at_load(disc: &mut mr_disc::Disc, info: &CourseInfo, cap: &Captur
         s.camera.pos = c.pos;
         s.camera.pos_div32 = c.pos_div32;
         s.camera.roll = c.roll;
+        // (the orbit's side byte +0x6C, left by the menu camera; the
+        // intro does not redraw it)
+        s.camera.rand_b = c.rand_b;
     }
     if std::env::var("MR_NOPEEK").is_ok() {
         s.camera_peek = false;
@@ -272,6 +293,9 @@ fn main() {
     let mut dir_mode: Option<String> = None;
     let mut adv_load: Option<String> = None;
     let mut course_load_mode = false;
+    // Phase 6b: the per-course check on a capture elsewhere (e.g.
+    // analysis/oracle/secrets/boss_lagoon).
+    let mut cap_dir: Option<String> = None;
     let mut seq_mode = false;
     let mut from_vb = 0u32;
     let mut it = args.iter();
@@ -282,6 +306,7 @@ fn main() {
             "--dir" => dir_mode = it.next().cloned(),
             "--adv-load" => adv_load = it.next().cloned(),
             "--course-load" => course_load_mode = true,
+            "--cap" => cap_dir = it.next().cloned(),
             "--seq" => seq_mode = true,
             // --dir: start at this VBlank (e.g. the "BEAT x" race after an
             // ADVENTURE capture's tag).
@@ -415,7 +440,13 @@ fn main() {
             continue;
         };
         // DOCK: Session 3's start_probe (the same route from the course menu).
-        let cdir = if name == "DOCK" && !dir.join("DOCK").exists() { root.join("analysis/oracle/start_probe") } else { dir.join(&name) };
+        let cdir = if let Some(c) = &cap_dir {
+            root.join(c)
+        } else if name == "DOCK" && !dir.join("DOCK").exists() {
+            root.join("analysis/oracle/start_probe")
+        } else {
+            dir.join(&name)
+        };
         let Ok(cap) = Capture::open(cdir) else {
             println!("## {name}: no capture");
             continue;
@@ -447,7 +478,7 @@ fn main() {
         if og.jets != s0.globals.objects.jets {
             println!("   load jets differ: port {:?} oracle {:?}", s0.globals.objects.jets, og.jets);
         }
-        println!("   race load: {}", if load_bad == 0 { "exact (6 karts, every named field)".to_string() } else { format!("{load_bad} karts differ") });
+        println!("   race load: {}", if load_bad == 0 { format!("exact ({} karts, every named field)", 1 + s0.others.len()) } else { format!("{load_bad} karts differ") });
         // 2. Free run.
         let n = f.ends.len().min(nframes);
         let mut s = session_at_load(&mut disc, &info, &cap, f.load);
@@ -476,6 +507,20 @@ fn free_run(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_fields:
             let prev = if j == 0 { CLOCKS.with(|c| c.borrow().iter().min_by_key(|e| *e.1).map(|e| *e.0)) } else { Some(ends[j - 1]) };
             if let Some(pv) = prev {
                 dt = cap.mem_at(pv, None).i32(0x800B_0AEC);
+                // A BOSS CHALLENGE capture (mode 7): the load VBlank still
+                // holds the menu frame's dt; the load frame's own is the
+                // next sample's (frame counter still 0).
+                if j == 0 && cap.read(pv, 0x800B_0D46, 2) == Some(&[7, 0][..]) && cap.has(pv + 1) && cap.mem_at(pv + 1, None).i32(0x800B_0D90) == 0 {
+                    dt = cap.mem_at(pv + 1, None).i32(0x800B_0AEC);
+                }
+            }
+            // A BOSS CHALLENGE capture (mode 7): the next frame's clock
+            // step sampled with this frame (FUN_8005C2EC, before the next
+            // dt is measured) steps by this frame's own dt (oracle
+            // secrets/boss_lagoon VB 290 / 291: countdown 300 -> 298 in the
+            // load frame (dt 2), 298 -> 294 after the 4-VBlank frame).
+            if cap.read(vb, 0x800B_0D46, 2) == Some(&[7, 0][..]) {
+                s.clock_end_dt = Some(dt);
             }
         }
         if let Err(e) = s.tick_dt(m.u16(0x800B_0CE8), dt) {
@@ -484,6 +529,15 @@ fn free_run(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_fields:
         }
         if s.globals.race_clock != 0 {
             s.leader_progress_override = None;
+        }
+        if std::env::var("MR_CAMDUMP").is_ok() && j < 3 {
+            println!("      clock {j}: port ({}, {}, frame {}) oracle ({}, {}, frame {}) plan {:?}", s.countdown(), s.globals.race_clock, s.globals.frame, m.i32(0x800B_0C70), m.i32(0x800B_0A94), m.i32(0x800B_0D90), clock_plan(if j == 0 { None } else { Some(ends[j - 1]) }, vb));
+        }
+        if std::env::var("MR_CAMDUMP").is_ok() && j < 3 {
+            let o = cap.read(vb, 0x800C_4F40, mr_sim::camera::CAMERA_SIZE).unwrap();
+            let p = s.camera.to_bytes();
+            let d: Vec<String> = (0..o.len()).filter(|&i| o[i] != p[i]).map(|i| format!("{i:02X}:{:02X}/{:02X}", p[i], o[i])).collect();
+            println!("      cam bytes {j}: {d:?}");
         }
         if cam_first.is_none() && cap.read(vb, 0x800C_4F40, mr_sim::camera::CAMERA_SIZE).is_some() {
             let d = camera_diff(s, &m);
@@ -517,6 +571,9 @@ fn free_run(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_fields:
                     println!("      kdiff {j} k{slot}: {kd:?}");
                 }
             }
+        }
+        if std::env::var("MR_RNGDIFF").is_ok() && (s.globals.rng, s.rand_seed()) != (m.u32(0x800B_0BCC), m.u32(0x8000_9010)) {
+            println!("      rng {j} (VB {vb}): pointer {:+}, seed {}", s.globals.rng.wrapping_sub(m.u32(0x800B_0BCC)) as i32, if s.rand_seed() == m.u32(0x8000_9010) { "same".to_string() } else { format!("{:08X} vs {:08X}", s.rand_seed(), m.u32(0x8000_9010)) });
         }
         if rng_first.is_none() && (s.globals.rng, s.rand_seed()) != (m.u32(0x800B_0BCC), m.u32(0x8000_9010)) {
             rng_first = Some(j);
@@ -773,6 +830,9 @@ fn teacher_forced(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_f
             s.clock_plan = Some(p);
             s.clock_end_dt = Some(dt);
             dt = mprev.i32(0x800B_0AEC);
+            if cap.read(ends[j], 0x800B_0D46, 2) == Some(&[7, 0][..]) {
+                s.clock_end_dt = Some(dt);
+            }
         }
         if let Err(e) = s.tick_dt(m.u16(0x800B_0CE8), dt) {
             tf_err = Some((j, e.to_string()));

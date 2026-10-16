@@ -643,8 +643,8 @@ impl Session {
         let humans: i16 = if two { 2 } else { 1 };
         let bosses = if boss { crate::secrets::boss_count(&world.exe, cfg.course) as usize } else { 0 };
         // FUN_8008C4AC @0x8008DE48: the grid draw's modulus (6 in modes 2 /
-        // 7 / 0x14, else the kart count).
-        let grid_mod = if battle { 6 } else { n };
+        // 7 / 0x14 off a stunt course, else the kart count).
+        let grid_mod = if battle || (chicken && race_type != 3) { 6 } else { n };
         let race_flags = if title { crate::title::TITLE_RACE_FLAGS } else { cfg.race_flags };
         let mode = if title {
             crate::title::TITLE_MODE

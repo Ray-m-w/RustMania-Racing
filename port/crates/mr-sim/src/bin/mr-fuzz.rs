@@ -160,7 +160,7 @@ enum Kind {
     /// courses the reversed trial / BATTLE RACE.
     Secrets,
     /// Phase 7: two players (split screen): 2 PLAYER RACE / BATTLE / STUNT
-    /// RACE, and on some arena / stunt runs CHICKEN CHASE (race flag 0x40);
+    /// RACE, and on some runs CHICKEN CHASE (race flag 0x40, any course);
     /// player 2's pad mashed by its own stream.
     Two,
 }
@@ -211,7 +211,7 @@ fn run(info: &CourseInfo, title: bool, hz: u8, seed: u32, long: bool, kind: Kind
                 cfg.vehicle = mr_sim::ai::character_entry(&exe, cfg.character).1;
                 cfg.p2_character = r.below(8) as u8;
                 cfg.p2_alt_controls = r.chance(30);
-                if info.race_type >= 2 && r.chance(50) {
+                if r.chance(40) {
                     cfg.race_flags = 0x40;
                 }
             }

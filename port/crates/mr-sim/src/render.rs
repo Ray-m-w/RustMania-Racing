@@ -196,7 +196,18 @@ pub fn aim_at_course(k: &mut KartState, g: &crate::RaceGlobals, w: &World) {
         }
     }
     if g.race_flags & 0x40 != 0 {
-        crate::unreachable_in_scope!("race flag 0x40 aim at the boss");
+        // CHICKEN CHASE (phase 7): the chicken 0x800CB658 when nearer.
+        let c = g.chicken.pos;
+        let dx = (c[0] >> 10) - (k.x >> 10);
+        let dy = (c[1] >> 10) - (k.y >> 10);
+        let dz = (c[2] >> 10) - (k.z >> 10);
+        let d = dx.wrapping_mul(dx).wrapping_add(dy.wrapping_mul(dy)).wrapping_add(dz.wrapping_mul(dz));
+        if d < k.aim_dist {
+            k.aim_dist = d;
+            k.aim_x = c[0] >> 5;
+            k.aim_y = c[1] >> 5;
+            k.aim_z = c[2] >> 5;
+        }
     }
 }
 

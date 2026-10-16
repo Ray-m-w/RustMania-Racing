@@ -27,8 +27,21 @@ const MOTION: [&str; 16] = ["x", "y", "z", "pitch", "heading", "roll", "vx", "vy
 /// The camera fields that differ between the port's camera and the game's
 /// (camera 0, 0x800C4F40) at a frame end.
 fn camera_diff(s: &Session, m: &mr_sim::mem::Mem) -> Vec<&'static str> {
-    let o = mr_sim::camera::CameraState::from_bytes(m.slice(0x800C_4F40, mr_sim::camera::CAMERA_SIZE));
-    let c = &s.camera;
+    let mut d = camera_diff1(&s.camera, m, 0x800C_4F40);
+    // Phase 7: player 2's camera (split screen).
+    if let Some(c2) = s.camera2.as_ref() {
+        d.extend(camera_diff1(c2, m, mr_sim::session::CAMERA2).into_iter().map(|n| match n {
+            "cam.mode" => "cam2.mode",
+            "cam.pos" => "cam2.pos",
+            "cam.matrix" => "cam2.matrix",
+            _ => "cam2.other",
+        }));
+    }
+    d
+}
+
+fn camera_diff1(c: &mr_sim::camera::CameraState, m: &mr_sim::mem::Mem, at: u32) -> Vec<&'static str> {
+    let o = mr_sim::camera::CameraState::from_bytes(m.slice(at, mr_sim::camera::CAMERA_SIZE));
     let mut d = Vec::new();
     for (name, same) in [
         ("cam.mode", c.mode == o.mode),
@@ -60,7 +73,7 @@ fn frames(cap: &Capture) -> Option<Ends> {
     // (a mode-3 capture's clock plan must not leak into the next course)
     CLOCKS.with(|c| c.borrow_mut().clear());
     let key = |vb: u32| (cap.i32(vb, 0x800B_0C70).unwrap(), cap.i32(vb, 0x800B_0A94).unwrap());
-    let load = *cap.vbs.iter().find(|&&v| (key(v).0 == 480 || key(v).0 == 300) && matches!(cap.read(v, 0x800B_0D46, 2).unwrap(), [1, 0] | [2, 0] | [3, 0] | [7, 0]))?;
+    let load = *cap.vbs.iter().find(|&&v| (key(v).0 == 480 || key(v).0 == 300) && matches!(cap.read(v, 0x800B_0D46, 2).unwrap(), [1, 0] | [2, 0] | [3, 0] | [7, 0] | [20, 0]))?;
     let vbs: Vec<u32> = cap.vbs.iter().copied().filter(|&v| v >= load).collect();
     let mut ends: Vec<u32> = vbs.windows(2).filter(|w| key(w[0]) != key(w[1])).map(|w| w[0]).collect();
     // The stunt trial (mode 3): its VBlank samples fall either side of the
@@ -171,6 +184,16 @@ pub fn session_at_load(disc: &mut mr_disc::Disc, info: &CourseInfo, cap: &Captur
     if cfg.race_flags & 0x120 == 0 {
         cfg.character = ml.u8(KART_ARRAY + 0x4B2);
         cfg.vehicle = ml.u8(KART_ARRAY + 0x4B1);
+    }
+    // Phase 7: a split-screen race (0x800B07CA): player 2's kart, its
+    // layout, the race's laps (0x800E038D).
+    if pre.u8(0x800B_07CA) != 0 {
+        cfg.players = 2;
+        cfg.p2_character = ml.u8(KART_ARRAY + 0x504 + 0x4B2);
+        cfg.p2_vehicle = ml.u8(KART_ARRAY + 0x504 + 0x4B1);
+        cfg.p2_alt_controls = pre.u8(0x800E_0393) != 0;
+        cfg.alt_controls = pre.u8(0x800E_0392) != 0;
+        cfg.laps = ml.i16(0x800B_0DA6);
     }
     let karts = (ml.i16(0x800B_0DFE) + ml.i16(0x800B_0C98)).max(1) as u32;
     // The path / progress round robin 0x800C3058[karts] keeps counting
@@ -498,6 +521,8 @@ fn free_run(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_fields:
     let mut rng_first = None;
     let mut hidden_first: Option<usize> = None;
     let mut cam_first: Option<(usize, Vec<&str>)> = None;
+    let mut chick_first: Option<(usize, String)> = None;
+    let mut chick_n = 0usize;
     for (j, &vb) in ends.iter().enumerate().take(n) {
         let m = cap.mem_at(vb, None);
         let mut dt = m.i32(0x800B_0AEC);
@@ -523,6 +548,7 @@ fn free_run(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_fields:
                 s.clock_end_dt = Some(dt);
             }
         }
+        s.pad2 = m.u16(0x800B_0CEA);
         if let Err(e) = s.tick_dt(m.u16(0x800B_0CE8), dt) {
             err = Some((j, e.to_string()));
             break;
@@ -695,8 +721,22 @@ fn free_run(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_fields:
                 first[slot] = Some((j, bad));
             }
         }
+        // Phase 7: CHICKEN CHASE's chicken (0x800CB658.., 0x800B0EBD).
+        if chick_first.is_none() && s.globals.mode == 0x14 && cap.read(vb, mr_sim::chicken::ADDR, 0x28).is_some() {
+            let o = mr_sim::chicken::Chicken::read(&m);
+            if o != s.globals.chicken {
+                chick_first = Some((j, format!("{:?} vs {:?}", s.globals.chicken, o)));
+            }
+            chick_n += 1;
+        }
         if first.iter().all(|x| x.is_some()) && cam_first.is_some() {
             break;
+        }
+    }
+    if chick_n > 0 {
+        match &chick_first {
+            None => println!("   free run: chicken exact over {chick_n} frames"),
+            Some((j, d)) => println!("   free run: chicken @{j}: port {d}"),
         }
     }
     let fr = first.iter().enumerate().map(|(i, x)| match x {
@@ -834,6 +874,7 @@ fn teacher_forced(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_f
                 s.clock_end_dt = Some(dt);
             }
         }
+        s.pad2 = m.u16(0x800B_0CEA);
         if let Err(e) = s.tick_dt(m.u16(0x800B_0CE8), dt) {
             tf_err = Some((j, e.to_string()));
             break;

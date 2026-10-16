@@ -24,6 +24,7 @@ pub mod ai;
 pub mod body;
 pub mod breakables;
 pub mod camera;
+pub mod chicken;
 pub mod collide;
 pub mod course;
 pub mod fixed;

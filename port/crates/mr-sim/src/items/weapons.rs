@@ -586,7 +586,8 @@ fn hit(i: usize, j: usize, karts: &mut [KartState], g: &mut RaceGlobals, w: &Wor
             }
         }
         if g.mode == 20 {
-            crate::unreachable_in_scope!("mode 20 projectile hit");
+            // CHICKEN CHASE (phase 7): the victim loses a chicken.
+            crate::chicken::projectile_hit(&mut karts[j]);
         }
     }
     // Voice requests (event bits +0x4DD): the shooter's and the victim's.

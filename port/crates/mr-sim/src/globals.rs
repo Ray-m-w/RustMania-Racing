@@ -95,6 +95,8 @@ pub struct RaceGlobals {
     /// Phase 6: ADVENTURE (game mode 0xB) and the challenge races it leads
     /// to (docs/spec/adventure.md).
     pub adv: Adventure,
+    /// Phase 7: CHICKEN CHASE's chicken (game mode 0x14; chicken.rs).
+    pub chicken: crate::chicken::Chicken,
 }
 
 /// ADVENTURE state (game mode 0xB, 0x800B07E6 != 0) and the save bits the
@@ -273,6 +275,7 @@ impl RaceGlobals {
                 league: m.i16(0x800B_07E4) != 0,
                 marker: m.i8(0x800B_068F),
             },
+            chicken: crate::chicken::Chicken::read(m),
             lap_record: m.i32(0x800E_0190u32.wrapping_add((8 * m.i8(0x800B_0E32) as i32 + 0x20 * m.i8(0x800B_0E38) as i32) as u32)),
         }
     }

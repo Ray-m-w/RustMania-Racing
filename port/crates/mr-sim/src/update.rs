@@ -193,7 +193,20 @@ pub fn kart_update_full(k: &mut KartState, others: &mut Others, g: &mut RaceGlob
     } else if g.humans < 2 {
         k.camera = 0;
     } else {
-        unreachable_in_scope!("nearest-camera search (2+ human players)");
+        // 0x80064FB0 (phase 7, two humans): the camera nearest the kart,
+        // each compared with camera 0's distance (>> 9 world units).
+        let c = &inp.cameras;
+        let d2 = |e: [i32; 3]| {
+            let d = [(e[0].wrapping_sub(k.x)) >> 9, (e[1].wrapping_sub(k.y)) >> 9, (e[2].wrapping_sub(k.z)) >> 9];
+            d[0].wrapping_mul(d[0]).wrapping_add(d[1].wrapping_mul(d[1])).wrapping_add(d[2].wrapping_mul(d[2]))
+        };
+        let d0 = d2(c[0]);
+        k.camera = 0;
+        for (i, e) in c.iter().enumerate().take((g.humans as usize).min(2)).skip(1) {
+            if d2(*e) < d0 {
+                k.camera = i as i8;
+            }
+        }
     }
 
     // 0x80065118: SELECT toggles the view; TRIANGLE fires an item.

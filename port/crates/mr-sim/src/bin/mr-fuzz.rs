@@ -159,6 +159,10 @@ enum Kind {
     /// DOOZER BATTLE); race courses REVERSE RACE / BATTLE RACE; stunt
     /// courses the reversed trial / BATTLE RACE.
     Secrets,
+    /// Phase 7: two players (split screen): 2 PLAYER RACE / BATTLE / STUNT
+    /// RACE, and on some arena / stunt runs CHICKEN CHASE (race flag 0x40);
+    /// player 2's pad mashed by its own stream.
+    Two,
 }
 
 fn run(info: &CourseInfo, title: bool, hz: u8, seed: u32, long: bool, kind: Kind) -> Outcome {
@@ -200,6 +204,17 @@ fn run(info: &CourseInfo, title: bool, hz: u8, seed: u32, long: bool, kind: Kind
                 }
                 cfg.course_flags = flags;
             }
+            Kind::Two => {
+                cfg.players = 2;
+                cfg.character = r.below(8) as u8;
+                let exe = mr_sim::tables::ExeImage::parse(&disc.read("SLUS_012.37").expect("exe")).expect("exe");
+                cfg.vehicle = mr_sim::ai::character_entry(&exe, cfg.character).1;
+                cfg.p2_character = r.below(8) as u8;
+                cfg.p2_alt_controls = r.chance(30);
+                if info.race_type >= 2 && r.chance(50) {
+                    cfg.race_flags = 0x40;
+                }
+            }
             Kind::Beat => {
                 let c = (8 + r.below(16)) as u8;
                 cfg.race_flags = 0x10;
@@ -225,6 +240,7 @@ fn run(info: &CourseInfo, title: bool, hz: u8, seed: u32, long: bool, kind: Kind
         }
     };
     let mut pad = Pad::new(r.next());
+    let mut pad2 = Pad::new(r.next());
     let lookahead = r.chance(50);
     // Mixed runs: the AI drives the player's kart in stretches (so races
     // reach the finish and the results), the pad mashes in between.
@@ -239,6 +255,9 @@ fn run(info: &CourseInfo, title: bool, hz: u8, seed: u32, long: bool, kind: Kind
     loop {
         let b = next_b;
         next_b = pad.next();
+        if kind == Kind::Two {
+            s.pad2 = pad2.next();
+        }
         if mixed && s.kart.finished == 0 {
             if auto_left == 0 {
                 s.autopilot = !s.autopilot;
@@ -298,6 +317,7 @@ fn main() {
             "--adventure" => kind = Kind::Adventure,
             "--beat" => kind = Kind::Beat,
             "--secrets" => kind = Kind::Secrets,
+            "--two" => kind = Kind::Two,
             _ => names.push(a.to_ascii_uppercase()),
         }
     }
@@ -318,7 +338,7 @@ fn main() {
     if let Some(t) = CourseInfo::read(&exe, mr_sim::title::TITLE_COURSE) {
         courses.push((t, true));
     }
-    if kind == Kind::Secrets {
+    if kind == Kind::Secrets || kind == Kind::Two {
         courses.retain(|(_, t)| !*t);
     }
     if !names.is_empty() {

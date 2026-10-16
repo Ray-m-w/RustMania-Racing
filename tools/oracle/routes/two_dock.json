@@ -1,0 +1,4 @@
+{"name": "two_dock", "slot": 1, "end_vb": 2200,
+ "steps": [[0, ""], [20, "down"], [26, ""], [40, "cross"], [46, ""], [130, "cross"], [136, ""], [300, "cross"], [900, "cross+left"], [960, "cross"], [1500, "cross+right"], [1540, "cross"]],
+ "pad2": [[130, "cross"], [136, ""], [300, "cross"], [800, "cross+right"], [850, "cross"], [1300, "cross+left"], [1360, "cross"]],
+ "note": "phase 7: DOCK course menu (slot 1, loaded only) -> 2 PLAYER RACE (KERMIT / player 2's cursor), race load ~VB 168; both pads CROSS from VB 300 with some steering; pad 2 over TCP set_input port=2"}

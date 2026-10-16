@@ -1,0 +1,4 @@
+{"name": "two_dock_probe", "slot": 1, "end_vb": 700,
+ "steps": [[0, ""], [20, "down"], [26, ""], [40, "cross"], [46, ""], [130, "cross"], [136, ""], [220, "cross"], [226, ""]],
+ "pad2": [[130, "cross"], [136, ""], [220, "cross"], [226, ""]],
+ "note": "phase 7 probe: DOCK course menu (slot 1, loaded only) -> 2 PLAYER RACE, both pads CROSS for character and vehicle"}

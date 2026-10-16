@@ -144,6 +144,16 @@ pub struct SessionConfig {
     pub doozer_turn: u8,
     /// 0x800B07E4: a league race (TOURNAMENT - 1 PLAYER).
     pub league: bool,
+    /// Phase 7: human players, 1 or 2 (0x800B07CA = 1: split screen,
+    /// 0x800B0CA6 = 1, 0x800B0E28 = 2; FUN_8008C4AC: then 2 karts, both
+    /// human, in every mode: 2 PLAYER RACE / BATTLE / STUNT RACE, CHICKEN
+    /// CHASE = race flag 0x40 on an arena or stunt course, game mode 0x14).
+    pub players: u8,
+    /// Player 2's character and vehicle (0x800B0B28[1] / 0x800B0C18[1];
+    /// vehicle 0xFF = the character's own) and button layout (0x800E0393).
+    pub p2_character: u8,
+    pub p2_vehicle: u8,
+    pub p2_alt_controls: bool,
 }
 
 /// The Doozer (character 24): ADVENTURE's parked kart to rescue.
@@ -196,6 +206,10 @@ impl SessionConfig {
             boss_pick: 0,
             doozer_turn: 0,
             league: false,
+            players: 1,
+            p2_character: 1,
+            p2_vehicle: 0xFF,
+            p2_alt_controls: false,
         }
     }
 
@@ -232,6 +246,9 @@ impl SessionConfig {
         SessionConfig { opponents: 0, rand_seed: 1, rng_start: RNG_START, ..Self::dock_default() }
     }
 }
+
+/// Player 2's camera record (FUN_80070418(0x800C4FB0, kart 1)).
+pub const CAMERA2: u32 = 0x800C_4FB0;
 
 /// The random pointer's reset value at race load (FUN_8008ACE4 @0x8008AD94).
 pub const RNG_START: u32 = 0x8001_F94C;
@@ -297,6 +314,11 @@ pub struct Session {
     /// instead of the race's (0xC on the title = the course select's
     /// mode 5; `menu_tick` uses state 0 = the course menu's orbit).
     pub camera_menu: Option<(i16, i8)>,
+    /// Phase 7: player 2's camera (0x800C4FB0, FUN_80070418 on kart 1 in a
+    /// split-screen race); None with one player.
+    pub camera2: Option<CameraState>,
+    /// Phase 7: player 2's pad word for the next tick (0x800B0CEA).
+    pub pad2: u16,
     cfg: SessionConfig,
 }
 
@@ -325,6 +347,7 @@ pub struct Snapshot {
     rng_skip_items: Option<u32>,
     camera_peek: bool,
     rand_state: u32,
+    camera2: Option<CameraState>,
     cfg: SessionConfig,
 }
 
@@ -593,12 +616,16 @@ impl Session {
         // (0x800B0F10 = 2); the reversed stunt trial (flag 4) mode 3.
         let boss = cfg.boss_challenge && race_type == 2 && !title && !adventure;
         let battle_race = cfg.race_flags & 1 != 0 && !title && !adventure;
-        let stunt = world.info.mode == 3 && !adventure && !battle_race;
+        // Phase 7: two players (FUN_8008C4AC: 0x800B07CA, not in ADVENTURE
+        // or on the title); CHICKEN CHASE = race flag 0x40, game mode 0x14.
+        let two = cfg.players >= 2 && !title && !adventure && !boss;
+        let chicken = two && cfg.race_flags & 0x40 != 0;
+        let stunt = world.info.mode == 3 && !adventure && !battle_race && !chicken;
         // The arenas' 1 PLAYER BATTLE (race type 2, mode 2; phase 4,
         // docs/spec/battle.md): 6 karts (5 above cup 6), grid draws
         // modulo 6, 0x800B0CD8 = the karts left standing.
         let battle = (world.info.mode == 2 || battle_race || boss) && !title && !adventure;
-        if world.info.mode != 1 && !stunt && !battle && !title && !adventure {
+        if world.info.mode != 1 && !stunt && !battle && !title && !adventure && !chicken {
             return Err(SessionError::OutOfScope(format!("course {} is not a race course (mode {})", world.info.name, world.info.mode)));
         }
         // 0x800B0DFE: BATTLE RACE (race type 2 or race flag 1) 6 karts (5
@@ -611,6 +638,9 @@ impl Session {
         } else {
             n
         };
+        // Split screen: 2 karts, the two humans (3 in a league: not ported).
+        let n = if two { 2 } else { n };
+        let humans: i16 = if two { 2 } else { 1 };
         let bosses = if boss { crate::secrets::boss_count(&world.exe, cfg.course) as usize } else { 0 };
         // FUN_8008C4AC @0x8008DE48: the grid draw's modulus (6 in modes 2 /
         // 7 / 0x14, else the kart count).
@@ -618,6 +648,8 @@ impl Session {
         let race_flags = if title { crate::title::TITLE_RACE_FLAGS } else { cfg.race_flags };
         let mode = if title {
             crate::title::TITLE_MODE
+        } else if chicken {
+            0x14
         } else if adventure {
             0xB
         } else if boss {
@@ -628,7 +660,7 @@ impl Session {
             world.info.mode
         };
         let challenge = adventure as i16;
-        let setup = RaceSetup { mode, race_type, race_flags, challenge, humans: 1, karts: n as i16 };
+        let setup = RaceSetup { mode, race_type, race_flags, challenge, humans, karts: n as i16 };
         let mut rand_state = cfg.rand_seed;
         let mut globals = RaceGlobals {
             dt: if cfg.logic_hz == 60 { 1 } else { 2 },
@@ -638,19 +670,19 @@ impl Session {
             // the title: 0x800B0C70 = 0 for course 0x1E).
             // Mode 3 (the stunt trial): 0x78 + 180 (0x8008DA2C).
             // ADVENTURE: no countdown (0x8008DA44: 0x800B0C70 = 0).
-            countdown: if title || adventure { 0 } else if stunt || battle { 0x78 + 180 } else { crate::race::COUNTDOWN_START },
-            countdown_len: if stunt || battle || adventure { 0x78 } else { 300 },
+            countdown: if title || adventure { 0 } else if stunt || battle || chicken { 0x78 + 180 } else { crate::race::COUNTDOWN_START },
+            countdown_len: if stunt || battle || adventure || chicken { 0x78 } else { 300 },
             race_flags,
             challenge,
             race_type,
             race_over: 0,
             game_state: cfg.event,
-            split_screen: 0,
-            humans: 1,
+            split_screen: two as u8,
+            humans,
             laps: cfg.laps,
             frame: 0,
             rng: cfg.rng_start,
-            alt_controls: [cfg.alt_controls as u8, 0],
+            alt_controls: [cfg.alt_controls as u8, cfg.p2_alt_controls as u8],
             sound_event: 0,
             // 0x800B0CD8 is 1 during a race (finishing order counter); in
             // race type 2 the karts left (FUN_8008C4AC @0x8008D9F0).
@@ -685,6 +717,7 @@ impl Session {
                 league: cfg.league,
                 marker: 0,
             },
+            chicken: crate::chicken::Chicken { target: if race_type == 3 { 5 } else { 10 }, ..Default::default() },
         };
         // FUN_8008C4AC: the first human's grid slot (*rng++ % karts), the
         // other karts on the following slots; with no opponents the
@@ -721,11 +754,42 @@ impl Session {
         // The opponents: each slot's character / vehicle draw, then its
         // FUN_800609F4 (both use rand(), in this order).
         let mut others = Vec::new();
-        if n + bosses > 1 {
+        let mut taken = vec![title_first.map_or(cfg.character, |f| f.0)];
+        if two {
+            // Phase 7: player 2 (FUN_8008C4AC's human loop: FUN_800609F4
+            // with 0x800B0B28[1] / 0x800B0C18[1], the next grid slot, flags 0).
             let tpl = crate::ai::vehicle_templates(&world.exe, &world.tables).map_err(|e| SessionError::Disc(e.0))?;
-            let mut taken = vec![title_first.map_or(cfg.character, |f| f.0)];
+            let c = cfg.p2_character;
+            let v = if cfg.p2_vehicle == 0xFF { crate::ai::character_entry(&world.exe, c).1 } else { cfg.p2_vehicle };
+            let vpath = crate::ai::model_path(&world.exe, crate::ai::addr::VEHICLE_PATHS, v, "MDL").ok_or_else(|| SessionError::Disc(format!("vehicle {v}: no model")))?;
+            let cpath = crate::ai::model_path(&world.exe, crate::ai::addr::CHARACTER_PATHS, c, "MDL").ok_or_else(|| SessionError::Disc(format!("character {c}: no model")))?;
+            let mut t = *tpl.get(v as usize).ok_or_else(|| SessionError::Disc(format!("vehicle {v}: no template")))?;
+            crate::ai::place_wheels(&mut t, &read_mdl(disc, &vpath)?);
+            let cm = read_mdl(disc, &cpath)?;
+            let (rec, k) = {
+                let mut rand = || bios_rand(&mut rand_state);
+                init_kart(
+                    &KartInit { world: &world, template: &t, setup, slot: 1, character: c, vehicle: v, grid: (grid0 + 1) % grid_mod as i32, flags: 0, character_pivot_y: cm.parts[0].record.pivot[1] },
+                    &mut globals.rng,
+                    &mut rand,
+                )
+            };
+            taken.push(c);
+            others.push(OtherKart {
+                ai: crate::ai::AiState::from_record(&rec),
+                kart: k,
+                record: rec,
+                character: c,
+                vehicle: v,
+                driver: crate::render::DriverModel { part0_pivot: cm.parts[0].record.pivot },
+                vehicle_model: vpath,
+                character_model: cpath,
+            });
+        }
+        if n + bosses > 1 + others.len() {
+            let tpl = crate::ai::vehicle_templates(&world.exe, &world.tables).map_err(|e| SessionError::Disc(e.0))?;
             let boss_list = crate::secrets::bosses(cfg.course).0;
-            for s in 1..n + bosses {
+            for s in 1 + others.len()..n + bosses {
                 let (c, v) = match cfg.lineup {
                     // A BOSS CHALLENGE's bosses (0x8008E7C8): after the
                     // 0x800B0DFE karts, from FUN_8008A9AC's tables.
@@ -861,6 +925,15 @@ impl Session {
             globals.rng = globals.rng.wrapping_add(1);
             globals.adv.boss_cam = (b as usize % bosses) as i8;
         }
+        // FUN_8008C4AC's end (mode 0x14): the first chicken (FUN_8006E564),
+        // 0x800B0EBD = 10 (5 on a stunt course).
+        if chicken {
+            let karts: Vec<[i32; 3]> = std::iter::once(&kart).chain(others.iter().map(|o| &o.kart)).map(|k| [k.x, k.y, k.z]).collect();
+            let mut c = globals.chicken;
+            let mut rand = || bios_rand(&mut rand_state);
+            crate::chicken::spawn(&mut c, &mut globals, &world, &karts, &mut rand);
+            globals.chicken = c;
+        }
         // From here `n` counts every kart (0x800B0DFE + 0x800B0C98).
         let n = n + bosses;
         let player_ai = crate::ai::AiState::from_record(&record);
@@ -875,7 +948,7 @@ impl Session {
         let camera_globals = CameraGlobals {
             dt: if cfg.logic_hz == 60 { 1 } else { 2 },
             countdown: 0,
-            countdown_len: if stunt || battle { 0x78 } else { 300 },
+            countdown_len: if stunt || battle || chicken { 0x78 } else { 300 },
             laps: cfg.laps,
             finish_gate_a: 0,
             finish_gate_b: 0,
@@ -917,7 +990,8 @@ impl Session {
             clock_plan: None,
             clock_end_dt: None,
             camera_menu: None,
-
+            camera2: two.then(|| CameraState::from_bytes(&cam_bytes)),
+            pad2: 0,
             rand_state,
             cfg,
         };
@@ -1043,6 +1117,7 @@ impl Session {
             rng_skip_items: self.rng_skip_items,
             camera_peek: self.camera_peek,
             rand_state: self.rand_state,
+            camera2: self.camera2.clone(),
             cfg: self.cfg,
         }
     }
@@ -1069,6 +1144,7 @@ impl Session {
         self.rng_skip_items = s.rng_skip_items;
         self.camera_peek = s.camera_peek;
         self.rand_state = s.rand_state;
+        self.camera2.clone_from(&s.camera2);
         self.cfg = s.cfg;
         self.sync_ter();
     }
@@ -1113,6 +1189,7 @@ impl Session {
     /// play uses `tick`, dt = 2).
     pub fn tick_dt(&mut self, buttons: u16, dt: i32) -> Result<(), SessionError> {
         let before = (self.kart.clone(), self.globals.clone(), self.water, self.camera.clone(), self.rand_state, self.record.clone(), self.others.clone(), self.best_start, self.pick, self.load_frame, self.player_ai);
+        let cam2 = self.camera2.clone();
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.tick_inner(buttons, dt)));
         match r {
             Ok(()) => {
@@ -1121,6 +1198,7 @@ impl Session {
             }
             Err(e) => {
                 (self.kart, self.globals, self.water, self.camera, self.rand_state, self.record, self.others, self.best_start, self.pick, self.load_frame, self.player_ai) = before;
+                self.camera2 = cam2;
                 let msg = e
                     .downcast_ref::<String>()
                     .cloned()
@@ -1155,6 +1233,12 @@ impl Session {
         let g = &mut self.globals;
         let n = ks.len();
         crate::sound::begin_frame(g, ks, dt, self.camera.pos);
+        // Phase 7: player 2's camera is the second listener.
+        let cam2_pos = self.camera2.as_ref().map(|c| c.pos);
+        let cam2_div32 = self.camera2.as_ref().map_or([0; 3], |c| c.pos_div32);
+        if let Some(p) = cam2_pos {
+            g.sound.listeners[1] = p;
+        }
         // 0. FUN_8005C2EC (main loop, before the race frame): frame counter,
         //    countdown (GO and the start boosts), race clock, one rand().
         if self.load_frame {
@@ -1245,7 +1329,7 @@ impl Session {
             }
         }
         let adv_on = g.mode == 0xB && g.adv.tagged == -1;
-        if (g.mode == 1 || g.mode == 2 || g.mode == 3 || g.mode == 7 || adv_on) && g.race_over == 0 {
+        if (g.mode == 1 || g.mode == 2 || g.mode == 3 || g.mode == 7 || g.mode == 0x14 || adv_on) && g.race_over == 0 {
             let humans_done = ks.iter().filter(|x| (x.player_index as i32) < g.humans as i32 && x.finished != 0).count() as i32;
             if humans_done > 0 && humans_done == g.humans as i32 {
                 // 0x80079718 (phase 6b): a BATTLE LEAGUE battle with AI
@@ -1293,7 +1377,7 @@ impl Session {
         //    catch-up.
         g.karts = dfe as i16;
         let leader = self.leader_progress_override.unwrap_or_else(|| ks.iter().find(|x| x.race_pos == 1).map(|x| x.progress).unwrap_or(ks[0].progress));
-        let inp = TickInputs { leader_progress: leader, water_normal: wn, alt_normal: an, aim: None, cameras: [self.camera.pos, [0; 3]] };
+        let inp = TickInputs { leader_progress: leader, water_normal: wn, alt_normal: an, aim: None, cameras: [self.camera.pos, cam2_pos.unwrap_or_default()] };
         for s in 0..n {
             // The battle AI's chase targets (FUN_80090FAC reads +0x330/
             // +0x338/+0x340 of the kart it chases, live: the previous
@@ -1344,6 +1428,9 @@ impl Session {
                         let b = crate::ai::ai_buttons(&mut ks[0], &mut self.player_ai, g, &ctx, w, &mut rand);
                         if items { b } else { crate::ai::items_off(b) }
                     })
+                } else if s == 1 {
+                    // Phase 7: player 2's pad.
+                    self.pad2
                 } else {
                     buttons
                 };
@@ -1395,7 +1482,7 @@ impl Session {
         //     FUN_8007A9DC, pickups FUN_8007BBF0,
         //     projectiles FUN_80069648 (items.rs).
         {
-            let cams = crate::items::Cameras { pos: [self.camera.pos_div32, [0; 3]], n: g.humans.clamp(0, 2) as usize };
+            let cams = crate::items::Cameras { pos: [self.camera.pos_div32, cam2_div32], n: g.humans.clamp(0, 2) as usize };
             let seed = &mut self.rand_state;
             let mut rand = || bios_rand(seed);
             let skip = self.rng_skip_items.take();
@@ -1422,10 +1509,21 @@ impl Session {
         }
         let w = &self.world;
         {
-            let cams = crate::items::Cameras { pos: [self.camera.pos_div32, [0; 3]], n: g.humans.clamp(0, 2) as usize };
+            let cams = crate::items::Cameras { pos: [self.camera.pos_div32, cam2_div32], n: g.humans.clamp(0, 2) as usize };
             let seed = &mut self.rand_state;
             let mut rand = || bios_rand(seed);
             crate::items::after_lifts(ks, g, w, &cams, self.cfg.items, &mut rand);
+            // FUN_8006EC4C (race flag 0x40, CHICKEN CHASE; phase 7). 60 Hz
+            // mode: once per pair with the pair's dt (its draws at the
+            // game's rate).
+            if g.race_flags & 0x40 != 0 && g.mode == 0x14 && g.hz60.beat() {
+                let dt = g.dt;
+                if g.hz60.on {
+                    g.dt = 2;
+                }
+                crate::chicken::frame(ks, g, w, &mut rand);
+                g.dt = dt;
+            }
         }
         // Knocked-down scenery (breakables.rs) stops colliding.
         if !g.objects.group_enabled.is_empty() {
@@ -1447,31 +1545,32 @@ impl Session {
         // 7. Camera: intro (countdown >= 300), chase, and the trackside
         //    cameras once the player has finished (camera.rs).
         let ck = CameraKart::from_record(&self.record, Some(k.trail));
-        let watched = {
-            let (rec0, others) = (&self.record, &self.others);
-            camera::resolve_watch(ck.watch_target, |n| if n == 0 { Some(rec0.as_slice()) } else { others.get(n - 1).map(|o| o.record.as_slice()) }, &w.course.look_points, w.pickups.challenge.as_ref().map_or(&[][..], |l| &l.points[..]))
+        // The watch target (+0x4FE): a kart, a look point, a challenge
+        // object, or (mode 0x14) the chicken.
+        let watch = |t: i8, rec0: &[u8], others: &[OtherKart], chicken: [i32; 3]| {
+            if t == 0x7F {
+                return camera::Watched::World(chicken);
+            }
+            camera::resolve_watch(t, |n| if n == 0 { Some(rec0) } else { others.get(n - 1).map(|o| o.record.as_slice()) }, &w.course.look_points, w.pickups.challenge.as_ref().map_or(&[][..], |l| &l.points[..]))
         };
+        let watched = watch(ck.watch_target, &self.record, &self.others, g.chicken.pos);
         let boss = g.adv.boss_cam;
         let dfe = n - g.adv.bosses.max(0) as usize;
         let intro_kart = (g.mode == 7 && boss >= 0).then(|| self.others.get(dfe + boss as usize - 1).map(|o| CameraKart::from_record(&o.record, None))).flatten();
-        let inp = CameraInput {
-            watched,
-            intro_kart,
-            kart: ck,
-            globals: CameraGlobals {
-                dt: g.dt,
-                num_karts: n as i16,
-                countdown: g.countdown,
-                countdown_len: g.countdown_len as i16,
-                laps: g.laps,
-                game_state: self.camera_menu.map_or(g.mode, |m| m.0),
-                menu_row: self.camera_menu.map_or(0, |m| m.1),
-                // ADVENTURE's finish rule (0x800706E0): 0x800B07E6, 0x800B0803.
-                finish_gate_a: g.challenge,
-                finish_gate_b: g.adv.done as i8,
-                ..self.camera_globals.clone()
-            },
+        let cam_globals = CameraGlobals {
+            dt: g.dt,
+            num_karts: n as i16,
+            countdown: g.countdown,
+            countdown_len: g.countdown_len as i16,
+            laps: g.laps,
+            game_state: self.camera_menu.map_or(g.mode, |m| m.0),
+            menu_row: self.camera_menu.map_or(0, |m| m.1),
+            // ADVENTURE's finish rule (0x800706E0): 0x800B07E6, 0x800B0803.
+            finish_gate_a: g.challenge,
+            finish_gate_b: g.adv.done as i8,
+            ..self.camera_globals.clone()
         };
+        let inp = CameraInput { watched, intro_kart, kart: ck, globals: cam_globals.clone() };
         let mut env = SessionCameraEnv { peek_rand: std::mem::take(&mut self.camera_peek), world: w, rand_state: &mut self.rand_state, rng: &mut g.rng, strip_out: None };
         camera::tick(&mut self.camera, &inp, &self.camera_tables, &mut env);
         // The stunt camera (mode 3) writes the kart's place along / across
@@ -1481,6 +1580,22 @@ impl Session {
             ks[0].strip_across = across;
             self.record[0x4A8] = along;
             self.record[0x4A9] = across;
+        }
+        // Phase 7: FUN_80070418(0x800C4FB0, kart 1) in a split-screen race
+        // (FUN_8007916C @0x8007A1D4), after player 1's.
+        if let Some(mut cam2) = self.camera2.take().filter(|_| ks.len() > 1) {
+            let ck = CameraKart::from_record(&self.others[0].record, Some(ks[1].trail));
+            let watched = watch(ck.watch_target, &self.record, &self.others, g.chicken.pos);
+            let inp = CameraInput { watched, intro_kart: None, kart: ck, globals: cam_globals };
+            let mut env = SessionCameraEnv { peek_rand: false, world: w, rand_state: &mut self.rand_state, rng: &mut g.rng, strip_out: None };
+            camera::tick(&mut cam2, &inp, &self.camera_tables, &mut env);
+            if let Some((along, across)) = env.strip_out {
+                ks[1].strip_along = along;
+                ks[1].strip_across = across;
+                self.others[0].record[0x4A8] = along;
+                self.others[0].record[0x4A9] = across;
+            }
+            self.camera2 = Some(cam2);
         }
         // 8. After the camera (FUN_8007916C @0x80079B30..): each human's
         //    splash (FUN_800330D4 when +0x4DB, or in water / a special move
@@ -1519,7 +1634,10 @@ impl Session {
             if g.hz60.on {
                 g.dt = 2;
             }
-            let cams = [crate::weather::WeatherCamera { eye: self.camera.pos, forward: self.camera.forward }];
+            let mut cams = vec![crate::weather::WeatherCamera { eye: self.camera.pos, forward: self.camera.forward }];
+            if let Some(c2) = self.camera2.as_ref() {
+                cams.push(crate::weather::WeatherCamera { eye: c2.pos, forward: c2.forward });
+            }
             let seed = &mut self.rand_state;
             let mut rand = || bios_rand(seed);
             crate::weather::frame(g, w, &cams, &mut rand);
@@ -1739,6 +1857,8 @@ impl Session {
             clock_plan: None,
             clock_end_dt: None,
             camera_menu: None,
+            camera2: None,
+            pad2: 0,
             rand_state: m.u32(0x8000_9010),
             cfg,
         };
@@ -1767,6 +1887,8 @@ impl Session {
         self.globals.fx = Some(Box::new(crate::items::Fx { particles: crate::particles::Particles::read(m, types), sparks: crate::particles::Sparks::read(m), flats: crate::particles::Flats::read(m) }));
         self.water = WaterAnim::from_bytes(m.slice(crate::water::STATE_ADDR, 0x1C));
         self.camera = CameraState::from_bytes(m.slice(0x800C_4F40, camera::CAMERA_SIZE));
+        // Phase 7: player 2's camera in a split-screen race.
+        self.camera2 = (self.globals.split_screen != 0).then(|| CameraState::from_bytes(m.slice(CAMERA2, camera::CAMERA_SIZE)));
         self.camera_globals = CameraGlobals::from_reader(&|a, l| m.slice(a, l).to_vec());
         self.best_start = m.u8(0x800E_02BA);
         // The counter 0x800C3058[n] steps before the race frame reads it.

@@ -664,6 +664,9 @@ pub enum Watched {
     /// objects 0x800D1C78, and 0x7F, the mode 0x14 point 0x800CB658, are out
     /// of scope: [`resolve_watch`] stops on them.)
     Point([i32; 3]),
+    /// 0x7F (game mode 0x14, CHICKEN CHASE): the chicken 0x800CB658, world
+    /// units (the session passes it; `resolve_watch` has no chicken).
+    World([i32; 3]),
 }
 
 /// Resolve a watch target (+0x4FE) for the camera: `kart(n)` returns kart
@@ -672,7 +675,7 @@ pub enum Watched {
 pub fn resolve_watch<'a>(target: i8, kart: impl Fn(usize) -> Option<&'a [u8]>, look_points: &[[i32; 3]], challenge: &[[i32; 3]]) -> Watched {
     match target {
         -1 => Watched::None,
-        0x7F => unreachable_in_scope!("watch target 0x7F (mode 0x14 point 0x800CB658)"),
+        0x7F => unreachable_in_scope!("watch target 0x7F: the session resolves the chicken (Watched::World)"),
         t if t < 10 => {
             let rec = kart(t as usize).unwrap_or_else(|| unreachable_in_scope!(format!("watch target kart {t} not in the race")));
             let k = CameraKart::from_record(rec, None);
@@ -938,6 +941,7 @@ pub fn tick(cam: &mut CameraState, inp: &CameraInput, t: &CameraTables, env: &mu
         match &inp.watched {
             Watched::Kart { pos, mount, matrix } => look_of(pos, mount, matrix),
             Watched::Point(p) => [p[0] << 5, p[1] << 5, p[2] << 5],
+            Watched::World(p) => *p,
             Watched::None => panic!("camera: watch target {} not resolved by the caller (camera::resolve_watch)", k.watch_target),
         }
     } else {

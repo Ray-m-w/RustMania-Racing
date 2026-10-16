@@ -518,14 +518,14 @@ pub fn track_direction(k: &mut KartState, g: &mut RaceGlobals, w: &World, karts:
     }
     if g.mode != 1 {
         // Modes 2 / 7 (battles): toward the nearest kart (+0x4DC); mode
-        // 0x14 (CHICKEN CHASE, two players: not ported) toward the chicken
-        // 0x800CB658 (0x80086C88).
+        // 0x14 (CHICKEN CHASE) toward the chicken 0x800CB658 (0x80086C88).
         let target = match g.mode {
             2 | 7 => {
                 let Some(t) = karts.get(k.nearest_kart as usize).filter(|_| k.nearest_kart >= 0) else { return };
                 (s16(t.0 >> 9), s16(t.1 >> 9))
             }
-            0x14 => unreachable_in_scope!("track direction for mode 0x14 (CHICKEN CHASE)"),
+            // CHICKEN CHASE (phase 7): the chicken 0x800CB658.
+            0x14 => (s16(g.chicken.pos[0] >> 9), s16(g.chicken.pos[2] >> 9)),
             _ => return,
         };
         let a = ratan2(&w.tables, target.0 - (k.x >> 9), target.1 - (k.z >> 9));

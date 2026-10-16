@@ -821,7 +821,7 @@ fn select_mode(cam: &mut CameraState, inp: &CameraInput) -> i16 {
     if g.event == 0x1E && g.game_state == 0xC {
         return 5;
     }
-    // 0x8007055C (phase 8): THE END (course 0x1D, game mode 0x15) orbits.
+    // LAB_80070554 (phase 8): THE END (course 0x1D, game mode 0x15) orbits.
     if g.event == 0x1D && g.game_state == 0x15 {
         return 1;
     }
@@ -851,7 +851,7 @@ fn select_mode(cam: &mut CameraState, inp: &CameraInput) -> i16 {
         18 => unreachable_in_scope!("camera mode 11 (game state 18)"),
         1 | 2 => {
             if g.alt_rule != 0 {
-                // 0x80070630 (phase 8): the attract demo (0x800B0BD2) shows
+                // Game modes 1 / 2 (phase 8): the attract demo (0x800B0BD2) shows
                 // the trackside cameras (mode 2) while the scripted
                 // sub-state is below 5 (6: mode 1 + case 3, not reached).
                 match cam.sub_state {

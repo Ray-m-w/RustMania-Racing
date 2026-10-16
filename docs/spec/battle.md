@@ -241,8 +241,7 @@ track direction points at it. Phase 7 (split screen) is its home.
 
 ## Not ported (listed)
 - A 2-player league (TOURNAMENT - 2 PLAYERS: 3 karts).
-- The secret screen (course 0x1D) itself: the port lists worlds 7 and 8 in
-  the world list instead; their courses' own menus (sub-states 0xB / 0xC:
-  CHICKEN CHASE greyed, BACK TO CREDITS = the title here) are ported
-  (frontend.md "Phase 6b").
+- (The secret screen, course 0x1D, is ported in phase 8: frontend.md "THE
+  END"; BACK TO CREDITS goes there. The port also keeps worlds 7 and 8 in
+  the world list.)
 - The league's tie-break and presentation (above).

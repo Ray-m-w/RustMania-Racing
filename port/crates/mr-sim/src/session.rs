@@ -692,7 +692,7 @@ impl Session {
             game_state: cfg.event,
             split_screen: two as u8,
             humans,
-            // 0x8008D9xx: 10 laps in the attract demo.
+            // FUN_8008C4AC: 10 laps in the attract demo.
             laps: if demo { 10 } else { cfg.laps },
             frame: 0,
             rng: cfg.rng_start,
@@ -1726,7 +1726,7 @@ impl Session {
 
     /// Where the race is for the player (intro, start game, racing,
     /// finished); see race::RacePhase for the field meanings.
-    /// Phase 8: the attract demo is over (FUN_8007916C @0x80079540: with
+    /// Phase 8: the attract demo is over (FUN_8007916C, its start: with
     /// 0x800B0BD2 set, the race clock 0x800B0A94 past 0x4650 (1:00.03 at 300 a second), or
     /// kart 0 finished): the game fades out (FUN_8007D174(0, 8)) and loads
     /// the title (0x800B0AF4 = 0x1E).

@@ -7,7 +7,7 @@
 //! kart 0 too, 10 laps, the countdown from 0x3C, the trackside cameras; the
 //! HUD only "DEMO" and a blinking "PRESS START"). The demo ends after one
 //! minute of race clock (0x800B0A94 > 0x4650) or at kart 0's finish: the
-//! title again. START (FUN_8007916C @0x80079A84) goes to that course's
+//! title again. START (FUN_8007916C after LAB_80079A58) goes to that course's
 //! menu when the course is open, else to the title.
 //!
 //! The port changes course by restarting the program (menus.rs `relaunch`):

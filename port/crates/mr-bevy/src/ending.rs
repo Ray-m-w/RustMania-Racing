@@ -33,7 +33,7 @@ pub const MODE: i16 = 0x15;
 pub const CREDITS: u32 = 0x800A_B488;
 /// The secret courses' names (2 groups x 4 pointers, 3 used each).
 pub const NAMES: u32 = 0x800A_B3D4;
-/// The courses the six rows load (FUN_80074A94 @0x800750xx).
+/// The courses the six rows load (FUN_80074A94, course 0x1D).
 pub const ROW_COURSE: [u8; 6] = [0x00, 0x20, 0x21, 0x22, 0x23, 0x24];
 
 /// This run is THE END.

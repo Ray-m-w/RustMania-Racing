@@ -94,10 +94,23 @@ frontend.md "Menus"):
   secrets, records and the leagues; BATTLE LEAGUE in TOURNAMENT (the six
   arenas, points for place, best crash, knock-outs and damage); the world-7
   and cup-8 courses' own menus (REVERSE RACE / BATTLE / BATTLE RACE, BACK
-  TO CREDITS = the title until the secret screen is ported).
+  TO CREDITS = THE END).
+- Phase 8 (frontend.md "Phase 8"): left idle 1800 VBlanks (30 s) on the
+  title or the main menu, the attract demo: a random course with six AI
+  karts, trackside cameras, "DEMO" / "PRESS START"; START goes to that
+  course's menu (or the title when the course is not open yet), after one
+  minute it returns to the title by itself (`--no-demo` turns it off).
+  Cheat codes: ten face-button presses on the title (PRESS START screen;
+  keyboard Z = SQUARE, A = TRIANGLE, S = CIRCLE, X = CROSS) - the game's six
+  codes (MUPPETS AND VEHICLES, STUDIO, ARCHES, FRAGGLE ROCK, END COURSES,
+  RESET; frontend.md "Cheat codes" lists the sequences); a code changes
+  save.bin at once. OPTIONS -> THE END (once SPEEDWAY / RALLY / GLACIER or
+  everything is open): the credits roll over Kermit's kart, START opens the
+  secret courses (SPEEDWAY, RALLY, GLACIER, VOLCANO, HAUNTED HOUSE,
+  WHATEVER) and BACK TO MAIN MENU (`--ending` starts there).
 Menu keys: arrows move, X (CROSS) selects, A (TRIANGLE) goes back; pad: D-pad,
 south, north. Shown greyed and not selectable (later phases): MEET THE
-MUPPETS, 2 PLAYER RACE / STUNT RACE / BATTLE, CHICKEN CHASE, PLAY MOVIE,
+MUPPETS, PLAY MOVIE,
 ADJUST SCREEN, MEMORY CARD, VIBRATION, MOVIE / MUSIC.
 Another course (or the title) restarts the program on it (`--course NAME
 --skip-title --menu --character C --vehicle V`, `--league` within a league;

@@ -256,3 +256,24 @@ one-shots: jumps, landings, walls, contacts, voices).
   ten landings around item hits, re-keys whose random byte differs).
   Voice numbers agree while the key-on sequence agrees (the first 14), then
   drift with the missing item sounds (12% overall).
+
+## Phase 8 (Session 7): the demo, THE END, the cheats [CODE]
+- The attract demo (frontend.md "Phase 8"): no course intro clip (the
+  demo loads the race straight from the title, not through game mode 0
+  where FUN_8008C4AC queues it), no countdown beeps (FUN_8005C2EC checks
+  0x800B0BD2), no voice clips (FUN_80060580 / FUN_800606D0 check it); the
+  course's music as in a race. The port: audio.rs skips the intro and the
+  finish clip in the demo.
+- THE END (course 0x1D): its course row has no track (+3 = -1); FUN_8008C4AC
+  queues FUN_80089B98's pick instead (a random open course of worlds 0..5,
+  its track not one of the last three, 0x800B0A18..1A), as for game mode
+  0xE. Port: audio.rs draws it with the session's random pointer at the
+  load (mr-sim title::credits_track). VOICES/CRDIT_01.XA (file row 14) is
+  not requested by any path found (not the course row, not FUN_8008C4AC):
+  not played.
+- A cheat code plays sound 0x24 (5000, 0x80, 0x80), the "new vehicle"
+  sound.
+- FUN_80060580 call sites (character voice clips): MEET THE MUPPETS (game
+  mode 0xD, not ported), FUN_80082708 (the finish: ported; two other calls),
+  FUN_80081DD8, FUN_8007916C (a battle won), FUN_8006EC4C (CHICKEN CHASE
+  catches), FUN_8008C4AC (league standings, game mode 0x12): not ported.

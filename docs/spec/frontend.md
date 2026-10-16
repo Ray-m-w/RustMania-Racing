@@ -25,7 +25,8 @@ game's code (Ghidra decomp / generated C as the spec), [RAM] oracle RAM,
   0x800B0D90 = 0 at VB ~406 [RAM, analysis/s6/title/cap1].
 - After 1800 VBlanks without input (counter 1800) the game fades out and
   starts the attract demo race (course 17 in this run, mode 1 at VB ~2243)
-  [RAM]; START during the attract returns to the menus. Not ported.
+  [RAM]; START during the attract returns to the menus. Ported in phase 8
+  ("Phase 8" below).
 
 ## Scene
 - VRAM / slot table: OPTIONS.RAW, decoded by mr_assets::raw (course 0x1E
@@ -160,8 +161,8 @@ dt = 4 in the oracle (the load's long frame).
   of the first frame (not located) shifts the random stream.
 
 ## Not ported (open)
-- The attract demo after 1800 VBlanks, the cheat codes FUN_80051698 shows
-  on the title (0x800B080F); the menus listed under "Menus" as not ported.
+- The menus listed under "Menus" as not ported (the attract demo and the
+  cheat codes: phase 8, below).
 - The first frame's extra random byte of a new title session (above).
 
 
@@ -247,8 +248,7 @@ MEET THE MUPPETS (game mode 0xD, camera mode 6: the 5 x 5 character
 gallery, TEST DRIVE, voice clips FUN_80060580), 2 PLAYER RACE / STUNT
 RACE (phase 7), 2 PLAYER BATTLE / CHICKEN CHASE (phase 7; battle.md), MEMORY CARD and GAME STATUS CHANGED - SAVE
 GAME (the port autosaves), ADJUST SCREEN, VIBRATION, MOVIE / MUSIC in the
-course select (phases 9 / 8), the fades and LOADING screen between screens,
-the attract demo.
+course select (phases 9 / 8), the fades and LOADING screen between screens.
 
 
 # Saves (Session 7, phase 2)
@@ -321,7 +321,7 @@ main() compares between course sessions, the cheat codes too).
 - FUN_8008ACE4 at a course load: race laps back to 3 unless the course is
   won; leagues' laps likewise unless won.
 - The league end (below), the menus (laps, volumes, controller
-  configuration), the cheat codes (FUN_8008F884, not ported).
+  configuration), the cheat codes (FUN_8008F884; phase 8, "Cheat codes").
 
 ## The port
 - save.bin beside the executable (`--save PATH`): "MRMSAVE1", u32 version
@@ -506,10 +506,160 @@ Port: port/crates/mr-bevy/src/league.rs, menus.rs (`Leagues`, `LeagueMenu`,
   BATTLE RACE (race flags 2 / 1 / 8, through the character select), CHICKEN
   CHASE (greyed), BACK TO CREDITS; the cup-8 arenas: 1 PLAYER BATTLE, 2
   PLAYER BATTLE (greyed), CHICKEN CHASE (greyed), BACK TO CREDITS. BACK TO
-  CREDITS returns to the secret screen (course 0x1D) in the game; the port
-  has no secret screen yet and goes to the title.
+  CREDITS returns to the secret screen (course 0x1D; phase 8: THE END).
 - BATTLE LEAGUE: battle.md "Phase 6b".
-- Not ported: the secret screen itself (course 0x1D, the scene with its six
-  choices, 0x800B0F60, reached from the main menu once 0x800E02B9 is set;
-  the port lists worlds 7 / 8 in the world list), MEET THE MUPPETS, the
-  two-player rows.
+- The secret screen itself: phase 8 ("THE END"; reached from OPTIONS, not
+  the main menu). Not ported: MEET THE MUPPETS. (The port still lists
+  worlds 7 / 8 in the world list too.)
+
+
+# Phase 8 (Session 7): attract demo, THE END, cheat codes
+
+## Attract demo [CODE][RAM]
+- Trigger (FUN_80074A94, course 0x1E, game mode 0x10 = the title and its
+  title sub-states: PRESS START, main menu, OPTIONS, the leagues): the
+  counter 0x800B0AF0 (FUN_8005C2EC adds dt; FUN_80073138 zeroes it on every
+  menu input: a direction, confirm or back) past 0x707: 0x800B0BD2 = 1,
+  0x800B0A82 = 1, 0x800B0790 = 1, 0x800B0AF4 = FUN_80089CA8() (fade, load).
+- FUN_80089CA8, the course: two bytes of the random stream (0x800B0BCC,
+  +2 a try): world = b0 % 7, slot = b1 & 3; worlds 0..5 skip slot 3 (no
+  stunt course); world 6 needs its slot open (save flag 1); the course of
+  0x800AC1E4[slot + 4 world] not one of the last three demos 0x800B0A1C..1E
+  (the exe's initial 0xFF), which it joins. Oracle (slot 1 -> the title,
+  idle; tools/oracle/routes/attract_demo.json, analysis/oracle/attract/demo,
+  local): trigger at VB 2208 (counter 1800), pointer 0x8001FC92, recent 1,
+  15, 21 -> NEW YORK (17); the race load at VB 2749 (mode 0 -> 1).
+- The race (FUN_8008C4AC with 0x800B0A82 in game mode 0): game mode = race
+  type (1 race, 2 arena), 0x800B0BD2 kept; every kart drawn and placed as
+  the AI opponents are (@0x8008E49C: kart 0 too, flags 3), 10 laps, the
+  countdown from 0x3C (below 0x800B07F8: no intro camera). The demo flag
+  then gates: the camera (FUN_80070418: mode 2, the trackside cameras,
+  while the scripted sub-state +0x66 < 5); the HUD (FUN_80051698 cases 1 /
+  2: only "DEMO" FUN_800474E8(0x100, 0x1E, 0, 1, 6, 0x60) and "PRESS START"
+  (0x100, 0xD2, size 0, colour 4) while the frame counter % 60 < 45 once
+  the fade-in is done; no start-game draws); the AI catch-up scaling, the
+  item / view buttons of player 1, the specials' vehicles won, the voice
+  clips (FUN_80060580 / FUN_800606D0), the countdown beeps, the results.
+- The end (FUN_8007916C, before its menu-input calls): the race clock 0x800B0A94 past
+  0x4650 (1:00 at 300 a second) or kart 0 finished: 0x800B0AF4 = 0x1E (the
+  title), fade. START (FUN_8007916C after LAB_80079A58, while 0x800AFEC8 = 0x80):
+  the course's menu (0x800B0F10 = 0) when the course is open (save flag
+  1), else the title (oracle: START at VB 3300 -> NEW YORK's course menu,
+  0x800B0BD2 cleared at its load).
+- Port: mr-sim `SessionConfig.demo` (0x800B0BD2; the field was misnamed
+  race_over), `Session::demo_over`, `title::demo_course`; mr-bevy demo.rs:
+  the idle counter (title / main menu / OPTIONS / leagues; any new press of
+  a direction, CROSS, TRIANGLE or START resets it), the course by the title
+  session's random pointer, a restart with `--course NAME --skip-title
+  --demo --demo-recent A,B,C`; the DEMO / PRESS START layer replaces the
+  HUD; no pause menu, no save, no voice clips; START / the end restart on
+  the course menu or the title. `--no-demo` (and tool runs) never start it.
+- Checks: the race load of the oracle's demo is exact (6 karts, every
+  named field; `mr-course-check --cap analysis/oracle/attract/demo
+  NEW_YORK`), free run exact for 290 frames (all karts, the trackside
+  camera's cuts, the random stream) up to the START (the game then stops
+  the race under the fade); tests/demo.rs (the course draw, the load's
+  karts, the run to the 1:00 end); mr-fuzz --demo 168 runs, 0 panics; in
+  the window: title -> idle -> THEATRE (a battle demo) -> 1:00 -> title ->
+  BASE.
+- Not checked: the DEMO text against a GP0 frame (the font path is the
+  menus' checked one), an arena demo against the oracle (the fuzz runs
+  them).
+
+## THE END (course 0x1D) [CODE][SHOT][GPU]
+- Reached from OPTIONS row 4 "THE END" (shown, as the fifth row, once
+  0x800E02B9 != 0: FUN_80074A94 sets 0x800B0AF4 = 0x1D) and from the
+  secret courses' BACK TO CREDITS. FUN_8008ACE4: game mode 0x15,
+  0x800B0F60 = 0, cursor 0x800B0AD8[0]; no karts (0x800B0DFE = 0); the
+  orbit camera (FUN_80070418 LAB_80070554: mode 1 in game mode 0x15); the
+  music: FUN_80089B98 (two random bytes a try: world b0 % 6, slot b1 & 3,
+  the slot open, the track 0x800ACB37 + 0xC * course not -1 and not one of
+  the last three 0x800B0A18..1A). The scene: FRONTEND/THE_END.* (Kermit's
+  kart on a chequered disc).
+- Sub-state 0 (FUN_80051698 case 0x15): the credits table 0x800AB488 (228
+  rows {text pointer or 0 (blank), size, -, -, last flag}; "THE END",
+  "MUPPET RACEMANIA", "DEVELOPED BY", ...) scrolled while the frame counter
+  c < 2 (h + 0xF0) (h = 0x800B0622: each row 0xC / 0x18 / 0x10 + 3 for size
+  2 / 1 / 0): row y from 0xF0 - c / 2, FUN_800474E8(text, 0x100, y, 1,
+  size, 0, 0x60) with the blend colour v = clamp(y * 256 / 0xF0, 0, 255):
+  size 0 (v, 0x60, !v), size 1 (!v, 0x30, v), size 2 (v, 0x90, !v). A "?"
+  row is a picture when 0x800E02B9 = 3 (FUN_8002FD04; not ported, left
+  blank). Then "PRESS START" (c >= (h + 0x10E) / 30 * 60, c % 60 < 45).
+  START (the confirm while 0x800B0F60 = 0) -> sub-state 1 (0x800B07DA =
+  0x3C).
+- Sub-state 1: "t BACK" (0x100, 0x1E), "x SELECT" (0x100, 0xD2), 7 rows:
+  SPEEDWAY, RALLY, GLACIER (0x800E02B9 bit 0, DISCO won), VOLCANO, HAUNTED
+  HOUSE, WHATEVER (bit 1, everything) - names 0x800AB3D4, "?" while
+  locked, the cursor's with " - RACE" / " - BATTLE" - and BACK TO MAIN MENU
+  (tint 0xFF, 0x1F, 0x1F); the credits go on scrolling behind,
+  semi-transparent (abr 0). CROSS loads course 0, 0x20, 0x21 / 0x22, 0x23,
+  0x24 (their menus: "Phase 6b") or the title (0x1E); TRIANGLE back to
+  sub-state 0.
+- Port: mr-bevy ending.rs (`--ending`: course 0x1D, the session's camera
+  only through `menu_tick`, the session's one parked kart not drawn);
+  OPTIONS lists THE END before PORT SETTINGS once unlocked; BACK TO
+  CREDITS restarts here.
+- Checks: oracle walk (title state, 0x800E02B9 poked to 3 at the restore;
+  OPTIONS -> THE END; analysis/s8/end, local): the credits' 118 font
+  sprites of a GP0 frame equal the port's (position, UV, CLUT, blend
+  colour; test ending::gp0_credits, frame 922); the orbit's speed equals
+  the oracle's camera angle steps (16 a VBlank).
+- Known wrong (render, deferred): the scene's floor draws as blue / green
+  streaks instead of the oracle's chequered disc fading to black, and some
+  kart faces semi-transparent (THE_END.DAT: one object spans the world,
+  281 primitives with blend bits 0; not explained: the frontend's
+  OPTIONS.RAW under THE_END.RAW and skipping the texel reduction both leave
+  it unchanged). The sub-state 1 menu is not checked against the oracle
+  (its items and hints are the checked menu drawing). Where CRDIT_01.XA
+  plays is not located (not course 0x1D's row, not FUN_8008C4AC).
+
+## Cheat codes [CODE][RAM]
+- Entry (FUN_80074A94 title sub-state 0): each new press of one face
+  button alone (0x800B0CE8 & 0xF000: SQUARE 0, TRIANGLE 1, CIRCLE 2, CROSS
+  3; 0x800B0810 waits for the release) shifts the 10-press buffer 0x800C54A8
+  (newest first); FUN_8008F7E8 compares the last ten, oldest first, with
+  rows 1..6 of 0x800AD08C. A match: FUN_8008F788 (buffer cleared),
+  0x800B0811 = code, FUN_8008F884(code), 0x800B080F = 0x3C, sound 0x24
+  (5000, 0x80, 0x80), and GAME STATUS CHANGED when the block changed.
+  The name shows while 0x800B080F (- dt a frame): FUN_800474E8(name, 0x100,
+  0x1E, 0, 1, colour 5 (RESET 7), 0x60).
+
+| code | buttons (oldest first) | name | FUN_8008F884 |
+|---|---|---|---|
+| 1 | TRIANGLE CIRCLE TRIANGLE SQUARE TRIANGLE CROSS TRIANGLE TRIANGLE CROSS CIRCLE | MUPPETS AND VEHICLES | FUN_8008F2AC: every character, every vehicle per character, flag 0x40 on all 36 courses |
+| 2 | SQUARE SQUARE CIRCLE CIRCLE CROSS CIRCLE TRIANGLE CIRCLE TRIANGLE SQUARE | STUDIO | flag 0x08 on the 24 courses of worlds 0..5, world 6 slot 0 (OVAL) open |
+| 3 | SQUARE CIRCLE CROSS CIRCLE SQUARE TRIANGLE CIRCLE CROSS CIRCLE TRIANGLE | ARCHES | flag 0x10 likewise, world 6 slot 1 (ARENA/BATTLE) open |
+| 4 | CROSS SQUARE CROSS SQUARE CROSS SQUARE TRIANGLE CIRCLE CROSS SQUARE | FRAGGLE ROCK | flag 0x20 likewise, world 6 slot 2 (ROCK) open, character 24 (the Doozer) |
+| 5 | CIRCLE TRIANGLE SQUARE TRIANGLE CROSS TRIANGLE SQUARE CIRCLE TRIANGLE CROSS | END COURSES | 0x800E02B9 = 3 (THE END, the secret courses) |
+| 6 | TRIANGLE CROSS CIRCLE CROSS SQUARE SQUARE CROSS CIRCLE CROSS TRIANGLE | RESET | 0x800E02B9 = 0, FUN_8008EFAC (a new game's course flags), the leagues as new, FUN_8008F1F0 (characters 0..7) |
+
+- Then FUN_8008BE68 (progression) and 0x800B0800 = -1. Row 0 (CIRCLE
+  TRIANGLE CROSS CIRCLE TRIANGLE CROSS CIRCLE TRIANGLE SQUARE CROSS) and
+  cases 0 (worlds 0..5 open / won, leagues 0..2 open) and 7 ("everything":
+  `unlock_all`) are never matched.
+- Port: mr-sim save.rs `Cheats` (entry) and `SaveBlock::cheat`; mr-bevy
+  title.rs (the title's PRESS START screen: the pad word each frame, the
+  save changed and written at once, the sound, the name).
+- Checks: oracle (tools/oracle/routes/cheat_arches.json: slot 1 -> the
+  title, the ARCHES presses one per 12 VBlanks; RAM only, the card is not
+  written; analysis/oracle/cheats/arches, local): the code is taken
+  (0x800B0811 = 3, 0x800B080F = 0x3C at VB 630) and the save block after
+  it equals the port's `cheat(3)` of the block before (tests/cheats.rs).
+  Not checked: the name's GP0 frame.
+
+## Voice clips in the menus
+- FUN_80060580 in the front end is called only by MEET THE MUPPETS (game
+  mode 0xD: the confirmed character's clip, and a random character clip
+  every 0x3C VBlanks while the cursor rests; FUN_80074A94 game mode 0xD): not
+  ported with the gallery. The race's other calls (FUN_80082708's two
+  other calls, FUN_80081DD8, the battle win in FUN_8007916C,
+  the CHICKEN CHASE catch FUN_8006EC4C, the league standings FUN_8008C4AC
+  in game mode 0x12) are not ported; the finish clip is (audio.md).
+
+## Not ported (phase 8, listed)
+- MEET THE MUPPETS (game mode 0xD: the 5 x 5 gallery, camera mode 6, TEST
+  DRIVE, the voice clips).
+- THE END's floor rendering, its "?" picture (FUN_8002FD04), the
+  CRDIT_01.XA voice.
+- The fades and LOADING screen between screens; the course select's sky
+  backdrop and world props (leftovers).

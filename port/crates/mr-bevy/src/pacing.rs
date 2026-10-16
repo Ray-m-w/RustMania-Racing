@@ -102,7 +102,7 @@ pub struct Lookahead {
 }
 
 /// PreUpdate, after Bevy's input systems: sample the pad.
-fn sample(keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, mut latch: ResMut<PadLatch>, mut log: Option<ResMut<LatencyLog>>) {
+pub fn sample(keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, mut latch: ResMut<PadLatch>, mut log: Option<ResMut<LatencyLog>>) {
     let mut m = input::sample(&keys, &pads);
     if let Some(l) = log.as_mut() {
         m |= l.inject();
@@ -144,8 +144,16 @@ fn frames(s: &mr_sim::session::Session) -> Vec<KartFrame> {
 /// RunFixedMainLoop, after the fixed ticks of this frame: (low latency)
 /// the display endpoints become (last real tick, the coming tick run with
 /// the buttons held now).
-fn predict(mut p: ResMut<Player>, mut feed: ResMut<KartFeed>, latch: Res<PadLatch>, mut la: ResMut<Lookahead>, mut fx_la: Option<ResMut<crate::effects::FxLookahead>>) {
+fn predict(mut p: ResMut<Player>, mut feed: ResMut<KartFeed>, latch: Res<PadLatch>, mut la: ResMut<Lookahead>, mut fx_la: Option<ResMut<crate::effects::FxLookahead>>, front: Option<Res<crate::menus::Front>>) {
     if !latch.low_latency {
+        return;
+    }
+    // the course menu / character select run `menu_tick`, not the race
+    if front.is_some_and(|f| f.page.course_menu()) {
+        la.key = None;
+        if let Some(f) = fx_la.as_mut() {
+            f.0 = None;
+        }
         return;
     }
     let Driver::Sim(run) = &mut p.driver else { return };

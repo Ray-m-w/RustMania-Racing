@@ -49,9 +49,14 @@ pub const KNOWN: &[Opt] = &[
     Opt { key: "render_latency", default: "low", allowed: "low|normal", help: "low = no pipelined rendering (the frame is rendered right after its update) and a swapchain of at most 1 queued frame; normal = Bevy's defaults (render one frame behind on its own thread, 2 queued frames)" },
     Opt { key: "low_latency", default: "true", allowed: "true|false", help: "pad sampled every display frame and the coming tick shown as it is sampled (look-ahead on a throw-away copy; the simulation is unchanged); false = the Session 4 display (interpolated one tick behind)" },
     // --- P courses ---
-    Opt { key: "course", default: "", allowed: "", help: "race course: a TER file name of the game's 18 race courses (DOCK, BOG, NEW_YORK, ...; courses.rs) or its index; empty = the pick-list at start (DOCK behind it)" },
+    Opt { key: "course", default: "", allowed: "", help: "race course with skip_title / --skip-title: a TER file name of the game's 18 race courses (DOCK, BOG, NEW_YORK, ...; courses.rs) or its index; empty = DOCK" },
     // --- T title --- (append below)
     Opt { key: "skip_title", default: "false", allowed: "true|false", help: "start in the race instead of the title screen (tools and tests; --oracle-grid, --route, --replay, --shot and the other tool flags always do)" },
+    // --- Session 7 front end (menus.rs) ---
+    Opt { key: "music_volume", default: "12", allowed: "", help: "ADJUST SOUND's music volume, the game's steps 0..15 (12 = the game's default level)" },
+    Opt { key: "sound_volume", default: "12", allowed: "", help: "ADJUST SOUND's sound effects volume, 0..15 (12 = the game's default)" },
+    Opt { key: "controller_config", default: "A", allowed: "A|B", help: "SET CONTROLLERS: A = square jumps, circle brakes; B = the game's alternate layout (square brakes, circle jumps)" },
+    Opt { key: "unlock_all", default: "true", allowed: "true|false", help: "until saves exist (phase 2): every character, vehicle and course open; false = the progress of the oracle's save (8 characters with their own vehicles, worlds 1-6)" },
 ];
 
 #[derive(Resource, Clone, Debug)]

@@ -249,6 +249,21 @@ impl HudTables {
     /// (callers place labels next to the previous string with it).
     #[allow(clippy::too_many_arguments)]
     pub fn text_w(&self, s: &[u8], x: i32, y: i32, align: u8, size: Size, colour: u8, abr: u8) -> (Vec<Sprite>, i32) {
+        self.text_w_rgb(s, x, y, align, size, colour, abr, [0x80; 3])
+    }
+
+    /// `text` with the blend colour DAT_800B068C..E (the menus' tints and
+    /// the selected item's pulse): any colour but (0x80, 0x80, 0x80)
+    /// makes the glyphs modulated (SPRT 0x64) instead of raw (0x65); the
+    /// t / o / x / s button glyphs stay raw [CODE 800474e8].
+    #[allow(clippy::too_many_arguments)]
+    pub fn text_rgb(&self, s: &[u8], x: i32, y: i32, align: u8, size: Size, colour: u8, abr: u8, rgb: [u8; 3]) -> Vec<Sprite> {
+        self.text_w_rgb(s, x, y, align, size, colour, abr, rgb).0
+    }
+
+    /// `text_w` with the blend colour (`text_rgb`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn text_w_rgb(&self, s: &[u8], x: i32, y: i32, align: u8, size: Size, colour: u8, abr: u8, rgb: [u8; 3]) -> (Vec<Sprite>, i32) {
         let ch = size.cell_h();
         let sp = size.spacing();
         let mut y = y;
@@ -278,9 +293,9 @@ impl HudTables {
         } else if align & 10 != 2 {
             x -= width / 2;
         }
-        // The callers here always leave the colour at (0x80, 0x80, 0x80), so
-        // the sprites are raw-textured unless abr == 0x20 (bVar2).
-        let neutral_raw = abr != 0x20;
+        // bVar2: raw-textured when the blend colour is (0x80, 0x80, 0x80)
+        // and abr is not 0x20.
+        let neutral_raw = abr != 0x20 && rgb == [0x80; 3];
         let semi = abr != 0x60;
         let abr_mode = (abr >> 5) & 3;
         let mut clut_off = self.colours[colour as usize & 15] as u16;
@@ -341,7 +356,7 @@ impl HudTables {
                             vh: gh,
                             slot: FONT_SLOT,
                             clut_off: if special { 4 } else { clut_off },
-                            rgb: [0x80; 3],
+                            rgb: if special { [0x80; 3] } else { rgb },
                             raw: special || neutral_raw,
                             semi,
                             abr: abr_mode,

@@ -487,6 +487,14 @@ fn dump_on_exit(mut ev: MessageReader<AppExit>, bus: Res<AudioBus>) {
     eprintln!("audio: wrote {} frames to {path}", d.len());
 }
 
+/// ADJUST SOUND (menus.rs): the game's volume steps as gains on the music
+/// and SFX buses (1.0 = step 12, the game's default), times the
+/// command line's `--music-volume` / `--sfx-volume`.
+pub fn apply_game_volumes(bus: &AudioBus, music: f32, sound: f32) {
+    bus.set_volume(Bus::Music, opt_f32("--music-volume").unwrap_or(1.0) * music);
+    bus.set_volume(Bus::Sfx, opt_f32("--sfx-volume").unwrap_or(1.0) * sound);
+}
+
 // ---------------------------------------------------------------- race phases
 
 /// The game's XA queue driven from the race (docs/spec/audio.md). Other
@@ -501,6 +509,9 @@ pub struct MusicDirector {
     clips_seen: u64,
     /// A clip ended on the thread; the device still plays its tail.
     pending_end: bool,
+    /// Set by menus.rs on the course menu: its course track plays without
+    /// the intro clip, which waits for the race load.
+    pub menu: bool,
     tables: Option<Tables>,
 }
 
@@ -554,8 +565,8 @@ fn direct_music(p: Res<crate::Player>, bus: Res<AudioBus>, mut dir: ResMut<Music
             dir.started = true;
             dir.finished = false;
             let t = dir.tables();
-            let intro = if dir.intro_played { None } else { t.intro };
-            dir.intro_played = true;
+            let intro = if dir.intro_played || dir.menu { None } else { t.intro };
+            dir.intro_played |= !dir.menu;
             dir.queue.race_load(t.music, intro);
         }
         // The player's finish (FUN_80082708, human players only): the

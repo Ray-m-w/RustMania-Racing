@@ -30,6 +30,10 @@ pub struct Sfx {
     /// Session ticks seen last time (a smaller value = a new session).
     last_ticks: u64,
     buf: Vec<i16>,
+    /// Set by menus.rs while the session does not tick (course menu,
+    /// pause): the driver then runs on real time so the menu sounds play.
+    pub idle: bool,
+    idle_frac: f32,
 }
 
 impl Sfx {
@@ -44,7 +48,7 @@ impl Sfx {
         if bank.is_none() {
             warn!("sfx: no SFX/SFX_6 bank on the disc; sound effects off");
         }
-        let mut s = Sfx { bank, drv: None, pending: VecDeque::new(), last_ticks: 0, buf: Vec::new() };
+        let mut s = Sfx { bank, drv: None, pending: VecDeque::new(), last_ticks: 0, buf: Vec::new(), idle: false, idle_frac: 0.0 };
         s.reset();
         s
     }
@@ -66,6 +70,27 @@ impl Sfx {
         }
         self.buf.clear();
         for _ in 0..f.dt.max(0) {
+            d.vblank_render(&mut self.buf);
+        }
+        self.pending.extend(self.buf.chunks_exact(2).map(|s| [s[0], s[1]]));
+        let over = self.pending.len().saturating_sub(MAX_PENDING);
+        self.pending.drain(..over);
+    }
+}
+
+impl Sfx {
+    /// FUN_8005EECC(id, pitch, left, right) from the menus (menus.rs).
+    pub fn play(&mut self, (id, pitch, l, r): (i32, i32, i32, i32)) {
+        if let Some(d) = self.drv.as_mut() {
+            d.play(id, pitch, l, r);
+        }
+    }
+
+    /// `n` VBlanks of driver work and output with no race frame.
+    fn idle_vblanks(&mut self, n: i32) {
+        let Some(d) = self.drv.as_mut() else { return };
+        self.buf.clear();
+        for _ in 0..n.max(0) {
             d.vblank_render(&mut self.buf);
         }
         self.pending.extend(self.buf.chunks_exact(2).map(|s| [s[0], s[1]]));
@@ -97,8 +122,15 @@ fn drain(mut p: ResMut<Player>, mut sfx: ResMut<Sfx>) {
     }
 }
 
-/// Update: hand the device what it wants from the queue.
-fn feed(bus: Res<AudioBus>, mut sfx: ResMut<Sfx>) {
+/// Update: hand the device what it wants from the queue (and, on the
+/// menus whose session does not tick, run the driver on real time).
+fn feed(bus: Res<AudioBus>, mut sfx: ResMut<Sfx>, real: Res<Time<Real>>) {
+    if sfx.idle {
+        sfx.idle_frac += real.delta_secs() * 60.0;
+        let n = sfx.idle_frac.floor();
+        sfx.idle_frac -= n;
+        sfx.idle_vblanks((n as i32).min(8));
+    }
     if !bus.enabled() {
         sfx.pending.clear();
         return;

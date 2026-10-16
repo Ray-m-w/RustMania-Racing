@@ -34,6 +34,7 @@ mod lighting;
 mod kartshadow;
 mod vramtex;
 pub mod courses;
+mod menus;
 mod title;
 mod movers;
 mod scenepush;
@@ -346,11 +347,17 @@ impl SimRun {
             }
             s
         } else {
-            // Play: the full race - Kermit and five AI opponents from race
-            // load; positions and catch-up come from the real field.
+            // Play: the full race - the player and five AI opponents from
+            // race load; positions and catch-up come from the real field.
             // The course of this run (courses.rs; DOCK keeps the oracle's
-            // race settings).
-            let cfg = courses::session_config(pacing::logic_hz());
+            // race settings); the character / vehicle of the menus
+            // (--character / --vehicle across a course change); `--menu`:
+            // the course menu's session (menus.rs).
+            let arg = |k: &str| settings::arg_value(k).and_then(|v| v.parse::<u8>().ok());
+            let c = arg("--character").unwrap_or(0);
+            let v = arg("--vehicle").unwrap_or(if c == 0 { 0 } else { menus::tables().default_vehicle.get(c as usize).copied().unwrap_or(0) });
+            let menu = std::env::args().any(|a| a == "--menu") && !title::on_title() && !menus::tool_run();
+            let cfg = if menu { courses::menu_config(pacing::logic_hz(), c, v) } else { courses::session_config(pacing::logic_hz(), c, v) };
             let mut s = mr_sim::session::Session::with_config(&mut disc, cfg).expect("start the mr-sim session");
             title::prepare(&mut s);
             // --autopilot: the game's AI drives Kermit too (demo / soak test).
@@ -360,6 +367,13 @@ impl SimRun {
         let a: Vec<String> = std::env::args().collect();
         let route = a.iter().position(|x| x == "--route").and_then(|i| a.get(i + 1)).map(|p| parse_route(&std::fs::read_to_string(p).expect("read --route")));
         SimRun { session, align: 0, buttons: vec![], rows: vec![], route }
+    }
+
+    /// A play session with this configuration (the menus' requests).
+    fn with_config(cfg: mr_sim::session::SessionConfig) -> SimRun {
+        let mut disc = mr_disc::Disc::open_default().expect("open the disc (MRM_DISC or game.toml)");
+        let session = mr_sim::session::Session::with_config(&mut disc, cfg).expect("start the mr-sim session");
+        SimRun { session, align: 0, buttons: vec![], rows: vec![], route: None }
     }
 
     /// Write the driven inputs as an oracle route (tools/oracle/routes format):
@@ -474,7 +488,7 @@ fn main() {
         .add_plugins(karts::KartsPlugin)
         .add_plugins(audio::AudioOutPlugin)
         .add_plugins(sfx::SfxPlugin)
-        .add_plugins(courses::CoursesPlugin)
+        .add_plugins(menus::MenusPlugin)
         .add_plugins(title::TitlePlugin)
         .add_systems(FixedUpdate, capture::tick.after(sim_tick).before(karts::feed_player))
         .add_systems(Last, write_outputs)
@@ -626,7 +640,7 @@ fn fit_bars(
     }
 }
 
-fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_g: ResMut<hud::HudGlobals>, mut feed: ResMut<karts::KartFeed>, mut pick: ResMut<courses::PickList>) {
+fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_g: ResMut<hud::HudGlobals>, mut feed: ResMut<karts::KartFeed>, mut front: ResMut<menus::Front>) {
     // The pad as sampled this frame (pacing.rs; with low_latency also the
     // presses since the last tick).
     let buttons = latch.take_for_tick();
@@ -644,23 +658,55 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
             }
         }
         Driver::Sim(run) => {
-            // Results screen: START (pressed, not held) opens the course
-            // pick-list (courses.rs; the game goes back to its menus here).
-            // The same course restarts the race in place.
+            // Results screen: START (pressed, not held) goes back to the
+            // course menu (menus.rs), as the game does after its results.
             if run.route.is_none()
-                && !pick.open
+                && !menus::tool_run()
+                && front.page == menus::Page::None
+                && !title::on_title()
                 && matches!(run.session.phase(), mr_sim::race::RacePhase::Finished { .. })
                 && buttons & input::START != 0
                 && prev_buttons & input::START == 0
             {
-                pick.show();
+                front.to_course_menu();
             }
-            if std::mem::take(&mut pick.restart) && run.route.is_none() {
-                let a: Vec<String> = std::env::args().collect();
-                let autopilot = run.session.autopilot;
-                **run = SimRun::new(false, a.iter().any(|x| x == "--leader"));
-                run.session.autopilot = autopilot;
+            // The menus' session requests: a menu session for the chosen
+            // character / vehicle (the orbit camera carried over while the
+            // pick changes), or the race.
+            match std::mem::take(&mut front.request) {
+                menus::Request::None => {}
+                menus::Request::Menu { keep_camera } => {
+                    let hz = pacing::logic_hz();
+                    let old = keep_camera.then(|| (run.session.camera.clone(), run.session.rand_state, run.session.globals.frame, run.session.water));
+                    **run = SimRun::with_config(courses::menu_config(hz, front.character, front.vehicle));
+                    if let Some((cam, rs, frame, water)) = old {
+                        run.session.camera = cam;
+                        run.session.rand_state = rs;
+                        run.session.globals.frame = frame;
+                        run.session.water = water;
+                    }
+                }
+                menus::Request::Race => {
+                    let autopilot = run.session.autopilot;
+                    **run = SimRun::with_config(courses::session_config(pacing::logic_hz(), front.character, front.vehicle));
+                    run.session.autopilot = autopilot;
+                }
             }
+            // The title's course select: the camera on the film strips
+            // (game state 0xC, mode 5).
+            run.session.camera_menu = (front.page == menus::Page::CourseSelect).then_some((0xC, front.row));
+            if front.page.course_menu() {
+                // the course menu / character select: the race does not run
+                let vpt = run.session.vblanks_per_tick();
+                run.session.menu_tick(vpt);
+                let s = &run.session;
+                feed.external = true;
+                let show = front.page == menus::Page::CharSelect;
+                feed.set_records(s.kart_records().filter(|_| show).map(|(slot, _, _, r)| (slot as u8, r)));
+                hud_g.results = None;
+                pose = pacing::session_pose(s);
+                kart = Some(s.record().to_vec());
+            } else {
             let idle = run.session.ticks < run.align;
             let k = run.buttons.len() as u64;
             let scripted = run.route.as_ref().map(|r| {
@@ -714,6 +760,7 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
                 cam: Some((c.pos, cm)),
             };
             kart = Some(r.to_vec());
+            }
         }
     }
     p.prev_kart = p.kart.take();
@@ -795,7 +842,7 @@ fn shot(mut plan: ResMut<ShotPlan>, p: Res<Player>, mut c: Commands, mut exit: M
 }
 
 /// Encode a captured window image with mr-assets' dependency-free PNG writer.
-fn write_png(img: &Image, path: &str) {
+pub fn write_png(img: &Image, path: &str) {
     use bevy::render::render_resource::TextureFormat;
     let Some(data) = img.data.as_ref() else { return };
     let (w, h) = (img.width(), img.height());

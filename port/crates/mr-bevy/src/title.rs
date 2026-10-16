@@ -24,10 +24,8 @@
 //!   and only once the fade is done (0x800B0F88) [CODE 80051698 @0x8005A3A8];
 //! - the race HUD stays off (the overlay replaces it);
 //! - START (pressed, fade done; FUN_80073138) plays the confirm sound 0xF
-//!   (FUN_8005EECC(0xF, 0x1800, 0x60, 0x60)) and opens the course pick-list
-//!   (courses.rs; the game shows its start menu over the same scene); a
-//!   pick starts the race (the program restarts on that course with
-//!   `--skip-title`).
+//!   (FUN_8005EECC(0xF, 0x1800, 0x60, 0x60)) and opens the game's main menu
+//!   over the same scene (sub-state 1; menus.rs, Session 7).
 //! After 1800 VBlanks the game would run its attract demo race: not ported.
 
 use bevy::prelude::*;
@@ -140,8 +138,6 @@ pub struct TitleOverlay(pub Option<Vec<Prim>>);
 #[derive(Resource)]
 struct TitleRes {
     hud: HudTables,
-    sfx: Option<mr_audio::driver::Driver>,
-    sfx_left: i32,
     prev_buttons: u16,
     shot_wait: u32,
 }
@@ -163,15 +159,7 @@ fn setup(mut commands: Commands) {
     }
     let mut disc = mr_disc::Disc::open_default().expect("open the disc");
     let exe = disc.read("SLUS_012.37").expect("read the executable");
-    let sfx = (|| {
-        let vh = disc.read("SFX/SFX_6.VH").ok()?;
-        let vb = disc.read("SFX/SFX_6.VB").ok()?;
-        let c = mr_audio::driver::Consts::from_exe(&exe)?;
-        let mut d = mr_audio::driver::Driver::new(mr_audio::vab::Vab::parse(&vh, vb).ok()?, c);
-        d.spu.apply_main = false;
-        Some(d)
-    })();
-    commands.insert_resource(TitleRes { hud: HudTables::from_exe(&exe).expect("HUD tables"), sfx, sfx_left: 0, prev_buttons: 0, shot_wait: 0 });
+    commands.insert_resource(TitleRes { hud: HudTables::from_exe(&exe).expect("HUD tables"), prev_buttons: 0, shot_wait: 0 });
 }
 
 /// The session's frame counter 0x800B0D90 (the title's clock).
@@ -182,16 +170,14 @@ fn counter(p: &crate::Player) -> i32 {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn overlay(
     p: Res<crate::Player>,
     res: Option<ResMut<TitleRes>>,
     latch: Res<crate::pacing::PadLatch>,
-    mut pick: ResMut<crate::courses::PickList>,
+    mut front: ResMut<crate::menus::Front>,
     mut ov: ResMut<TitleOverlay>,
     mut fx: ResMut<crate::psxfx::FxPrims>,
-    bus: Option<Res<crate::audio::AudioBus>>,
-    real: Res<Time<Real>>,
+    mut sfx: ResMut<crate::sfx::Sfx>,
 ) {
     let Some(mut res) = res else { return };
     let c = counter(&p);
@@ -211,8 +197,9 @@ fn overlay(
             ..Default::default()
         });
     }
-    // PRESS START (hidden while the pick-list shows)
-    let sprites = if pick.open { Vec::new() } else { text_sprites(&res.hud, c, done) };
+    // PRESS START (sub-state 0 only; the menus draw their own layer)
+    let menu = front.page != crate::menus::Page::None;
+    let sprites = if menu { Vec::new() } else { text_sprites(&res.hud, c, done) };
     let want = Some(sprites.into_iter().map(Prim::Sprt).collect::<Vec<_>>());
     if ov.0 != want {
         ov.0 = want;
@@ -221,29 +208,12 @@ fn overlay(
     // it at counter N (tests of the hand-over without a pad)
     let auto = crate::settings::arg_value("--title-press-start").and_then(|v| v.parse::<i32>().ok()).is_some_and(|v| c >= v && c < v + 8);
     let b = latch.now | if auto { crate::input::START } else { 0 };
-    if done && !pick.open && b & crate::input::START != 0 && res.prev_buttons & crate::input::START == 0 {
-        let (id, pitch, l, r) = CONFIRM_SFX;
-        if let Some(d) = res.sfx.as_mut() {
-            d.play(id, pitch, l, r);
-            res.sfx_left = 60;
-        }
-        info!("title: START -> course pick-list (counter {c})");
-        pick.show();
+    if done && !menu && b & crate::input::START != 0 && res.prev_buttons & crate::input::START == 0 {
+        sfx.play(CONFIRM_SFX);
+        info!("title: START -> main menu (counter {c})");
+        front.open_main();
     }
     res.prev_buttons = b;
-    // the confirm sound: the driver's VBlank work at 60 per second
-    if res.sfx_left > 0 {
-        let n = ((real.delta_secs() * 60.0).round() as i32).clamp(1, 4);
-        if let (Some(d), Some(bus)) = (res.sfx.as_mut(), bus.as_ref()) {
-            let mut buf = Vec::new();
-            for _ in 0..n {
-                d.vblank_render(&mut buf);
-            }
-            let out: Vec<[i16; 2]> = buf.chunks_exact(2).map(|s| [s[0], s[1]]).collect();
-            bus.push_sfx(&out);
-        }
-        res.sfx_left -= n;
-    }
 }
 
 /// FUN_80091B8C's result (mr-sim title.rs `Letters`): the logo letters and

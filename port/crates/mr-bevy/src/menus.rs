@@ -111,6 +111,9 @@ mod sp {
     pub const GAME_MENU: u32 = 0x800B_0384;
     pub const BACK_TO_MAIN_MENU: u32 = 0x800B_05C0;
     pub const BEST_LAP: u32 = 0x800B_0354;
+    pub const BEST_TIME: u32 = 0x800B_0350;
+    pub const ONE_PLAYER_STUNT_TRIAL: u32 = 0x800B_0370;
+    pub const TWO_PLAYER_STUNT_RACE: u32 = 0x800B_0374;
     pub const NOT_COLLECTED: u32 = 0x800B_05E8;
     pub const NOT_WON: u32 = 0x800B_05F4;
     pub const MUPPET: u32 = 0x800B_01D0;
@@ -218,6 +221,7 @@ impl MenuTables {
             sp::RETIRE, sp::RESTART, sp::YES, sp::NO, sp::MUSIC_VOLUME, sp::SOUND_VOLUME, sp::CONTROLLER, sp::JUMP, sp::BRAKE, sp::CONFIGURATION,
             sp::VIBRATION, sp::RACE_LEAGUE_A, sp::RACE_LEAGUE_B, sp::BATTLE_LEAGUE, sp::RANDOM_RACE_LEAGUE, sp::RACE_POINTS, sp::TOURNAMENT_POINTS,
             sp::FINAL_TABLE, sp::AFTER, sp::RACES, sp::NEXT, sp::START_RACE, sp::POINTS, sp::QUIT_TOURNAMENT, sp::P1,
+            sp::BEST_TIME, sp::ONE_PLAYER_STUNT_TRIAL, sp::TWO_PLAYER_STUNT_RACE,
         ];
         let mut s: std::collections::HashMap<u32, String> = ptrs.iter().map(|&p| (p, exe_ptr_str(exe, p))).collect();
         for a in [si::QUESTION, si::DASH, si::ON, si::OFF, si::A, si::B, si::T_PREFIX, si::X_PREFIX] {
@@ -359,7 +363,8 @@ fn worlds_shown(p: &Progress) -> usize {
     if p.0.secrets() & 1 != 0 { 8 } else { 7 }
 }
 
-/// The race courses the port runs (the 18 of the course table).
+/// The courses the port runs (the 18 race courses of the course table and
+/// the 6 stunt courses' trial).
 fn is_race(course: i8) -> bool {
     course >= 0 && crate::courses::races().iter().any(|c| c.id as i8 == course)
 }
@@ -457,6 +462,18 @@ pub struct Front {
 }
 
 impl Front {
+    /// The loaded course's race type (FUN_8008AB5C @0x8008ABF8: cups 0..5
+    /// slot 1 = 1, slot 2 / cup 8 = 2, slot 3 = 3 (the stunt trial)).
+    pub fn race_type(&self) -> i16 {
+        match self.here {
+            Some((w, 3)) if w < 6 => 3,
+            Some((w, 1)) if w < 6 => 1,
+            Some((w, 2)) if w < 6 => 2,
+            Some((8, _)) => 2,
+            _ => 0,
+        }
+    }
+
     /// The state on a loaded course `id` (tests; `Default` takes this run's).
     pub fn on_course(mut self, id: u8, lap_record: i32) -> Front {
         self.course = id;
@@ -850,12 +867,20 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
             // menu itself)
             let here = fr.here.map(|(w, c)| t.course_names[w * 4 + c].clone()).unwrap_or_default();
             sp_out.extend(t.hud.text(here.as_bytes(), 0x1E0, 0x1E, 8, Size::from_arg(0), 4, 0x60));
-            sp_out.extend(t.hud.text(best_lap_text(t, fr.lap_record).as_bytes(), 0x1E0, 0xD2, 8, Size::from_arg(0), 4, 0x60));
+            sp_out.extend(t.hud.text(best_text(t, fr.lap_record, fr.race_type()).as_bytes(), 0x1E0, 0xD2, 8, Size::from_arg(0), 4, 0x60));
             sp_out.extend(select_button(t, 0x20, 0xD2, 2, false));
             if fr.page != Page::CourseMenu {
                 sp_out.extend(back_button(t, 0x20, 0x1E, 2, false));
             }
             let list: Vec<Item> = match fr.page {
+                Page::CourseMenu if fr.race_type() == 3 => vec![
+                    // FUN_80051698 case 0, race type 3: the stunt trial
+                    Item::new(txt(sp::ONE_PLAYER_STUNT_TRIAL)),
+                    Item::new(txt(sp::TWO_PLAYER_STUNT_RACE)).grey(true),
+                    Item::new(format!("{} {}", here, txt(sp::SECRETS))).grey(true),
+                    Item::new(txt(sp::GAME_MENU)).tint([0x1F, 0xFF, 0x1F]),
+                    Item::new(txt(sp::BACK_TO_MAIN_MENU)).tint([0xFF, 0x1F, 0x1F]),
+                ],
                 Page::CourseMenu => {
                     let laps = p.laps();
                     let lap_s = txt(if laps == 1 { sp::LAP } else { sp::LAPS });
@@ -1044,11 +1069,12 @@ fn paused_text(t: &MenuTables, f: i32) -> Vec<Sprite> {
     }
 }
 
-/// RACE A / RACE B / STUNT / BATTLE (worlds 0..5), RACE / BATTLE / RACE /
-/// BATTLE RACE (worlds 6..).
+/// RACE A / RACE B / BATTLE / STUNT (worlds 0..5: the cup slots, slot 2
+/// the arena, slot 3 the stunt course; 0x80058E30, fixed in phase 3),
+/// RACE / BATTLE / RACE / BATTLE RACE (worlds 6..).
 fn type_label(t: &MenuTables, w: usize, c: usize) -> String {
     let a = if w < 6 {
-        [sp::RACE_A, sp::RACE_B, sp::STUNT, sp::BATTLE][c]
+        [sp::RACE_A, sp::RACE_B, sp::BATTLE, sp::STUNT][c]
     } else {
         [sp::RACE, sp::BATTLE, sp::RACE, sp::BATTLE_RACE][c]
     };
@@ -1058,11 +1084,18 @@ fn type_label(t: &MenuTables, w: usize, c: usize) -> String {
 /// "BEST LAP m:ss.hh" from a lap record (race clock units / 3 =
 /// hundredths; "%s %i:%i%i.%i%i").
 pub fn best_lap_text(t: &MenuTables, record: i32) -> String {
+    best_text(t, record, 0)
+}
+
+/// "BEST LAP" / "BEST TIME" (race types 2 and 3, 0x80052D90) and the
+/// course's record.
+pub fn best_text(t: &MenuTables, record: i32, race_type: i16) -> String {
     let h = record / 3;
     let m = h / 6000;
     let s = h / 100 - m * 60;
     let c = h % 100;
-    format!("{} {}:{}{}.{}{}", t.st(sp::BEST_LAP), m, s / 10, s % 10, c / 10, c % 10)
+    let label = if (race_type as u16).wrapping_sub(2) < 2 { sp::BEST_TIME } else { sp::BEST_LAP };
+    format!("{} {}:{}{}.{}{}", t.st(label), m, s / 10, s % 10, c / 10, c % 10)
 }
 
 /// The port's own settings on PORT SETTINGS (settings::KNOWN rows with a
@@ -1412,7 +1445,7 @@ impl Front {
                 // FUN_80074A94 0x800B0EA2 = 0: LEFT / RIGHT on the race rows
                 // change the laps (1..10) once the course is won
                 let d = right as i32 - left as i32;
-                if d != 0 && self.row < 2 && self.here.is_some_and(|(w, c)| self.progress.0.course_won(w, c)) {
+                if d != 0 && self.row < 2 && self.race_type() < 2 && self.here.is_some_and(|(w, c)| self.progress.0.course_won(w, c)) {
                     let old = self.progress.0.laps(0);
                     let n = (old as i32 + d).clamp(1, 10) as u8;
                     if n != old {

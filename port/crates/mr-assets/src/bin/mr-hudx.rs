@@ -142,6 +142,32 @@ pub fn states(c: &Cap, vb: u32) -> (HudState, ItemHud, [(u16, u16); 32]) {
         race_flags: 0,
         gauge_rgb: None,
     };
+    // The stunt trial (race type 3): its HUD state (the course record from
+    // MR_HUDX_RECORD: the captures do not hold the save block).
+    let mut st = st;
+    if c.read(vb, 0x800B_0B9A, 1)[0] == 3 {
+        let r = &it.kart;
+        st.stunt = Some(mr_assets::hud::StuntHud {
+            progress: le::i16(r, 0x490) as i32 * 0x80 + r[0x4A8] as i32,
+            quads: i16at(0x800B_0CC8),
+            marks: [i32at(0x800B_0C90), i32at(0x800B_0C94)],
+            n_marks: c.read(vb, 0x800B_0E94, 1)[0],
+            race_flags: le::u16(&c.read(vb, 0x800B_07E2, 2), 0),
+            character: r[0x4B2],
+            kart_flags: le::u16(r, 0x496),
+            time: le::i32(r, 0x358),
+            flash: le::i32(r, 0x38C),
+            place: r[0x4BE],
+            shown_place: r[0x4CA],
+            record: std::env::var("MR_HUDX_RECORD").ok().and_then(|v| v.parse().ok()).unwrap_or(i32::MIN),
+            first_time: i32at(0x800B_0C20),
+        });
+        if st.mode == 10 {
+            let f88 = c.read(vb, 0x800B_0F88, 1)[0] != 0 || c.read(vb, 0x800B_0EBE, 1)[0] != 0;
+            // the prompt blinks with 0x800B0AF0 (VBlanks since mode 10)
+            st.results = Some(mr_assets::hud::Results { press_start: f88, frame: i32at(0x800B_0AF0), ..Default::default() });
+        }
+    }
     let tab = c.read(vb, 0x800D_FF00, 0x160);
     let mut slots = [(0u16, 0u16); 32];
     for (i, s) in slots.iter_mut().enumerate().take(0x16) {
@@ -177,6 +203,7 @@ fn main() {
                 }
                 Prim::F3 { v, rgb } => println!("T {} {} {} {} {} {} {} {} {}", v[0][0], v[0][1], v[1][0], v[1][1], v[2][0], v[2][1], rgb[0], rgb[1], rgb[2]),
                 Prim::Line { v, rgb } => println!("L {} {} {} {} {} {} {}", v[0][0], v[0][1], v[1][0], v[1][1], rgb[0], rgb[1], rgb[2]),
+                Prim::Tile { x, y, w, h, rgb } => println!("R {x} {y} {w} {h} {} {} {}", rgb[0], rgb[1], rgb[2]),
             }
         }
     }

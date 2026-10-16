@@ -760,10 +760,16 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
             // HUD globals from the session (countdown 0x800B0C70, start value
             // 0x800B07F8 = 300, race clock 0x800B0A94).
             hud_g.countdown = s.countdown();
-            hud_g.countdown_start = 300;
+            hud_g.countdown_start = s.globals.countdown_len;
             hud_g.race_time = Some(s.race_clock());
             hud_g.laps = s.globals.laps.clamp(1, 99) as u8;
             hud_g.results = hud::results_from_session(s);
+            hud_g.mode = s.globals.mode as u8;
+            hud_g.stunt = hud::stunt_from_session(s);
+            if hud_g.stunt.is_some() {
+                // the stunt trial's results: "PRESS START" in mode 10
+                hud_g.results = (s.globals.mode == 10).then(|| mr_assets::hud::Results { press_start: true, frame: s.globals.results_clock, ..Default::default() });
+            }
             let r = s.record();
             let i32at = |o: usize| i32::from_le_bytes([r[o], r[o + 1], r[o + 2], r[o + 3]]);
             let mut m = [0i32; 9];

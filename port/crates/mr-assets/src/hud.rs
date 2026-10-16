@@ -69,6 +69,12 @@ pub mod addr {
     pub const PTR_PRESS_START: u32 = 0x800B_0284;
     pub const PTR_YOU_BEAT: u32 = 0x800B_0234;
     pub const PTR_BEAT_YOU: u32 = 0x800B_0238;
+    /// The stunt trial (phase 3): "FINISH THE COURSE", "COURSE FINISHED",
+    /// "OUT OF TIME", "TIME".
+    pub const PTR_FINISH_THE_COURSE: u32 = 0x800B_0588;
+    pub const PTR_COURSE_FINISHED: u32 = 0x800B_0580;
+    pub const PTR_OUT_OF_TIME: u32 = 0x800B_0258;
+    pub const PTR_TIME: u32 = 0x800B_0264;
     /// Character names, pointers at stride 8 ("KERMIT", "GONZO", ...).
     pub const NAMES: u32 = 0x800A_B128;
 }
@@ -183,6 +189,10 @@ pub struct HudTables {
     pub you_beat: String,
     pub beat_you: String,
     pub names: Vec<String>,
+    pub finish_the_course: String,
+    pub course_finished: String,
+    pub out_of_time: String,
+    pub time: String,
 }
 
 impl HudTables {
@@ -215,6 +225,10 @@ impl HudTables {
             you_beat: exe_ptr_str(exe, addr::PTR_YOU_BEAT)?,
             beat_you: exe_ptr_str(exe, addr::PTR_BEAT_YOU)?,
             names: (0..12).map(|i| exe_ptr_str(exe, addr::NAMES + 8 * i)).collect::<Option<Vec<_>>>()?,
+            finish_the_course: exe_ptr_str(exe, addr::PTR_FINISH_THE_COURSE)?,
+            course_finished: exe_ptr_str(exe, addr::PTR_COURSE_FINISHED)?,
+            out_of_time: exe_ptr_str(exe, addr::PTR_OUT_OF_TIME)?,
+            time: exe_ptr_str(exe, addr::PTR_TIME)?,
         })
     }
 
@@ -425,6 +439,36 @@ pub struct HudState {
     /// After the player's finish: the results panel (FUN_8004cea0) and
     /// "PRESS START". Drawn when `finished` or in mode 10.
     pub results: Option<Results>,
+    /// The stunt trial (race type 3): its HUD instead of the race's.
+    pub stunt: Option<StuntHud>,
+}
+
+/// What the stunt trial's HUD reads (race type 3, game modes 3 and 10):
+/// the progress bar FUN_80047F1C, the result FUN_8004E2A8.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StuntHud {
+    /// Kart +0x490 * 0x80 + +0x4A8: its place along the strip.
+    pub progress: i32,
+    /// 0x800B0CC8: the strip's quads (0: no bar face).
+    pub quads: i16,
+    /// 0x800B0C90 / 0x800B0E94: the banners' places (start, finish).
+    pub marks: [i32; 2],
+    pub n_marks: u8,
+    /// Race flags 0x800B07E2 (4: reversed; the record flash needs 0).
+    pub race_flags: u16,
+    /// Kart +0x4B2 (the bar's face), +0x496 (flags 0x60: the spinning face).
+    pub character: u8,
+    pub kart_flags: u16,
+    /// Kart +0x358 (the trial time; 180000 = out of time), +0x38C (the
+    /// record flash counter), +0x4BE / +0x4CA (place).
+    pub time: i32,
+    pub flash: i32,
+    pub place: u8,
+    pub shown_place: u8,
+    /// The course's record (0x800E0190 + 0x20 * world + 8 * slot).
+    pub record: i32,
+    /// 0x800B0C20: the first finisher's time (the "+" gap from 2nd down).
+    pub first_time: i32,
 }
 
 /// What FUN_8004cea0 (the 1-player finish/results panel) and the
@@ -482,6 +526,7 @@ impl Default for HudState {
             finished: false,
             minigame: None,
             results: None,
+            stunt: None,
         }
     }
 }
@@ -655,6 +700,29 @@ impl HudTables {
         if r.press_start && r.frame.rem_euclid(0x3C) < 0x2D {
             out.extend(self.text(self.press_start.as_bytes(), 0x100, 0xD2, 0, Size::Medium, 4, 0x60));
         }
+        out
+    }
+
+    /// FUN_8004E2A8 (1 player; viewport centre (0x100, 0x78)): the stunt
+    /// trial's result: "OUT OF TIME", or the time (orange while it is the
+    /// course record and the flash counter's bit 4 is clear), "TIME", the
+    /// gap to the first from 2nd place down, "COURSE FINISHED".
+    pub fn stunt_results(&self, s: &StuntHud) -> Vec<Sprite> {
+        let (cx, cy) = (0x100, 0x78);
+        let mut out = Vec::new();
+        if s.time == 180_000 {
+            out.extend(self.text(self.out_of_time.as_bytes(), cx, 0x1E, 0, Size::Large, 7, 0x60));
+            return out;
+        }
+        let col = if s.race_flags == 0 && s.time == s.record && (s.flash & 0x1F) < 0x10 { 7 } else { 4 };
+        let (v, w) = self.text_w(time_text_cs(s.time, false).as_bytes(), cx, cy, 0, Size::Medium, col, 0x60);
+        out.extend(v);
+        let half = w / 2;
+        out.extend(self.text(self.time.as_bytes(), cx - half - 8, cy, 8, Size::Small, 5, 0x60));
+        if s.place > 1 {
+            out.extend(self.text(time_text_cs(s.time - s.first_time, true).as_bytes(), cx + half + 8, cy, 2, Size::Small, 7, 0x60));
+        }
+        out.extend(self.text(self.course_finished.as_bytes(), cx, 0x1E, 0, Size::Large, 5, 0x60));
         out
     }
 

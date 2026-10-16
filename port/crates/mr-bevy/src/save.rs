@@ -159,6 +159,11 @@ pub fn race_tick(s: &mr_sim::session::Session, place: Option<(usize, usize)>, pl
             if plain_race && s.kart.finished == 1 && s.kart.race_pos == 1 && s.world.course.length.is_some() && st.block.race_won(w, t) {
                 info!("save: course {w}/{t} won");
             }
+            // The stunt trial (FUN_80081DD8 @0x8008209C): through the last
+            // gate with no race flags (not out of time): the won bit
+            if s.globals.race_type == 3 && s.globals.race_flags == 0 && s.kart.finished == 2 && s.world.course.gates.as_ref().is_some_and(|g| g.len() >= 4 && s.kart.gate as usize == g.len() / 2) && st.block.race_won(w, t) {
+                info!("save: stunt course {w}/{t} finished");
+            }
         }
         for c in 0..25u8 {
             let have = st.block.vehicles(c);

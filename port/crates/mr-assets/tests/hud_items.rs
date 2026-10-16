@@ -40,6 +40,7 @@ fn line(p: &Prim, slots: &[(u16, u16); 32]) -> String {
         }
         Prim::F3 { v, rgb } => format!("T {} {} {} {} {} {} {} {} {}", v[0][0], v[0][1], v[1][0], v[1][1], v[2][0], v[2][1], rgb[0], rgb[1], rgb[2]),
         Prim::Line { v, rgb } => format!("L {} {} {} {} {} {} {}", v[0][0], v[0][1], v[1][0], v[1][1], rgb[0], rgb[1], rgb[2]),
+        Prim::Tile { x, y, w, h, rgb } => format!("R {x} {y} {w} {h} {} {} {}", rgb[0], rgb[1], rgb[2]),
     }
 }
 

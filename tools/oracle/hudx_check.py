@@ -43,6 +43,11 @@ def game_prims(frame):
         v = [(x - ox, y - oy) for x, y in p["v"]]
         c = tuple(p["c"][0]) if p["c"] else (0, 0, 0)
         n = p["n"]
+        if p["k"] == "rect" and not p.get("uv") and p.get("sz"):
+            # TILE (FUN_8002f5e4; Session 7, the stunt progress bar)
+            w, h = p["sz"]
+            out.append(("R", v[0][0], v[0][1], w, h, c))
+            continue
         if p["k"] == "rect" and p.get("uv"):
             w, h = p["sz"]
             out.append(("S", v[0][0], v[0][1], w, h, p["uv"][0][0], p["uv"][0][1], tp & 0x1FF, p["clut"],
@@ -84,6 +89,8 @@ def port_prims(cap, vbs):
             res[cur].append(("T",) + tuple(map(int, f[1:7])) + (tuple(map(int, f[7:10])),))
         elif k == "L":
             res[cur].append(("L",) + tuple(map(int, f[1:5])) + (tuple(map(int, f[5:8])),))
+        elif k == "R":
+            res[cur].append(("R",) + tuple(map(int, f[1:5])) + (tuple(map(int, f[5:8])),))
     return res
 
 

@@ -54,11 +54,13 @@ pub struct HudGlobals {
     /// After the player's finish: the results panel's inputs
     /// (`results_from_session`, or set by hand). None = no panel.
     pub results: Option<hud::Results>,
+    /// The stunt trial's HUD inputs (`stunt_from_session`); None in a race.
+    pub stunt: Option<hud::StuntHud>,
 }
 
 impl Default for HudGlobals {
     fn default() -> Self {
-        HudGlobals { countdown: 0, countdown_start: 300, laps: 3, mode: 1, race_time: None, flicker: 0, results: None }
+        HudGlobals { countdown: 0, countdown_start: 300, laps: 3, mode: 1, race_time: None, flicker: 0, results: None, stunt: None }
     }
 }
 
@@ -184,6 +186,7 @@ fn prim_box(p: &Prim) -> [f32; 4] {
         Prim::Ft4(q) => q.v.iter().map(|v| [v[0] as f32, v[1] as f32]).collect(),
         Prim::F3 { v, .. } => v.iter().map(|v| [v[0] as f32, v[1] as f32]).collect(),
         Prim::Line { v, .. } => v.iter().map(|v| [v[0] as f32, v[1] as f32]).collect(),
+        Prim::Tile { x, y, w, h, .. } => vec![[x as f32, y as f32], [(x + w) as f32, (y + h) as f32]],
     };
     let mut b = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
     for q in pts {
@@ -316,6 +319,7 @@ fn state_from_player(
         });
     }
     st.results = g.results;
+    st.stunt = g.stunt;
     if input.state != Some(st) {
         input.state = Some(st);
     }
@@ -505,8 +509,38 @@ pub fn results_from_session(s: &mr_sim::session::Session) -> Option<hud::Results
     let fastest = rows.iter().map(|k| k.best_lap).filter(|&b| b > 0).min().unwrap_or(0);
     r.best_lap_record = r.best_lap > 0 && r.best_lap <= fastest;
     r.press_start = true;
-    r.frame = s.globals.frame;
+    // FUN_80051698 case 10: the prompt blinks with 0x800B0AF0 (VBlanks
+    // since the results began; oracle stunt/fx, phase 3)
+    r.frame = s.globals.results_clock;
     Some(r)
+}
+
+/// The stunt trial's HUD inputs from a live session (race type 3; else
+/// None): the kart's place on the strip, the strip's length and banner
+/// marks (mr_sim::stunt), the result's time / place and the course record
+/// (the session's, lowered by this run's finish as the game's save block).
+/// 0x800B0C20 (the first finisher's time) is the player's own (one kart).
+pub fn stunt_from_session(s: &mr_sim::session::Session) -> Option<hud::StuntHud> {
+    if s.globals.race_type != 3 {
+        return None;
+    }
+    let k = &s.kart;
+    let m = mr_sim::stunt::banner_marks(&s.world);
+    Some(hud::StuntHud {
+        progress: k.strip as i32 * 0x80 + k.strip_along as i32,
+        quads: mr_sim::stunt::strip_quads(&s.world),
+        marks: [m.first().copied().unwrap_or(0), m.get(1).copied().unwrap_or(0)],
+        n_marks: m.len() as u8,
+        race_flags: s.globals.race_flags,
+        character: k.character,
+        kart_flags: k.flags,
+        time: k.race_time,
+        flash: k.finished_time,
+        place: k.race_pos,
+        shown_place: k.shown_pos,
+        record: s.globals.lap_record,
+        first_time: k.race_time,
+    })
 }
 
 /// Screen (game pixels, y down) -> HUD camera space.
@@ -555,6 +589,11 @@ fn geometry(p: &Prim, slots: &[(u16, u16); 32], z: f32) -> (MatKey, Vec<[f32; 3]
         Prim::F3 { v, rgb } => {
             let p = |i: usize| sp(v[i][0] as f32, v[i][1] as f32, z);
             ((0, 0, false, false, 0), vec![p(0), p(1), p(2)], vec![[0.0, 0.0]; 3], flat(rgb))
+        }
+        Prim::Tile { x, y, w, h, rgb } => {
+            let (x0, y0, x1, y1) = (x as f32, y as f32, (x + w) as f32, (y + h) as f32);
+            let pos = vec![sp(x0, y0, z), sp(x1, y0, z), sp(x0, y1, z), sp(x1, y0, z), sp(x1, y1, z), sp(x0, y1, z)];
+            ((0, 0, false, false, 0), pos, vec![[0.0, 0.0]; 6], flat(rgb))
         }
         Prim::Line { v, rgb } => {
             let (a, b) = (Vec2::new(v[0][0] as f32 + 0.5, v[0][1] as f32 + 0.5), Vec2::new(v[1][0] as f32 + 0.5, v[1][1] as f32 + 0.5));

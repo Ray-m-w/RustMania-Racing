@@ -83,6 +83,8 @@ pub enum Prim {
     F3 { v: [[i32; 2]; 3], rgb: [u8; 3] },
     /// Flat line (LineF2 0x40, direction arrow).
     Line { v: [[i32; 2]; 2], rgb: [u8; 3] },
+    /// Flat rectangle (TILE 0x60, FUN_8002f5e4: the stunt progress bar).
+    Tile { x: i32, y: i32, w: i32, h: i32, rgb: [u8; 3] },
 }
 
 /// Tables of the item HUD, read from the executable.
@@ -798,11 +800,105 @@ pub fn damage_gauge(s: &ItemHud, x: i32, y: i32) -> Vec<Prim> {
     out
 }
 
+/// FUN_8002f5e4(x, y, w, h, r, g, b): an opaque flat rectangle.
+fn tile(x: i32, y: i32, w: i32, h: i32, rgb: [u8; 3]) -> Prim {
+    Prim::Tile { x: s16(x), y: s16(y), w: s16(w), h: s16(h), rgb }
+}
+
+/// FUN_80047F1C (1 player, y 0x1E; the stunt trial, racing): the kart's
+/// face on the bar at 0x80 + its strip place * 0x100 / the strip's length
+/// (shown while race clock % 150 <= 0x4A; the face spins with flags
+/// 0x60), the start banner's mark (black; white with race flag 4), the
+/// finish banner's chequer, then the bar (0x100 x 4, black), in add order.
+pub fn progress_bar(t: &ItemTables, s: &ItemHud, sh: &crate::hud::StuntHud) -> Vec<Prim> {
+    let y = 0x1E;
+    let mut out = Vec::new();
+    let span = (sh.quads as i32) << 7;
+    let c = sh.character;
+    if sh.kart_flags & 0x60 == 0 {
+        if sh.quads != 0 && s.race_time % 0x96 <= 0x4A && span != 0 {
+            let x = (sh.progress * 0x100) / span + 0x80;
+            out.extend(quad_f(t, x, y, 8, 8, 0, 0, t.chr(c, 0x12), t.chr(c, 0x13), 0x2F, 0x2F, [0x80; 3], t.chr(c, 0x14), 0, 0x60).map(Prim::Ft4));
+        }
+    } else if span != 0 {
+        let a = (t.sin((s.frame & 0x3F) * 0x40) as i16 as i32) / 0x60;
+        let ang = (if sh.kart_flags & 0x20 == 0 { -a } else { a }) & 0xFFF;
+        let x = (sh.progress * 0x100) / span + 0x80;
+        out.extend(quad_f(t, x, y, 10, 10, 0, ang, t.chr(c, 0x12), t.chr(c, 0x13), 0x2F, 0x2F, [0x80; 3], t.chr(c, 0x14), 0, 0x60).map(Prim::Ft4));
+    }
+    let mark = |i: usize| if (i as u8) < sh.n_marks && span != 0 { Some((sh.marks[i] << 8) / span + 0x80) } else { None };
+    let rev = sh.race_flags & 4 != 0;
+    let (w, b) = ([0xFF; 3], [0; 3]);
+    if let Some(x) = mark(0) {
+        if rev {
+            out.extend([tile(x - 3, y - 3, 3, 2, w), tile(x - 3, y + 1, 3, 2, w), tile(x - 3, y - 5, 3, 10, b), tile(x, y - 3, 3, 2, b), tile(x, y + 1, 3, 2, b), tile(x, y - 5, 3, 10, w)]);
+        } else {
+            out.push(tile(x - 2, y - 5, 4, 10, b));
+        }
+    }
+    if let Some(x) = mark(1) {
+        if !rev {
+            out.extend([tile(x - 3, y - 3, 3, 2, b), tile(x - 3, y + 1, 3, 2, b), tile(x - 3, y - 5, 3, 10, w), tile(x, y - 3, 3, 2, w), tile(x, y + 1, 3, 2, w), tile(x, y - 5, 3, 10, b)]);
+        } else {
+            out.push(tile(x - 2, y - 6, 4, 10, b));
+        }
+    }
+    out.push(tile(0x80, y - 2, 0x100, 4, b));
+    out
+}
+
+/// The stunt trial's HUD (race type 3; FUN_80051698 / FUN_8004F688 case
+/// 3, case 10 -> FUN_8004E2A8), in add order: the +0x4F9 icon; while
+/// counting down "READY" (blinking) or, above the start value + 15,
+/// "FINISH THE COURSE"; racing: the turbo meter, the weapon slots, the
+/// progress bar, the timer (0x100, 0xD2); out (+0x4C7) or in game mode 10:
+/// the result; mode 10: "PRESS START" (blinking).
+pub fn stunt_hud(ht: &HudTables, t: &ItemTables, st: &crate::hud::HudState, s: &ItemHud, sh: &crate::hud::StuntHud) -> Vec<Prim> {
+    let p = parts(ht, t, s);
+    let mut out = p.icon;
+    let c70 = st.countdown;
+    let out_of_race = st.finished || st.mode == 10;
+    if out_of_race {
+        out.extend(ht.stunt_results(sh).into_iter().map(Prim::Sprt));
+    } else if c70 == 0 {
+        out.extend(meter(t, s));
+        out.extend(weapons(t, s, 0x2D));
+    }
+    if st.mode != 10 && c70 == 0 {
+        out.extend(progress_bar(t, s, sh));
+    }
+    if st.mode == 10 {
+        if let Some(r) = st.results {
+            if r.press_start && r.frame.rem_euclid(0x3C) < 0x2D {
+                out.extend(ht.text(ht.press_start.as_bytes(), 0x100, 0xD2, 0, Size::Medium, 4, 0x60).into_iter().map(Prim::Sprt));
+            }
+        }
+        return out;
+    }
+    // FUN_80050F64
+    if c70 != 0 {
+        if c70 < st.countdown_start {
+            if c70 <= 0x77 && c70 % 0x1E >= 0xF {
+                out.extend(ht.text(ht.ready.as_bytes(), 0x100, 0xD2, 0, Size::Large, 6, 0x60).into_iter().map(Prim::Sprt));
+            }
+        } else if c70 >= st.countdown_start + 0xF {
+            out.extend(ht.text(ht.finish_the_course.as_bytes(), 0x100, 0xD2, 0, Size::Large, 5, 0x60).into_iter().map(Prim::Sprt));
+        }
+        return out;
+    }
+    // FUN_80050B2C
+    out.extend(ht.text(crate::hud::timer_text(st.race_time).as_bytes(), 0x100, 0xD2, 0, Size::Medium, 4, 0x60).into_iter().map(Prim::Sprt));
+    out
+}
+
 /// The whole 1-player race HUD in the game's add order (FUN_80051698 ->
 /// FUN_8004f688 for the player, then the minimap; the timer FUN_80050b2c
 /// last): the minimal HUD of `HudTables::layout` with the item parts
 /// inserted where the game adds them.
 pub fn race_hud(ht: &HudTables, t: &ItemTables, st: &crate::hud::HudState, s: &ItemHud) -> Vec<Prim> {
+    if let Some(sh) = &st.stunt {
+        return stunt_hud(ht, t, st, s, sh);
+    }
     let p = parts(ht, t, s);
     let base: Vec<Prim> = ht.layout(st).into_iter().map(Prim::Sprt).collect();
     let racing = st.countdown <= 0 && st.mode == 1 && !st.finished;

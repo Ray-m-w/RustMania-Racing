@@ -24,9 +24,10 @@ fn choice() -> &'static Choice {
     C.get_or_init(|| {
         let mut disc = mr_disc::Disc::open_default().expect("open the disc (MRM_DISC or game.toml)");
         let exe = mr_sim::tables::ExeImage::parse(&disc.read("SLUS_012.37").expect("read the executable")).expect("exe");
-        let races = CourseInfo::races(&exe);
+        // the race courses and (phase 3) the stunt courses' trial
+        let races: Vec<CourseInfo> = CourseInfo::races(&exe).into_iter().chain(CourseInfo::stunts(&exe)).collect();
         let want = crate::settings::Settings::global().get("course").map(|s| s.to_string()).filter(|s| !s.is_empty());
-        let found = want.as_deref().and_then(|w| CourseInfo::find(&exe, w)).filter(|c| c.is_race());
+        let found = want.as_deref().and_then(|w| CourseInfo::find(&exe, w)).filter(|c| c.is_race() || c.is_stunt());
         if let (Some(w), None) = (&want, &found) {
             eprintln!("course {w}: not a race course of the game's table; DOCK instead (races: {})", races.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(" "));
         }
@@ -57,7 +58,8 @@ pub fn explicit() -> bool {
     choice().explicit
 }
 
-/// The race courses of the game's table.
+/// The courses the port runs: the race courses of the game's table and
+/// the stunt courses (their 1 PLAYER STUNT TRIAL).
 pub fn races() -> &'static [CourseInfo] {
     &choice().races
 }

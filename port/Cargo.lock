@@ -2352,6 +2352,7 @@ dependencies = [
  "mr-disc",
  "mr-sim",
  "mr-trace",
+ "mr-video",
 ]
 
 [[package]]
@@ -2369,6 +2370,14 @@ dependencies = [
 [[package]]
 name = "mr-trace"
 version = "0.1.0"
+
+[[package]]
+name = "mr-video"
+version = "0.1.0"
+dependencies = [
+ "mr-audio",
+ "mr-disc",
+]
 
 [[package]]
 name = "naga"

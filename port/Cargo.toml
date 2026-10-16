@@ -11,6 +11,7 @@ members = [
     "crates/mr-sim",
     "crates/mr-trace",
     "crates/mr-audio",
+    "crates/mr-video",
     "crates/mr-bevy",
 ]
 default-members = [
@@ -19,6 +20,7 @@ default-members = [
     "crates/mr-sim",
     "crates/mr-trace",
     "crates/mr-audio",
+    "crates/mr-video",
 ]
 
 [workspace.package]

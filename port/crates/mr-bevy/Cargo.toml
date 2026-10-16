@@ -26,3 +26,4 @@ bevy = { version = "=0.19.1", default-features = false, features = [
     "bevy_audio",
 ] }
 mr-audio = { path = "../mr-audio" }
+mr-video = { path = "../mr-video" }

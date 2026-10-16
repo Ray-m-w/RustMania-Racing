@@ -66,6 +66,10 @@ struct Shared {
     sfx: Mutex<VecDeque<[i16; 2]>>,
     music: Mutex<VecDeque<[i16; 2]>>,
     music_paused: AtomicBool,
+    /// Phase 9: a movie's XA audio (movie.rs; 44.1 kHz, before CdMix) and
+    /// its CdMix level (the player's fades), mixed as CD input like music.
+    movie: Mutex<VecDeque<[i16; 2]>>,
+    movie_mix: AtomicU32,
     /// One-shot tracks whose end marker the music thread has read.
     clips_ended: AtomicU64,
     gains: [AtomicU32; 3],
@@ -92,6 +96,8 @@ impl AudioBus {
                 sfx: Mutex::new(VecDeque::with_capacity(SFX_CAP)),
                 music: Mutex::new(VecDeque::with_capacity(MUSIC_AHEAD * 2)),
                 music_paused: AtomicBool::new(false),
+                movie: Mutex::new(VecDeque::new()),
+                movie_mix: AtomicU32::new(0),
                 clips_ended: AtomicU64::new(0),
                 gains: [g(1.0), g(1.0), g(1.0)],
                 played: AtomicU64::new(0),
@@ -148,6 +154,28 @@ impl AudioBus {
     /// (sfx, music) frames the device wanted but the queue did not have.
     pub fn underruns(&self) -> (u64, u64) {
         (self.sh.sfx_underruns.load(Ordering::Relaxed), self.sh.music_underruns.load(Ordering::Relaxed))
+    }
+
+    /// Phase 9: append a movie's audio (44.1 kHz, before CdMix).
+    pub fn push_movie(&self, frames: &[[i16; 2]]) {
+        if self.sh.enabled {
+            self.sh.movie.lock().unwrap().extend(frames.iter().copied());
+        }
+    }
+
+    /// Movie frames queued and not yet played.
+    pub fn movie_queued(&self) -> usize {
+        self.sh.movie.lock().unwrap().len()
+    }
+
+    /// Drop the movie audio still queued.
+    pub fn clear_movie(&self) {
+        self.sh.movie.lock().unwrap().clear();
+    }
+
+    /// The movie's CdMix level (0x80 = unity; the player's fades).
+    pub fn set_movie_mix(&self, level: u8) {
+        self.sh.movie_mix.store(level as u32, Ordering::Relaxed);
     }
 
     /// Drive the music thread directly (MusicDirector does this from the
@@ -309,12 +337,29 @@ impl MixerStream {
                 sh.music_underruns.fetch_add((CHUNK - n) as u64, Ordering::Relaxed);
             }
         }
+        let mut mov = [[0i16; 2]; CHUNK];
+        let nmov = {
+            let mut q = sh.movie.lock().unwrap();
+            let n = q.len().min(CHUNK);
+            for (d, s) in mov.iter_mut().zip(q.drain(..n)) {
+                *d = s;
+            }
+            n
+        };
+        let mix = CdMix::level(sh.movie_mix.load(Ordering::Relaxed).min(0xFF) as u8);
+        for f in mov.iter_mut().take(nmov) {
+            let m = mix.apply(*f);
+            *f = [((m[0] as i32 * SPU_CD_VOLUME) >> 15) as i16, ((m[1] as i32 * SPU_CD_VOLUME) >> 15) as i16];
+        }
         let g = |b: Bus| f32::from_bits(sh.gains[b as usize].load(Ordering::Relaxed));
         let (gm, gs, gmaster) = (g(Bus::Music), g(Bus::Sfx), g(Bus::Master));
         self.out.clear();
         for i in 0..CHUNK {
             let s = self.sfx.get(i).copied().unwrap_or([0, 0]);
-            let m = self.mus.get(i).copied().unwrap_or([0, 0]);
+            let mu = self.mus.get(i).copied().unwrap_or([0, 0]);
+            // the CD input: the music track or a movie's audio (never both
+            // in the game; summed and clamped here)
+            let m = [0, 1].map(|c| (mu[c] as i32 + mov[i][c] as i32).clamp(-32768, 32767) as i16);
             for c in 0..2 {
                 // SPU: voices + CD, clamp16, x main volume >> 15.
                 let v = (s[c] as f32 * gs + m[c] as f32 * gm).clamp(-32768.0, 32767.0);
@@ -557,6 +602,11 @@ impl MusicDirector {
 
 /// Race load / restart / finish -> the queue; the queue -> the music thread.
 fn direct_music(p: Res<crate::Player>, bus: Res<AudioBus>, mut dir: ResMut<MusicDirector>) {
+    // Phase 9: no music decisions while a movie plays (the game's player
+    // owns the drive; the scene is frozen)
+    if crate::movie::playing() {
+        return;
+    }
     if let crate::Driver::Sim(run) = &p.driver {
         let s = &run.session;
         let ticks = s.ticks;

@@ -125,7 +125,8 @@ fn drain(mut p: ResMut<Player>, mut sfx: ResMut<Sfx>) {
 /// Update: hand the device what it wants from the queue (and, on the
 /// menus whose session does not tick, run the driver on real time).
 fn feed(bus: Res<AudioBus>, mut sfx: ResMut<Sfx>, real: Res<Time<Real>>) {
-    if sfx.idle {
+    // (phase 9: a movie's skip sound plays while the scene is frozen)
+    if sfx.idle || crate::movie::playing() {
         sfx.idle_frac += real.delta_secs() * 60.0;
         let n = sfx.idle_frac.floor();
         sfx.idle_frac -= n;

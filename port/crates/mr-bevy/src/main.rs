@@ -37,6 +37,7 @@ pub mod courses;
 mod demo;
 mod ending;
 mod menus;
+mod movie;
 mod save;
 mod league;
 mod title;
@@ -535,6 +536,7 @@ fn main() {
         .add_plugins(title::TitlePlugin)
         .add_plugins(demo::DemoPlugin)
         .add_plugins(ending::EndingPlugin)
+        .add_plugins(movie::MoviePlugin)
         .add_systems(FixedUpdate, capture::tick.after(sim_tick).before(karts::feed_player))
         .add_systems(Last, write_outputs)
         .add_systems(PostUpdate, (fit_viewports, fit_bars).before(bevy::camera::CameraUpdateSystems))

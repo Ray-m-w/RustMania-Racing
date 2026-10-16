@@ -51,6 +51,7 @@ pub const KNOWN: &[Opt] = &[
     // --- P courses ---
     Opt { key: "course", default: "", allowed: "", help: "race course with skip_title / --skip-title: a TER file name of the game's 18 race courses (DOCK, BOG, NEW_YORK, ...; courses.rs) or its index; empty = DOCK" },
     // --- T title --- (append below)
+    Opt { key: "skip_intro_movies", default: "false", allowed: "true|false", help: "phase 9: skip the movies the game plays unasked (the power-on HI / Traveller's Tales logos and each course's movie on its first load); the course select's MOVIE and COURSE SECRETS' PLAY MOVIE still play (the recomp package's skip-fmv skips every movie)" },
     Opt { key: "skip_title", default: "false", allowed: "true|false", help: "start in the race instead of the title screen (tools and tests; --oracle-grid, --route, --replay, --shot and the other tool flags always do)" },
     // --- Session 7 front end (menus.rs) ---
     Opt { key: "music_volume", default: "12", allowed: "", help: "ADJUST SOUND's music volume, the game's steps 0..15 (12 = the game's default level)" },

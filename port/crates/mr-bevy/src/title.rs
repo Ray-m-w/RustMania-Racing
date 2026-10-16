@@ -231,7 +231,7 @@ fn overlay(
     let step = (c - res.last_frame).max(0);
     res.last_frame = c;
     res.cheat_shown = (res.cheat_shown - step).max(0);
-    if !menu && !crate::menus::tool_run() {
+    if !menu && !crate::menus::tool_run() && !crate::movie::playing() {
         if let Some(code) = res.cheats.frame(latch.now) {
             crate::save::with(|s| {
                 let t = s.tables.clone();
@@ -260,7 +260,7 @@ fn overlay(
     // it at counter N (tests of the hand-over without a pad)
     let auto = crate::settings::arg_value("--title-press-start").and_then(|v| v.parse::<i32>().ok()).is_some_and(|v| c >= v && c < v + 8);
     let b = latch.now | if auto { crate::input::START } else { 0 };
-    if done && !menu && b & crate::input::START != 0 && res.prev_buttons & crate::input::START == 0 {
+    if done && !menu && !crate::movie::playing() && b & crate::input::START != 0 && res.prev_buttons & crate::input::START == 0 {
         sfx.play(CONFIRM_SFX);
         info!("title: START -> main menu (counter {c})");
         front.open_main();

@@ -124,7 +124,7 @@ fn demo_run(p: Res<crate::Player>, latch: Res<crate::pacing::PadLatch>, mut ov: 
         return;
     }
     let b = latch.now | latch.now2;
-    let start = b & crate::input::START != 0 && res.prev & crate::input::START == 0;
+    let start = b & crate::input::START != 0 && res.prev & crate::input::START == 0 && !crate::movie::playing();
     res.prev = b;
     if start {
         // the course's menu when it is open, else the title

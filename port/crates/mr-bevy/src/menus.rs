@@ -51,7 +51,7 @@ use bevy::prelude::*;
 use mr_assets::hud::{HudTables, Size, Sprite};
 use mr_assets::hud_items::Prim;
 
-use crate::input::{CROSS, DOWN, LEFT, RIGHT, START, TRIANGLE, UP};
+use crate::input::{CROSS, DOWN, LEFT, RIGHT, SQUARE, START, TRIANGLE, UP};
 
 // ---------------------------------------------------------------- exe tables
 
@@ -400,6 +400,11 @@ fn worlds_shown(p: &Progress) -> usize {
 
 /// The courses the port runs (the 18 race courses of the course table and
 /// the 6 stunt courses' trial).
+/// Phase 9: a course's movie (course row + 9, 0x800ACB3D; -1 none).
+fn course_movie(course: u8) -> Option<u8> {
+    mr_sim::course::CourseInfo::read(crate::courses::exe(), course).and_then(|i| u8::try_from(i.row9).ok())
+}
+
 fn is_race(course: i8) -> bool {
     course >= 0 && crate::courses::races().iter().any(|c| c.id as i8 == course)
 }
@@ -554,7 +559,10 @@ pub enum SecretAction {
     /// Phase 7: a two-player mode (split screen): the character select
     /// for both players, then the race.
     TwoPlayers(Secret),
-    /// PLAY MOVIE (phase 9): shown, greyed.
+    /// PLAY MOVIE (phase 9): the course's movie (row + 9).
+    Movie,
+    /// Not ported: shown, greyed.
+    #[allow(dead_code)]
     NotPorted,
 }
 
@@ -591,7 +599,7 @@ impl Front {
         let one = |a: &str| format!("{} - {}", a, t.st(sp::ONE_PLAYER));
         let row = |open: bool, text: String, action: SecretAction| SecretRow { text: if open { text } else { t.st(si::QUESTION).to_string() }, open, action };
         let sec = |race_flags: u16| Secret { race_flags, boss: false };
-        let movie = row(f & 0x80 != 0, txt(sp::PLAY_MOVIE), SecretAction::NotPorted);
+        let movie = row(f & 0x80 != 0, txt(sp::PLAY_MOVIE), SecretAction::Movie);
         // phase 7: CHICKEN CHASE (race flag 0x40, two players)
         let chicken = row(f & 4 != 0, txt(sp::CHICKEN_CHASE), SecretAction::TwoPlayers(sec(0x40)));
         match self.race_type() {
@@ -1061,7 +1069,10 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
             }
             let playable = open && is_race(t.cups[w * 4 + c]);
             sp_out.extend(t.hud.text_rgb(format!("o {}", txt(sp::MUSIC)).as_bytes(), 0x180, 0xD2, 0, Size::from_arg(0), 0, 0, [0xDC, 0x50, 0x28]));
-            sp_out.extend(t.hud.text_rgb(format!("s {}", txt(sp::MOVIE)).as_bytes(), 0x80, 0xD2, 0, Size::from_arg(0), 0, 0, [0xDC, 0x60, 0xBC]));
+            // (FUN_80051698: MOVIE bright once the course's movie object
+            // was found, flags & 0x80)
+            let movie = p.0.flags(w, c) & 0x80 != 0;
+            sp_out.extend(t.hud.text_rgb(format!("s {}", txt(sp::MOVIE)).as_bytes(), 0x80, 0xD2, 0, Size::from_arg(0), 0, if movie { 0x60 } else { 0 }, [0xDC, 0x60, 0xBC]));
             sp_out.extend(t.hud.text_rgb(format!("x {}", txt(sp::SELECT)).as_bytes(), 0x100, 0xD2, 0, Size::from_arg(0), 0, if playable { 0x60 } else { 0 }, [0x68, 0x84, 0xDC]));
             let a = t.arrow_size(f);
             if c > 0 {
@@ -1502,6 +1513,7 @@ pub const PORT_KEYS: &[&str] = &[
     "fullscreen",
     "vsync",
     "unlock_all",
+    "skip_intro_movies",
 ];
 
 fn cycle(key: &str, cur: &str, dir: i32) -> Option<String> {
@@ -1552,6 +1564,8 @@ pub struct Effects {
     pub volumes: Option<[u8; 2]>,
     /// The restart continues a league (`--league`).
     pub league: bool,
+    /// Phase 9: play this movie (MOVIE, PLAY MOVIE; movie.rs).
+    pub movie: Option<u8>,
 }
 
 impl Front {
@@ -1563,6 +1577,7 @@ impl Front {
         let cross = pressed(CROSS);
         let back = pressed(TRIANGLE);
         let start = pressed(START);
+        let square = pressed(SQUARE);
         self.prev = buttons;
         if self.page == Page::None {
             return fx;
@@ -1851,6 +1866,17 @@ impl Front {
                         confirm(&mut fx);
                         fx.relaunch_course = crate::courses::races().iter().find(|i| i.id as i8 == course).map(|i| i.name.clone());
                     }
+                } else if square {
+                    // FUN_80074A94 sub-state 0xC: SQUARE on a course whose
+                    // movie object was found (flags & 0x80) and that has a
+                    // movie (row + 9): sound 0xF, the movie, back here
+                    let course = t.cups[w * 4 + c];
+                    if course >= 0 && self.progress.0.flags(w, c) & 0x80 != 0 {
+                        if let Some(m) = course_movie(course as u8) {
+                            fx.sfx.push(CONFIRM_SFX);
+                            fx.movie = Some(m);
+                        }
+                    }
                 }
             }
             Page::CourseMenu => {
@@ -1997,6 +2023,16 @@ impl Front {
                             self.secret = Some(m);
                             self.page = Page::None;
                             self.request = Request::Race;
+                        }
+                        (true, SecretAction::Movie) => {
+                            // FUN_80074A94 cases 8 / 9 / 0xA, row 3: the
+                            // course's movie (0x800ACB3D[course]), then the
+                            // game reloads the course menu (the port
+                            // returns to this page)
+                            if let Ok(m) = u8::try_from(crate::courses::info().row9) {
+                                confirm(&mut fx);
+                                fx.movie = Some(m);
+                            }
                         }
                         _ => {}
                     }
@@ -2293,6 +2329,11 @@ fn run(
     mut exit: MessageWriter<AppExit>,
     p: Res<crate::Player>,
 ) {
+    // Phase 9: no menu input while a movie covers the screen
+    if crate::movie::playing() {
+        front.prev = latch.now;
+        return;
+    }
     // 0x800B07D4: VBlanks at 60 per second
     front.vb_frac += real.delta_secs() * 60.0;
     let n = front.vb_frac.floor();
@@ -2323,6 +2364,9 @@ fn run(
     front.pad2 = latch.now2;
     let b = if front.page == Page::CharSelect && front.picking == 1 { latch.now | latch.now2 } else { latch.now };
     let fx = front.input(b, t);
+    if let Some(m) = fx.movie {
+        crate::movie::request(m);
+    }
     for s in &fx.sfx {
         sfx.play(*s);
     }
@@ -2473,6 +2517,13 @@ mod tests {
         }
         let fx = press(&mut f, CROSS);
         assert_eq!(fx.relaunch_course.as_deref(), Some("LONDON"), "THE MUPPET CHRISTMAS CAROL / RACE A");
+        // phase 9: SQUARE (MOVIE) plays LONDON's movie (row + 9 = 0x12,
+        // MCC5_15) once its movie object was found (flags & 0x80)
+        assert_eq!(press(&mut f, SQUARE).movie, None);
+        f.progress.0.or_flags(3, 0, 0x80);
+        let fx = press(&mut f, SQUARE);
+        assert_eq!(fx.movie, Some(0x12));
+        assert!(fx.sfx.contains(&CONFIRM_SFX));
         // the character select: Kermit, RIGHT does not leave Kermit's own
         // vehicle on the oracle's save; DOWN to Miss Piggy
         f.open(Page::CharSelect);

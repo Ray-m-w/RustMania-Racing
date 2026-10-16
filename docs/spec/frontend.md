@@ -244,9 +244,8 @@ game's everything code applied to a copy.
 
 ## Not ported (listed)
 MEET THE MUPPETS (game mode 0xD, camera mode 6: the 5 x 5 character
-gallery, TEST DRIVE, voice clips FUN_80060580), GAME STATUS and ADVENTURE
-("Not ported in phase 2" below), 2 PLAYER RACE / STUNT RACE (phase 7),
-SECRETS, 2 PLAYER BATTLE / CHICKEN CHASE (phase 7; battle.md), MEMORY CARD and GAME STATUS CHANGED - SAVE
+gallery, TEST DRIVE, voice clips FUN_80060580), 2 PLAYER RACE / STUNT
+RACE (phase 7), 2 PLAYER BATTLE / CHICKEN CHASE (phase 7; battle.md), MEMORY CARD and GAME STATUS CHANGED - SAVE
 GAME (the port autosaves), ADJUST SCREEN, VIBRATION, MOVIE / MUSIC in the
 course select (phases 9 / 8), the fades and LOADING screen between screens,
 the attract demo.
@@ -410,8 +409,7 @@ Port: port/crates/mr-bevy/src/league.rs, menus.rs (`Leagues`, `LeagueMenu`,
   title.
 - Not ported: the karts lined up behind the standings, the tie-break race
   (the port's table keeps the player first among equals), the presentation
-  on course 0x1A, BATTLE LEAGUE (left after phase 4: battle.md "Not
-  ported"), 2 player leagues.
+  on course 0x1A, 2 player leagues. BATTLE LEAGUE: phase 6b (battle.md).
 
 ## Checks
 - `save_check.py league` (one run; the player's kart marked finished 300
@@ -427,14 +425,51 @@ Port: port/crates/mr-bevy/src/league.rs, menus.rs (`Leagues`, `LeagueMenu`,
   faces, a league race with the league's karts.
 
 # Not ported in phase 2 (listed)
-- GAME STATUS (FUN_8004A878, 5 KB: the 7 x 4 course grid with "?" / done
-  marks and icons, a cursor with the course's name, record, holder and
-  secrets, the leagues' results, "nn/31").
+- GAME STATUS: ported in phase 6b (below).
 - ADVENTURE: ported in phase 6 (docs/spec/adventure.md: game mode 0xB,
   the secrets, the "BEAT x" race of race flag 0x10, "YOU BEAT" / "BEAT
   YOU"); COURSE SECRETS (the boss battles, BATTLE AS BOSS, REVERSE RACE,
-  ...) listed there, not ported.
+  ...): phase 6b (adventure.md).
 - The secret pickups' bits (0x4 / 0x20 / 0x80 / 0x8 / 0x10) as races set
   them; the cheat codes (FUN_8008F884: everything, all characters, ...).
 - The "new course" announcement after a league race (0x800B0801,
   FUN_8004CEA0) and the course intro movies (phase 9).
+
+# Phase 6b (Session 7): COURSE SECRETS, GAME STATUS, the secret screen's course menus, BATTLE LEAGUE
+- <COURSE> SECRETS (course menu row 2, worlds 0..6; menus.rs `Page::Secrets`):
+  docs/spec/adventure.md "COURSE SECRETS" (rows, what they start, checks).
+- GAME STATUS (`Page::GameStatus`; main menu row 1 on the first cell, game
+  menu row 1 on the course's: 0x800B07FA / 0x800B07FC = the course's slot /
+  world) [CODE 8004a878, 80073b0c][GPU]: FUN_8004A878 in add order -
+  SELECT COURSE (0x80, 0x30); the cursor's cell blinking with 0x800B07D4 %
+  0x1E < 0xF (medium); the 7 x 4 grid (x 0x65 + 0x12 * slot, y 0x3D + 0xD *
+  world): flags 0x1FF the small star (slot 0x15 clut 0xB, 0x17 x 0xF shown
+  0x12 x 0xC), else "?" closed (colour 6), "_" won + targets + boxes +
+  tokens + boss (0x127, colour 5), "*" (colour 7) - the font draws "_" as a
+  green tick and "*" as a red cross; the star and "n/31" (0x800E02B8) under
+  it; the cursor's course at 0x140: name, WON / BOSS (arenas) / DOOZER
+  (worlds 0..5) / TOKENS on the left of x 0x130 and FOOD / STARS / MOVIE /
+  MUPPET (a course character, 0x800ACB3C) right of 0x150, each "_" / "*",
+  the labels semi-transparent where the course has no such secret; the
+  star (opaque once everything is found); BEST LAP / BEST TIME (time
+  courses: stunt, arenas, secret courses but STUDIO) with the record, its
+  holder and vehicle; BACK; the leagues RACE A / BATTLE / RACE B ("?",
+  "#7*" not won, "#5_" won, the star at 30 / 20 / 30 points); a half-black
+  full-screen backdrop (FUN_8002F6FC abr 0; new `Prim::Shade`). LEFT /
+  RIGHT the slot, UP / DOWN the world, TRIANGLE back. Check (local
+  analysis/oracle/secrets/game_status: slot 1, DOCK, GAME MENU -> GAME
+  STATUS; GP0 frame + save block): every font sprite equals the game's
+  (test menus::tests::gp0_game_status).
+- The secret screen's courses (FUN_80074A94 sub-states 0xB / 0xC,
+  FUN_80051698 cases 0xB / 0xC): world 7 (SPEEDWAY, RALLY, GLACIER): 1
+  PLAYER RACE - n LAPS, 2 PLAYER RACE (greyed), REVERSE RACE, BATTLE,
+  BATTLE RACE (race flags 2 / 1 / 8, through the character select), CHICKEN
+  CHASE (greyed), BACK TO CREDITS; the cup-8 arenas: 1 PLAYER BATTLE, 2
+  PLAYER BATTLE (greyed), CHICKEN CHASE (greyed), BACK TO CREDITS. BACK TO
+  CREDITS returns to the secret screen (course 0x1D) in the game; the port
+  has no secret screen yet and goes to the title.
+- BATTLE LEAGUE: battle.md "Phase 6b".
+- Not ported: the secret screen itself (course 0x1D, the scene with its six
+  choices, 0x800B0F60, reached from the main menu once 0x800E02B9 is set;
+  the port lists worlds 7 / 8 in the world list), MEET THE MUPPETS, the
+  two-player rows.

@@ -184,11 +184,13 @@ In add order (the GPU draws the last-added first):
 - mr-fuzz with the stunt courses (36 runs, 0.98 M ticks, no panic).
 
 ## Not ported (yet)
-- 2 PLAYER STUNT RACE (split screen, phase 7); <COURSE> SECRETS.
+- 2 PLAYER STUNT RACE (split screen, phase 7). <COURSE> SECRETS: phase
+  6b (adventure.md; REVERSE and BATTLE on the stunt courses).
 - The banners' animation and the mirror reflections (render side); the
   pipes / gates have no extra drawing of their own beyond the course DAT.
 - Race flag 4 (reversed trial): ported from the code (gates, progress, the
-  bar's marks), no menu sets it and no oracle check.
+  bar's marks, phase 6b the grid + 3); COURSE SECRETS' REVERSE row sets it;
+  tests / fuzz only, no oracle check.
 - 0x800B0C20 (the first finisher's time): one kart, the player's own.
 - The stunt menu camera (mode 9) is ported from the code, not checked
   against the oracle.

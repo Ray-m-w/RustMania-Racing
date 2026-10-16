@@ -163,6 +163,21 @@ ADVENTURE):
 | progress.rs | FUN_800627E0 (the rescued Doozer onto its goal); the "BEAT x" win bits (race flag 0x10) | code only |
 | camera.rs | TRIANGLE look-at on the challenge objects (0x800729CC); watch targets 10..0x1D | code only |
 
+Ported in Session 7, phase 6b (COURSE SECRETS; docs/spec/adventure.md
+"COURSE SECRETS", battle.md "BOSS CHALLENGE"; reached from <COURSE>
+SECRETS and the world-7 course menu):
+| where | branch | evidence |
+|---|---|---|
+| init.rs | grid placement with race flags 1 (BATTLE: + 0xC, stunt + 6), 2 (REVERSE RACE: + 6), 4 (the reversed trial: + 3) | oracle secrets/reverse_dock: race load exact (6 karts) |
+| progress.rs | the finish line with race flag 2 (6 after 7 completes a lap, +0x4C0 = 7) | reverse_dock: free run / teacher forced exact (726 frames; no lap completed in it) |
+| progress.rs / ai.rs | track direction with +0x4DF = 1: FUN_80090670(n + 1) with 0x800B0A20 (`walk_backward_first`) | reverse_dock: exact (+0x48E) |
+| race.rs | race progress with race flag 1 (FUN_800834C0(1): by damage); the position flash over 0x800B0DFE only | code + fuzz (BATTLE on a race course) |
+| session.rs | game mode 7 (BOSS CHALLENGE): the player alone, the bosses past 0x800B0DFE (0x800B0C98), grid draw mod 6, the bosses' special-move roll, 0x800B0DCC; the win sets flag 0x100; 0x800B0DFE vs all karts in the contacts / AI / damage | secrets/boss_lagoon: race load, free run, teacher forced exact (619 frames, camera); secrets/boss_win: the win and the save block |
+| camera.rs | the intro (mode 10) on the boss 0x800B0DFE + 0x800B0DCC in mode 7 | boss_lagoon: camera exact |
+| race.rs | mode 7's HUD draws (the player's gauge, the bosses' gauges: three random bytes each from 0x321 damage) | code (no gauge in range in the captures) |
+| session.rs | BATTLE AS BOSS (0x20: the player as 0x800B0C7E[0x800B07F3]), DOGFIGHT (0x80: every kart on the PLANE), DOOZER BATTLE (0x100: Doozers on the vehicle turn, no draws) | secrets/doozer_battle: race load, free run, teacher forced exact (636 frames) |
+| progress.rs | FUN_80082450 (BATTLE LEAGUE: the AI karts left standing settled once the player is out) | secrets/battle_league: teacher forced exact through it |
+
 Remaining stubs (all unreachable in the port today):
 | where | branch | why unreachable |
 |---|---|---|
@@ -176,11 +191,8 @@ Remaining stubs (all unreachable in the port today):
 | camera.rs | trail shorter than 16 VBlanks | 24-entry ring (camera::TRAIL_LEN) covers 16 VBlanks at dt 1 |
 | camera.rs | event 30 fixed angles outside modes 1 / 7 | event 30 = the title, always mode 1 |
 | camera.rs | orbit (mode 1) with only the eye path (chunk 0x0B, no 0x0A): looks at the kart, the game at a stale stack value [INFER] | no course: DISCO / the title have both |
-| progress.rs | finish line with race flag 2 | REVERSE RACE (COURSE SECRETS, not ported) |
-| progress.rs | track direction in mode 0x14 (CHICKEN CHASE: toward the chicken); FUN_80090670 path mode (+0x4DF != 0) for a human in mode 1 | CHICKEN CHASE is two-player (phase 7); +0x4DF of a mode-1 human is race flag 2's bit |
-| race.rs | race progress with race flag 1 | not used |
+| progress.rs | track direction in mode 0x14 (CHICKEN CHASE: toward the chicken) | CHICKEN CHASE is two-player (phase 7) |
 | render.rs | race flag 0x40: aim at the chicken 0x800CB658 (FUN_80041A20; was listed as "the boss": race flag 0x40 is CHICKEN CHASE's) | two players (phase 7) |
-| init.rs | grid placement with race flags 1 / 2 / 4 (BATTLE RACE, REVERSE RACE, the reversed trial) | COURSE SECRETS (not ported) |
 | items | mode 20 projectile hits | mode 0x14 |
 
 ## 2. Code not ported (no effect on the kart record the port owns)

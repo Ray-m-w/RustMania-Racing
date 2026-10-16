@@ -69,10 +69,24 @@ frontend.md "Menus"):
   Doozer onto its goal, or touch the character for its "BEAT x" race (win:
   the character is yours); the first find ends the run, the HUD counts what
   is left; finds and characters go to save.bin.
+- <COURSE> SECRETS (phase 6b, course menu row 2; adventure.md "COURSE
+  SECRETS"): what an ADVENTURE's finds open - REVERSE RACE, BATTLE (the
+  course as an arena), BATTLE RACE (damage) on race courses; the reversed
+  stunt trial; in the arenas BOSS CHALLENGE (the course's boss(es):
+  SWEETUMS, BEAUREGAARD, BILL / GILL / JILL, STATLER / WALDORF, THE CHIEF,
+  VAN NEUTER on their boss vehicles, 5:00 counting down; a win opens BATTLE
+  AS BOSS) and BATTLE AS BOSS (LEFT / RIGHT picks the boss); on
+  ARENA/BATTLE DOGFIGHT (everyone in a PLANE) and DOOZER BATTLE; "?" until
+  found;
+- GAME STATUS (main menu / game menu): the course grid, each course's
+  secrets, records and the leagues; BATTLE LEAGUE in TOURNAMENT (the six
+  arenas, points for place, best crash, knock-outs and damage); the world-7
+  and cup-8 courses' own menus (REVERSE RACE / BATTLE / BATTLE RACE, BACK
+  TO CREDITS = the title until the secret screen is ported).
 Menu keys: arrows move, X (CROSS) selects, A (TRIANGLE) goes back; pad: D-pad,
 south, north. Shown greyed and not selectable (later phases): MEET THE
-MUPPETS, GAME STATUS, 2 PLAYER RACE / STUNT RACE / BATTLE,
-SECRETS, ADJUST SCREEN, MEMORY CARD, VIBRATION, BATTLE LEAGUE, MOVIE / MUSIC.
+MUPPETS, 2 PLAYER RACE / STUNT RACE / BATTLE, CHICKEN CHASE, PLAY MOVIE,
+ADJUST SCREEN, MEMORY CARD, VIBRATION, MOVIE / MUSIC.
 Another course (or the title) restarts the program on it (`--course NAME
 --skip-title --menu --character C --vehicle V`, `--league` within a league;
 the scene is built at start-up).

@@ -32,7 +32,7 @@ can find, each once per course (the course's save flags,
 Time limits 0x800ACF30 [RAM]: 72000 (4:00) on races A / B, 54000 (3:00) in
 an arena, 180000 (10:00) on a stunt course. The HUD names follow the game's
 strings: boxes = stars, turbo tokens = food, the ten targets = tokens.
-COURSE SECRETS (below) offers what the secrets open.
+COURSE SECRETS (below; ported in phase 6b) offers what the secrets open.
 
 ## Set-up (FUN_8008C4AC, FUN_800609F4) [CODE][RAM]
 - Game mode 0xB, 0x800B07E6 = 1; 0x800B0DFE = 1 (the player), then the
@@ -113,7 +113,7 @@ slot 0x15 clut 0xB above), turbo tokens left (colour 6, the last token's
 sprite 0x800AC1B8 + 8 * colour turning with 0x800B0B90), targets left
 (colour 5, the course's icon 0x800AC9C0 + 6 * course pulsing with the frame
 counter % 0x21); each next row 0x2D up. The minimap (its blinking target
-marker FUN_80048A0C / FUN_80047F1C: not ported), the time left
+marker FUN_80048A0C / FUN_80047F1C: phase 6b, below), the time left
 (0x800ACF30[type] - clock, (0x100, 0x1E); stunt (0x1C0, 0xD2)). Out / mode
 10: the ending text (large, (0x100, 0x1E), colour 5; OUT OF TIME 7), PRESS
 START. GP0 (tools/oracle/hudx_check.py, adventure/fx_token VB 60 racing,
@@ -139,37 +139,140 @@ VB 300 FOOD COLLECTED): 88 / 88 at lag 0 / 2.
   time limit; the two oracle checks above. mr-fuzz --adventure (420 runs,
   6.8 M ticks), --beat (280, 5.8 M): 0 panics.
 
-## COURSE SECRETS (not ported; the menus show it greyed) [CODE]
-Course menu row 2 (0x80076D64 sub-state 8 on race / stunt courses,
-0x80077094 sub-state 9 on arenas; 0x800B07F0.. players per row, LEFT /
-RIGHT). Rows and what they start:
-- sub-state 8: REVERSE RACE (race flag 2; DISCO 10), BATTLE RACE (flag 1:
-  a battle on the race course), the damage race (flag 8; on DISCO CHICKEN
-  CHASE, flag 0x40), PLAY MOVIE (flag 0x80 found: FMV 0x800ACB3D[course]).
-- sub-state 9 (arenas): BOSS CHALLENGE (flags 0x18 found, i.e. the arena's
-  ADVENTURE boxes and tokens: 0x800B07E8 = 1, game mode 7: the boss battle
-  "BEAT SWEETUMS / BEAUREGAARD / BILL, GILL AND JILL / MARLEY AND MARLEY /
-  THE CHIEF / VAN NEUTER" (FUN_80050F64 by course 5 / 0xD / 0xE / 0x13 /
-  0x14 / 0x15), bosses 0x800B0C7E.. characters 0x20..0x28 on vehicles
-  0x13..0x18 (FUN_8008A9AC), 0x800B0C98 extra karts, a 90000 clock counting
-  down; the win sets flag 0x100); BATTLE AS BOSS (flag 0x100: race flag 0x20,
-  the player as boss 0x800B07F3 of 0x800B0A61); on ARENA/BATTLE (0x1B)
-  DOGFIGHT (flag 8: race flag 0x80) and DOOZER BATTLE (flag 0x10: race flag
-  0x100, Doozers); CHICKEN CHASE (race flag 0x40, two players); PLAY MOVIE.
-- Race flag 0x40 is CHICKEN CHASE's (the aim at the chicken 0x800CB658,
-  FUN_80041A20), not a boss race.
+## COURSE SECRETS (Session 7, phase 6b) [CODE][RAM][GPU]
+Port: mr-sim secrets.rs (bosses, boss count, the Doozers' vehicles),
+session.rs (`SessionConfig::boss_challenge / boss_pick / doozer_turn /
+league`), init.rs, progress.rs, race.rs, camera.rs; mr-bevy menus.rs
+(`Page::Secrets`, `Front::secret_rows`), courses.rs (`secret_config`),
+hud.rs, save.rs; mr-assets hud_items.rs (`boss_hud`, `small_gauge`).
+
+The page: course menu row 2 "<COURSE> SECRETS" (FUN_80074A94 sub-state 8
+on race courses, 0xA on stunt courses, 9 in the arenas; FUN_80051698 cases
+8 / 0xA / 9 draw it): four rows, each the mode's text once its secret is
+found, "?" before (the course's save flags, 0x800E0196 + 8 * slot + 0x20 *
+world). Two-player choices ("- n PLAYERS", LEFT / RIGHT, 0x800B07F0..)
+stay at 1 PLAYER in the port. Rows and what CROSS starts (0x800B0F10 =
+the game mode FUN_80073E44 then loads):
+
+| course | row | needs | text | starts |
+|---|---|---|---|---|
+| race | 0 | 8 (every box) | REVERSE RACE - 1 PLAYER (DISCO: REVERSE BATTLE RACE) | race flag 2 (DISCO 10), mode 1, character select |
+| race | 1 | 0x10 (every token) | BATTLE - 1 PLAYER | race flag 1: game mode 2 on the race course (a battle: 6 karts, 5 above cup 6) |
+| race | 2 | 4 (the targets) | BATTLE RACE - 1 PLAYER (DISCO: CHICKEN CHASE) | race flag 8: the damage race (as DISCO's own race); DISCO: flag 0x40, two players (phase 7, greyed) |
+| stunt | 0 | 8 | REVERSE - 1 PLAYER | race flag 4: the reversed trial (mode 3) |
+| stunt | 1 | 0x10 | BATTLE | flag 1 with 0x800B07CB = 2: two players (greyed) |
+| stunt | 2 | 4 | CHICKEN CHASE | two players (greyed) |
+| arena | 0 | 0x18 | BOSS CHALLENGE | 0x800B07E8 = 1: game mode 7 (below) |
+| arena | 1 | 0x100 (a boss beaten) | BATTLE AS BOSS - name (0x800AB0DC[3 * world + 0x800B07F3], LEFT / RIGHT over 0x800B0A61 bosses) | race flag 0x20, mode 2 at once (no character select) |
+| ARENA/BATTLE | 0 | 8 | DOGFIGHT - 1 PLAYER | race flag 0x80: every kart on vehicle 8 (the PLANE), mode 2 |
+| ARENA/BATTLE | 1 | 0x10 | DOOZER BATTLE - 1 PLAYER | race flag 0x100: every kart a Doozer, mode 2 at once |
+| arena | 2 | 4 | CHICKEN CHASE | two players (greyed) |
+| all | 3 | 0x80 (the movie object) | PLAY MOVIE | the course's FMV 0x800ACB3D[course] (phase 9; greyed) |
+
+Note (correction): race flag 1 is the menu's "BATTLE" (the race course as
+an arena, game mode 2) and flag 8 its "BATTLE RACE" (the damage race);
+phase 6's notes called flag 1 "BATTLE RACE".
+
+Set-ups (FUN_8008C4AC, FUN_800609F4) [CODE][RAM]:
+- Grid (FUN_800609F4 @0x80060B3C): race flag 1 index + 0xC (+ 6 on a stunt
+  course), flag 2 + 6, flag 4 + 3 (after the single stunt kart's + 2).
+- REVERSE RACE: +0x4DF = 1 (race flag 2's bit in mode 1): the AI walks the
+  path backward (FUN_80090670), the track direction too (FUN_80086B7C: n +
+  1 points back with 0x800B0A20); +0x4C0 = 7; the finish line counts 6
+  after 7 as a lap (FUN_80082708); no lap record, no won bit; the race
+  progress subtracts the course-point delta; the results' best lap does not
+  flash.
+- BATTLE (flag 1): game mode 2 on a race / stunt course: battle AI
+  (FUN_80090FAC; on a stunt course the race-type-3 AI), damage, knock-outs,
+  the ranking by damage (FUN_800834C0(1)), the battle HUD.
+- BOSS CHALLENGE (game mode 7; FUN_8008A9AC at the course load; FUN_8008C4AC
+  @0x8008D8xx): 0x800B0DFE = 1 (the player), 0x800B0C98 bosses (one per bit
+  0x80 / 0x100 / 0x200 of 0x800ACB3A + 0xC * course): CANYON SWEETUMS (0x20)
+  on MAYHEM (0x13), T_SQUARE BEAUREGAARD (0x21) / TAXI (0x14), THEATRE BILL,
+  GILL, JILL (0x22..0x24) / SAFEARSE (0x18), CHAMBER STATLER, WALDORF
+  (0x25, 0x26) / CLASSIC (0x15), LAGOON THE CHIEF (0x27) / LOG (0x16), LAB
+  VAN NEUTER (0x28) / DELOREAN (0x17); grid draw *rng % 6, the bosses on
+  the following points (FUN_800609F4 flags 1, no history ring: their slot
+  is past 0x800B0DFE); FUN_8009192C(all) with the bosses rolling "no
+  preference"; then 0x800B0DCC = *rng % bosses (the boss the intro camera
+  shows: FUN_80070418 in mode 10 takes kart 0x800B0DFE + 0x800B0DCC).
+  Everywhere the game compares a slot with 0x800B0DFE the bosses count
+  apart: no damage between two bosses (FUN_80040018 / FUN_80069648), their
+  pickups do not fill the meter (FUN_8007BBF0), the AI's +0x4CB threshold,
+  the position flash. The clock: the race clock 0x800B0A94, 90000 minus it
+  shown; a kart's +0x358 above 89999 is out. Won (the last kart standing,
+  FUN_8007916C @0x800793E0): the course's flag 0x100 (BATTLE AS BOSS opens)
+  and sound 0x24; no record, no won bit.
+- BATTLE AS BOSS (0x20): kart 0 = 0x800B0C7E[0x800B07F3] on 0x800B0D2C[..]
+  (flags 0), the five opponents drawn as a battle's.
+- DOGFIGHT (0x80): the player's vehicle and every opponent's 8; the
+  opponents' characters drawn (no vehicle draw).
+- DOOZER BATTLE (0x100): every kart character 24 (no draws) on
+  0x800B0A14[0x800B0A10] (BULLDOZE, DUMPER, ROLLER), the turn stepped per
+  kart (six karts: back where it was).
+- HUD (FUN_8004F688 case 7, FUN_80050F64 case 6, FUN_80050B2C,
+  FUN_8004DAE0 with 0x800B07E8): the battle's racing parts, the player's
+  gauge at (0x30, 0xEF - 0x1E), each boss's small gauge FUN_80049FD8(x,
+  0xD2, boss, 0) along the bottom (0x30 apart, centred on 0x100; "_" once
+  knocked out), the minimap, the clock counting down; intro "BEAT SWEETUMS"
+  / "BEAT BEAUREGAARD" / "BEAT BILL, GILL AND JILL" / "BEAT MARLEY AND
+  MARLEY" / "BEAT THE CHIEF" / "BEAT VAN NEUTER" (large, colour 5, no
+  faces); the result WINNER (colour 5) / LOSER / OUT OF TIME (colour 7),
+  large at (0x100, 0x1E), PRESS START. DOOZER BATTLE's intro "DOOZER
+  BATTLE" instead of "BATTLE THE MUPPETS".
+
+Checks (oracle, Session 7 phase 6b; captures local under
+analysis/oracle/secrets, routes tools/oracle/routes/*.json):
+- boss_lagoon (LAGOON_menu.pst, flags poked 0x41 -> 0x59, LAGOON SECRETS ->
+  BOSS CHALLENGE, Kermit / RACER, CROSS held): `mr-course-check LAGOON --cap
+  analysis/oracle/secrets/boss_lagoon`: race load exact (2 karts, every
+  named field, random state), free run and teacher forced exact over 619
+  frames incl. the boss intro camera. (mr-course-check: mode-7 loads take
+  the random-pointer frame ends; the load frame's dt is the next sample's,
+  the sampled clock step uses the frame's own dt.)
+- boss_win (THE CHIEF's +0x440 held at 1000 by an every-VBlank poke): the
+  knock-out at GO, the win the next frame, mode 10, flags 0x59 -> 0x159 =
+  the game's save block (test secrets::boss_win_matches_oracle).
+- reverse_dock (slot 1, DOCK flags 0x101 -> 0x109): `mr-course-check DOCK
+  --cap analysis/oracle/secrets/reverse_dock`: race load exact (6 karts),
+  free run and teacher forced exact over 726 frames.
+- doozer_battle (BATTLE_menu.pst from `goto_course.py menu BATTLE`, flags
+  0x61 -> 0x79, DOOZER BATTLE): `mr-course-check BATTLE --cap ...`: race
+  load exact (six Doozers, vehicles 6 / 25 / 27 in turn), free run and
+  teacher forced exact over 636 frames.
+- GP0 (fx_capture.py, hudx_check.py): fx_boss (intro, racing with the boss
+  gauge and the 90000 clock) 129 / 130 at lag 0 (one timer digit at a
+  sample boundary); fx_boss_win (WINNER, PRESS START) 44 / 44.
+- tests/secrets.rs: BOSS CHALLENGE on the six arenas (boss lists, counts,
+  0x800B0DCC), BATTLE AS BOSS, DOGFIGHT, DOOZER BATTLE, REVERSE RACE and
+  BATTLE on four race courses, the reversed trial and BATTLE on MOUNTAIN;
+  mr-fuzz --secrets: 272 runs, 5.5 M ticks, 0 panics.
+- Not checked against the oracle: DOGFIGHT, BATTLE AS BOSS, BATTLE on a
+  race course, the reversed stunt trial, a REVERSE RACE lap completion
+  (code + tests + fuzz only).
+
+## ADVENTURE's markers (phase 6b) [CODE][GPU]
+- FUN_80048A0C / FUN_80047F1C (drawn by FUN_80051698 once racing: the
+  minimap; on a stunt course with a strip the progress bar): while the
+  targets are not all found (flag 4), the target 0x800B068F still out is
+  marked with the course's target icon (0x800AC9C0 + 6 * course) at its
+  point (minimap) or at its strip place 0x800DD698[i] (FUN_80070084 at the
+  course load), sized w * sin(frame % 0x21 * 0x40) >> 16; every 0x21 frames
+  0x800B068F steps to the next target still out (state != 2). The port
+  steps it in race.rs `hud_draws` (`RaceGlobals::adv.marker`). GP0
+  (fx_adv_marker, adventure_dock route; FX_REGIONS now hold 0x800B068F):
+  95 / 95 at lag 0 with the marker.
+- The Doozer goal marker (FUN_8007E21C @0x8007E908 -> FUN_800362D4): with
+  the parked Doozer still in the race (kart 1 +0x496 bit 0x40), each goal
+  (challenge objects 0x800B0EBC.., 0x800B0B98 of them) within 20000 view
+  units of the camera: two additive quads 0x100 x 0x100 (slot 0x15 at 0, 0,
+  0x3F x 0x3F), red and blue, turning with the camera roll - (frame & 0x7F)
+  * 0x20, 0x200 apart (mr-bevy effects.rs `doozer_goals`; not checked
+  against GP0).
 
 ## Not ported (listed)
-- COURSE SECRETS and everything it starts (above): the boss battles (game
-  mode 7: boss models / vehicles 0x13.., boss AI, the boss camera
-  0x800B0DCC, BEAT x texts, flag 0x100), BATTLE AS BOSS, DOGFIGHT, DOOZER
-  BATTLE, REVERSE RACE, BATTLE RACE, PLAY MOVIE (phase 9), CHICKEN CHASE
+- PLAY MOVIE (phase 9), CHICKEN CHASE and the two-player rows / choices
   (phase 7).
-- ADVENTURE's minimap target marker and the progress-bar marker
-  (FUN_80048A0C / FUN_80047F1C with 0x800B07E6), the Doozer goal marker
-  (FUN_8007E21C @0x8007E908, FUN_800362D4). The challenge objects' models
-  are drawn (mr-bevy movers.rs: special slots 0x20.. placed on their points
-  by FUN_8002DF88, turned by 0x800B0CB0.. and scaled by +0x16 as
-  FUN_8002DC14; [SHOT analysis/s7/adventure/port/look_target.png]).
-- GAME STATUS (FUN_8004A878), the secret screen 0x1D, BATTLE LEAGUE
-  (FUN_80082450): unchanged (frontend.md, battle.md).
+- The secret screen itself (course 0x1D: the credits scene choosing world 7
+  / the cup-8 arenas, FUN_80074A94 with 0x800B0F60); its courses' own menus
+  are ported (frontend.md "Phase 6b").

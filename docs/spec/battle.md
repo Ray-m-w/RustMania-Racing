@@ -149,20 +149,45 @@ wins and the other player is out; "CATCH %i CHICKENS" in the countdown,
 180000; no lap timing; the camera's watch target 0x7F is the chicken; the
 track direction points at it. Phase 7 (split screen) is its home.
 
+## Phase 6b: BOSS CHALLENGE, the arena secrets, BATTLE LEAGUE
+- Game mode 7 (BOSS CHALLENGE), BATTLE AS BOSS (race flag 0x20), DOGFIGHT
+  (0x80), DOOZER BATTLE (0x100), BATTLE on race courses (flag 1): ported;
+  set-ups, rules, HUD and checks in docs/spec/adventure.md "COURSE
+  SECRETS" (oracle: boss_lagoon, boss_win, doozer_battle exact).
+- BATTLE LEAGUE (league 2: CANYON, T_SQUARE, THEATRE, CHAMBER, LAGOON, LAB;
+  mr-bevy league.rs, mr-sim save.rs `battle_points`, progress.rs
+  `battle_league_finish`) [CODE][RAM]:
+  - TOURNAMENT -> BATTLE LEAGUE (no laps), the league menu "START BATTLE
+    n" (0x800C1E4C = 1), the battles with the league's karts.
+  - FUN_80082450 (FUN_8007916C @0x80079718, the frame every human is out,
+    0x800B07E4 set, mode 2, AI karts left): the standing AI karts fight it
+    out at random until one is left: a random standing kart (*rng %
+    0x800B0DFE) hits another standing one (again, not itself) for 100
+    (next byte < 0x40) or the byte after + 1 (then its best crash +0x478);
+    +0x43C / +0x43E / +0x440 grow; at 1000 the other is knocked out
+    (+0x440 = 1000 + 0x800B0CD8, its place, 0x800B0CD8 - 1, AI-driven,
+    out, spinning) and the hitter's +0x4FB counts it.
+  - Points (FUN_8008C4AC entering mode 0x11, 0x800C1E4C = 1): place 3 / 2
+    / 1 by 0x800D8F94 (damage, least first), +1 the best crash (the
+    biggest +0x478 above 0), +1 the most knock-outs (+0x4FB; nobody when
+    shared), +1 the most damage dealt (+0x43C, ties to the fewest taken
+    +0x43E, the race league's most-hits loop); RACE POINTS headings
+    POSITION, BEST CRASH, MOST KNOCKOUTS, MOST DAMAGE (0x800AB468[4..8]).
+  - Check (tools/oracle/save_check.py battle_league, local
+    analysis/oracle/secrets/battle_league: CANYON, the player put out
+    (+0x4C7 = 2) 300 VBlanks after GO): `mr-course-check --dir
+    analysis/oracle/secrets/battle_league/battle CANYON`: teacher forced
+    exact over 80 frames incl. FUN_80082450's (four knock-outs, places 6..3,
+    random state); free run exact up to the poke. The points and table
+    equal the game's 0x800C1E08 / 0x800C1E30 (test
+    save::tests::battle_league_points_match_oracle).
+  - Not ported: the tie-break battle and the presentation on 0x1B (mode
+    0x12), as the race leagues'.
+
 ## Not ported (listed)
 - 2 PLAYER BATTLE, CHICKEN CHASE (split screen, phase 7).
-- BATTLE LEAGUE (league 2: the six worlds' arenas; points from damage,
-  best crash, knock-outs, FUN_80082450 ranking the AI left standing, the
-  presentation on course 0x1B in mode 0x12): left for a follow-up with
-  the league's tie-break / presentation work (frontend.md).
-- Game mode 7 (the arenas' BOSS CHALLENGE from COURSE SECRETS once the
-  arena's ADVENTURE found every box and token, 0x800B07E8, boss karts
-  0x800B0C98: "BEAT SWEETUMS" ...), BATTLE AS BOSS (race flag 0x20) and on
-  ARENA/BATTLE DOGFIGHT / DOOZER BATTLE (race flags 0x80 / 0x100): mapped in
-  docs/spec/adventure.md "COURSE SECRETS", not ported (phase 6 left them).
-  An arena's ADVENTURE and its "BEAT x" battle (race flag 0x10, two karts)
-  run (phase 6).
-- <COURSE> SECRETS; the cup-7 courses' extra modes (race flags 1, 2, 4).
-- The secret screen (course 0x1D) itself: the port lists worlds 7 and 8
-  in the world list instead; the cup-8 arenas use the worlds 0..6 course
-  menu (no CHICKEN CHASE row, BACK TO MAIN MENU).
+- The secret screen (course 0x1D) itself: the port lists worlds 7 and 8 in
+  the world list instead; their courses' own menus (sub-states 0xB / 0xC:
+  CHICKEN CHASE greyed, BACK TO CREDITS = the title here) are ported
+  (frontend.md "Phase 6b").
+- The league's tie-break and presentation (above).

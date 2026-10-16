@@ -192,7 +192,7 @@ fn prim_box(p: &Prim) -> [f32; 4] {
         Prim::Ft4(q) => q.v.iter().map(|v| [v[0] as f32, v[1] as f32]).collect(),
         Prim::F3 { v, .. } => v.iter().map(|v| [v[0] as f32, v[1] as f32]).collect(),
         Prim::Line { v, .. } => v.iter().map(|v| [v[0] as f32, v[1] as f32]).collect(),
-        Prim::Tile { x, y, w, h, .. } => vec![[x as f32, y as f32], [(x + w) as f32, (y + h) as f32]],
+        Prim::Tile { x, y, w, h, .. } | Prim::Shade { x, y, w, h } => vec![[x as f32, y as f32], [(x + w) as f32, (y + h) as f32]],
     };
     let mut b = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
     for q in pts {
@@ -663,6 +663,11 @@ fn geometry(p: &Prim, slots: &[(u16, u16); 32], z: f32) -> (MatKey, Vec<[f32; 3]
             let (x0, y0, x1, y1) = (x as f32, y as f32, (x + w) as f32, (y + h) as f32);
             let pos = vec![sp(x0, y0, z), sp(x1, y0, z), sp(x0, y1, z), sp(x1, y0, z), sp(x1, y1, z), sp(x0, y1, z)];
             ((0, 0, false, false, 0), pos, vec![[0.0, 0.0]; 6], flat(rgb))
+        }
+        Prim::Shade { x, y, w, h } => {
+            let (x0, y0, x1, y1) = (x as f32, y as f32, (x + w) as f32, (y + h) as f32);
+            let pos = vec![sp(x0, y0, z), sp(x1, y0, z), sp(x0, y1, z), sp(x1, y0, z), sp(x1, y1, z), sp(x0, y1, z)];
+            ((0, 0, false, true, 0), pos, vec![[0.0, 0.0]; 6], [0.0, 0.0, 0.0, 0.5])
         }
         Prim::Line { v, rgb } => {
             let (a, b) = (Vec2::new(v[0][0] as f32 + 0.5, v[0][1] as f32 + 0.5), Vec2::new(v[1][0] as f32 + 0.5, v[1][1] as f32 + 0.5));

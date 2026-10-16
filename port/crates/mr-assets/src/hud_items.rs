@@ -90,6 +90,9 @@ pub enum Prim {
     Line { v: [[i32; 2]; 2], rgb: [u8; 3] },
     /// Flat rectangle (TILE 0x60, FUN_8002f5e4: the stunt progress bar).
     Tile { x: i32, y: i32, w: i32, h: i32, rgb: [u8; 3] },
+    /// A semi-transparent black rectangle (FUN_8002f6fc(x, y, w, h, 0, 0,
+    /// 0, 0): abr 0, B / 2 + F / 2: the GAME STATUS page's backdrop).
+    Shade { x: i32, y: i32, w: i32, h: i32 },
 }
 
 /// Tables of the item HUD, read from the executable.

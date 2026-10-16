@@ -261,6 +261,7 @@ fn main() {
                 Prim::F3 { v, rgb } => println!("T {} {} {} {} {} {} {} {} {}", v[0][0], v[0][1], v[1][0], v[1][1], v[2][0], v[2][1], rgb[0], rgb[1], rgb[2]),
                 Prim::Line { v, rgb } => println!("L {} {} {} {} {} {} {}", v[0][0], v[0][1], v[1][0], v[1][1], rgb[0], rgb[1], rgb[2]),
                 Prim::Tile { x, y, w, h, rgb } => println!("R {x} {y} {w} {h} {} {} {}", rgb[0], rgb[1], rgb[2]),
+                Prim::Shade { x, y, w, h } => println!("R {x} {y} {w} {h} 0 0 0"),
             }
         }
     }

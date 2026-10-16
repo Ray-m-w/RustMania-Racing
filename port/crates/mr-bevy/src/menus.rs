@@ -226,6 +226,10 @@ pub struct MenuTables {
     pub places: Vec<String>,
     pub headings: Vec<String>,
     pub boss_names: Vec<String>,
+    /// GAME STATUS's labels (WON, BOSS, DOOZER, TOKENS, FOOD, STARS,
+    /// MOVIE, MUPPET) and each course's character (0x800ACB3C + 0xC * c).
+    pub gs_labels: Vec<String>,
+    pub course_chars: Vec<i8>,
 }
 
 impl MenuTables {
@@ -272,6 +276,8 @@ impl MenuTables {
             places: (0..6).map(|i| exe_ptr_str(exe, tbl::PLACES + 8 * i)).collect(),
             headings: (0..8).map(|i| exe_ptr_str(exe, tbl::HEADINGS + 4 * i)).collect(),
             boss_names: (0..18).map(|i| exe_ptr_str(exe, tbl::BOSS_NAMES + 4 * i)).collect(),
+            gs_labels: [0x800B_0184u32, 0x800B_0190, 0x800B_0194, 0x800B_01A0, 0x800B_01AC, 0x800B_01B8, 0x800B_01C4, 0x800B_01D0].iter().map(|&a| exe_ptr_str(exe, a)).collect(),
+            course_chars: (0..40).map(|c| exe_bytes(exe, 0x800A_CB3C + 0xC * c, 1)[0] as i8).collect(),
         }
     }
 
@@ -433,13 +439,24 @@ pub enum Page {
     /// Phase 6b: <COURSE> SECRETS (course menu row 2; FUN_80074A94 sub-state
     /// 8 on race courses, 9 in the arenas, 0xA on stunt courses).
     Secrets,
+    /// Phase 6b: GAME STATUS (0x800B07CE; main menu row 1, game menu row
+    /// 1): FUN_8004A878's page; `col` = 0x800B07FA, `row` = 0x800B07FC;
+    /// back to this page.
+    GameStatus(GameStatusFrom),
+}
+
+/// Where GAME STATUS goes back to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum GameStatusFrom {
+    Main,
+    GameMenu,
 }
 
 impl Page {
     /// Pages over a loaded course whose race is not running (the session
     /// runs `menu_tick`).
     pub fn course_menu(self) -> bool {
-        matches!(self, Page::CourseMenu | Page::GameMenu | Page::WorldList | Page::CourseList | Page::CharSelect | Page::Standings(_) | Page::LeagueMenu | Page::LeaguePoints | Page::LeagueQuit | Page::Secrets)
+        matches!(self, Page::CourseMenu | Page::GameMenu | Page::WorldList | Page::CourseList | Page::CharSelect | Page::Standings(_) | Page::LeagueMenu | Page::LeaguePoints | Page::LeagueQuit | Page::Secrets | Page::GameStatus(GameStatusFrom::GameMenu))
     }
 
     /// Pages that freeze the race (virtual time paused).
@@ -734,6 +751,7 @@ impl Front {
             Page::LeagueMenu => 3,
             Page::LeagueQuit => 2,
             Page::Secrets => 4,
+            Page::GameStatus(_) => 7,
             Page::LeaguePoints => 1,
             Page::Standings(_) | Page::None => 1,
         }
@@ -820,7 +838,7 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
             // FUN_80051698 course 0x1E, sub-state 1 (@0x8005A034)
             let list = [
                 Item::new(txt(sp::MEET_THE_MUPPETS)).grey(true),
-                Item::new(txt(sp::GAME_STATUS)).grey(true),
+                Item::new(txt(sp::GAME_STATUS)),
                 Item::new(txt(sp::SELECT_COURSE)),
                 Item::new(format!("{} - {}", txt(sp::TOURNAMENT), txt(sp::ONE_PLAYER))),
                 Item::new(txt(sp::OPTIONS)),
@@ -849,6 +867,9 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
             sp_out.extend(items(t, &list, sel, 0x78, f));
             sp_out.extend(select_button(t, 0x100, 0xD2, 0, false));
             sp_out.extend(back_button(t, 0x100, 0x1E, 0, false));
+        }
+        Page::GameStatus(_) => {
+            return game_status(t, p, fr.col, fr.row, fr.vb);
         }
         Page::Standings(page) => {
             if let Some(l) = fr.league.as_ref() {
@@ -1039,7 +1060,7 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
                 Page::Secrets => fr.secret_rows(t).into_iter().map(|r| Item::new(r.text).grey(r.open && r.action == SecretAction::NotPorted)).collect(),
                 Page::GameMenu => vec![
                     Item::new(txt(sp::ADVENTURE)),
-                    Item::new(txt(sp::GAME_STATUS)).grey(true),
+                    Item::new(txt(sp::GAME_STATUS)),
                     Item::new(txt(sp::CHANGE_COURSE)),
                     Item::new(format!("{} - {}", txt(sp::TOURNAMENT), txt(sp::ONE_PLAYER))).grey(true),
                 ],
@@ -1141,6 +1162,136 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
     }
     let mut v: Vec<Prim> = sp_out.into_iter().map(Prim::Sprt).collect();
     v.extend(tri);
+    v
+}
+
+/// GAME STATUS (FUN_8004A878; phase 6b), in the game's add order: SELECT
+/// COURSE; the cursor's cell blinking (0x800B07D4 % 0x1E < 0xF); the 7 x 4
+/// course grid (x 0x65 + 0x12 * slot, y 0x3D + 0xD * world): every secret
+/// found (flags 0x1FF) the small star icon, else "?" (closed, colour 6),
+/// "_" (won, boxes, tokens, targets, boss: 0x127, colour 5) or "*" (colour
+/// 7); the star under the grid and "n/31" (0x800E02B8); the cursor's course
+/// at 0x140: its name, its secrets in two columns (WON, BOSS (arenas),
+/// DOOZER (worlds 0..5), TOKENS / FOOD, STARS, MOVIE, MUPPET (a course
+/// character), "_" found, "*" not, the labels greyed where the course has
+/// none), the star once all is found, BEST LAP / BEST TIME and the record,
+/// its holder and vehicle; BACK; the three leagues (RACE A, BATTLE, RACE
+/// B: "?" closed, "#7*" not won, "#5_" won, the star with 30 / 20 / 30
+/// points); the half-black backdrop.
+fn game_status(t: &MenuTables, p: &Progress, col: i8, row: i8, vb: i32) -> Vec<Prim> {
+    let b = &p.0;
+    let mut out: Vec<Sprite> = Vec::new();
+    let text = |s: &str, x: i32, y: i32, align: u8, size: u8, colour: u8, abr: u8| t.hud.text(s.as_bytes(), x, y, align, Size::from_arg(size), colour, abr);
+    let star = |x: i32, y: i32, abr: i32| mr_assets::hud_items::sprt(x, y, 0x40, 0, 0x18, 0x10, [0x80; 3], 0x15, 0xB, abr);
+    let (q, done, mark) = (t.st(si::QUESTION), "_", "*");
+    out.extend(text(t.st(sp::SELECT_COURSE), 0x80, 0x30, 0, 2, 4, 0x60));
+    let (cw, cc) = (row.clamp(0, 6) as usize, col.clamp(0, 3) as usize);
+    if vb.rem_euclid(0x1E) < 0xF {
+        let (x, y) = (cc as i32 * 0x12 + 0x65, cw as i32 * 0xD + 0x3D);
+        let f = b.flags(cw, cc);
+        if f & 0x1FF == 0x1FF {
+            out.push(star(x - 0xD, y - 8, 0x60));
+        } else {
+            out.extend(text(if f & 1 == 0 { q } else if f & 0x127 == 0x127 { done } else { mark }, x, y, 0, 0, 4, 0x60));
+        }
+    }
+    for w in 0..7 {
+        for c in 0..4 {
+            if (w, c) == (cw, cc) {
+                continue;
+            }
+            let (x, y) = (0x65 + 0x12 * c as i32, 0x3D + 0xD * w as i32);
+            let f = b.flags(w, c);
+            if f & 0x1FF == 0x1FF {
+                out.push(Sprite { w: 0x12, h: 0xC, uw: 0x17, vh: 0xF, ..star(x - 10, y - 6, 0x60) });
+            } else {
+                let (s, colour) = if f & 1 == 0 { (q, 6) } else if f & 0x127 == 0x127 { (done, 5) } else { (mark, 7) };
+                out.extend(text(s, x, y, 0, 2, colour, 0x60));
+            }
+        }
+    }
+    let ylast = 0x3D + 0xD * 6;
+    out.push(star(0x73, ylast + 0x1A - 8, 0x60));
+    out.extend(text(&format!("{}/{}", b.status(), 0x1F), 0x80, ylast + 0x27, 0, 2, 4, 0x60));
+    let f = b.flags(cw, cc);
+    let open = f & 1 != 0;
+    out.extend(text(if open { &t.course_names[cw * 4 + cc] } else { q }, 0x140, 0x30, 0, 2, 4, 0x60));
+    let x0 = 0x140;
+    let (star_x, star_abr);
+    if !open {
+        out.extend(text(q, x0, 0x5A, 0, 1, 7, 0x60));
+        out.extend(text(done, x0 - 0x10, 0x85, 0, 0, 5, 0));
+        star_x = x0 | 2;
+        star_abr = 0;
+    } else {
+        let bit = |n: u32| (f >> n) & 1 != 0;
+        let course = t.cups[cc + cw * 4];
+        let has_char = course != -1 && t.course_chars.get(course as usize).is_some_and(|&c| c != -1);
+        let arena_boss = cw < 6 && cc == 2;
+        let doozer = cw < 6;
+        let flag_mark = |out: &mut Vec<Sprite>, n: u32, x: i32, y: i32| {
+            let (s, colour) = if bit(n) { (done, 5) } else { (mark, 7) };
+            out.extend(text(s, x, y, 0, 0, colour, 0x60));
+        };
+        let xl = x0 - 0x10;
+        flag_mark(&mut out, 1, xl, 0x41);
+        out.extend(text(&t.gs_labels[0], xl - 0xC, 0x41, 8, 2, 6, 0x60));
+        if arena_boss {
+            flag_mark(&mut out, 8, xl, 0x52);
+        }
+        out.extend(text(&t.gs_labels[1], xl - 0xC, 0x52, 8, 2, 6, if arena_boss { 0x60 } else { 0 }));
+        if doozer {
+            flag_mark(&mut out, 5, xl, 99);
+        }
+        out.extend(text(&t.gs_labels[2], xl - 0xC, 99, 8, 2, 6, if doozer { 0x60 } else { 0 }));
+        flag_mark(&mut out, 2, xl, 0x74);
+        out.extend(text(&t.gs_labels[3], xl - 0xC, 0x74, 8, 2, 6, 0x60));
+        out.extend(text(done, xl, 0x85, 0, 0, 5, if f & 0x127 == 0x127 { 0x60 } else { 0 }));
+        let xr = x0 + 0x10;
+        flag_mark(&mut out, 4, xr, 0x41);
+        out.extend(text(&t.gs_labels[4], xr + 0xC, 0x41, 2, 2, 6, 0x60));
+        flag_mark(&mut out, 3, xr, 0x52);
+        out.extend(text(&t.gs_labels[5], xr + 0xC, 0x52, 2, 2, 6, 0x60));
+        flag_mark(&mut out, 7, xr, 99);
+        out.extend(text(&t.gs_labels[6], xr + 0xC, 99, 2, 2, 6, 0x60));
+        if has_char {
+            flag_mark(&mut out, 6, xr, 0x74);
+        }
+        out.extend(text(&t.gs_labels[7], xr + 0xC, 0x74, 2, 2, 6, if has_char { 0x60 } else { 0 }));
+        star_x = xr - 0xE;
+        star_abr = if f & 0x1FF == 0x1FF { 0x60 } else { 0 };
+    }
+    out.push(star(star_x, 0x7D, star_abr));
+    if !open {
+        out.extend(text(q, 0x140, 0x96, 0, 0, 4, 0x60));
+        out.extend(text(q, 0x140, 0xA7, 0, 2, 4, 0x60));
+        out.extend(text(q, 0x140, 0xB2, 0, 2, 4, 0x60));
+    } else {
+        let best_time = (cw > 5 || cc > 1) && (cw != 6 || cc == 1);
+        out.extend(text(t.st(if best_time { sp::BEST_TIME } else { sp::BEST_LAP }), 0x13E, 0x96, 8, 2, 6, 0x60));
+        out.extend(text(&mr_assets::hud::time_text_cs(b.record(cw, cc), false), 0x142, 0x96, 2, 0, 4, 0x60));
+        let (hc, hv) = b.holder(cw, cc);
+        out.extend(text(t.names.get(hc as usize).map_or("", |s| s.as_str()), 0x180, 0xA7, 0, 2, 4, 0x60));
+        out.extend(text(t.vehicles.get(hv as usize).map_or("", |s| s.as_str()), 0x180, 0xB2, 0, 2, 4, 0x60));
+    }
+    out.extend(back_button(t, 0x100, 0x1E, 0, false));
+    for (l, x, label, need) in [(0usize, 0x80, sp::RACE_A, 0x1E), (2, 0x100, sp::BATTLE, 0x14), (1, 0x180, sp::RACE_B, 0x1E)] {
+        let lf = b.league_flags(l);
+        if lf & 1 == 0 {
+            out.extend(text(q, x, 0xD2, 0, 0, 6, 0x60));
+            continue;
+        }
+        out.extend(text(t.st(label), x, 0xC4, 0, 2, 1, 0x60));
+        if lf & 2 == 0 {
+            out.extend(text("#7*", x, 0xD2, 0, 0, 4, 0x60));
+        } else if b.league_best(l) >= need {
+            out.push(star(x - 0xD, 0xCA, 0x60));
+        } else {
+            out.extend(text("#5_", x, 0xD2, 0, 0, 4, 0x60));
+        }
+    }
+    let mut v: Vec<Prim> = out.into_iter().map(Prim::Sprt).collect();
+    v.push(Prim::Shade { x: 0, y: 0, w: 0x200, h: 0xF0 });
     v
 }
 
@@ -1347,6 +1498,12 @@ impl Front {
                     self.page = Page::None;
                 } else if cross {
                     match self.row {
+                        1 => {
+                            // GAME STATUS (phase 6b) on the first cell
+                            confirm(&mut fx);
+                            self.open(Page::GameStatus(GameStatusFrom::Main));
+                            (self.row, self.col) = (0, 0);
+                        }
                         2 => {
                             confirm(&mut fx);
                             self.open(Page::CourseSelect);
@@ -1627,6 +1784,30 @@ impl Front {
                     }
                 }
             }
+            Page::GameStatus(from) => {
+                // FUN_80073B0C: LEFT / RIGHT the column 0..3 (the sound when
+                // it moves), UP / DOWN the world 0..6 (the menu rows);
+                // TRIANGLE back
+                let d = right as i32 - left as i32;
+                let c = (self.col as i32 + d).clamp(0, 3) as i8;
+                if c != self.col {
+                    self.col = c;
+                    fx.sfx.push(NAV_SFX);
+                }
+                if back {
+                    confirm(&mut fx);
+                    match from {
+                        GameStatusFrom::Main => {
+                            self.open(Page::Main);
+                            self.row = 1;
+                        }
+                        GameStatusFrom::GameMenu => {
+                            self.open(Page::GameMenu);
+                            self.row = 1;
+                        }
+                    }
+                }
+            }
             Page::Secrets => {
                 let rows = self.secret_rows(t);
                 // LEFT / RIGHT on BATTLE AS BOSS: the boss (0x800B07F3,
@@ -1668,6 +1849,13 @@ impl Front {
                     confirm(&mut fx);
                     self.open(Page::CourseMenu);
                     self.row = 3;
+                } else if cross && self.row == 1 {
+                    // FUN_80074A94 @0x80077A00: GAME STATUS on the course's
+                    // cell (0x800B07FA / 0x800B07FC)
+                    confirm(&mut fx);
+                    let (w, c) = self.here.unwrap_or((0, 0));
+                    self.open(Page::GameStatus(GameStatusFrom::GameMenu));
+                    (self.row, self.col) = (w.min(6) as i8, c.min(3) as i8);
                 } else if cross && self.row == 2 {
                     confirm(&mut fx);
                     self.open(Page::WorldList);
@@ -2286,6 +2474,46 @@ mod tests {
 
     /// (x, y, u, v, w, h, clut, raw) of the oracle frame's SPRTs in the font
     /// page's CLUT row (draw offset removed).
+    /// Phase 6b: GAME STATUS (slot 1, DOCK: GAME MENU -> GAME STATUS; the
+    /// oracle's GP0 frame and save block, local analysis/oracle/secrets/
+    /// game_status): the font sprites equal the game's (the blink frame
+    /// searched).
+    #[test]
+    fn gp0_game_status() {
+        let Some(exe) = exe() else { return };
+        let root = mr_sim::oracle::repo_root().join("analysis/oracle/secrets/game_status");
+        let (Ok(text), Ok(block)) = (std::fs::read_to_string(root.join("game_status.json")), std::fs::read(root.join("block.bin"))) else { return };
+        let t = MenuTables::from_exe(&exe);
+        let mut disc = mr_disc::Disc::open_default().unwrap();
+        let course32 = 3u32;
+        let path = mr_assets::raw::course_raw_path(&exe, course32).unwrap();
+        let env = mr_assets::raw::LoadEnv::from_exe(&exe, course32).unwrap();
+        let dec = mr_assets::raw::decode(&disc.read(&path).unwrap(), &env).unwrap();
+        let slots = mr_assets::hud::slot_attrs(&dec.slots);
+        let theirs = oracle_font_sprites(&text, slots[mr_assets::hud::FONT_SLOT as usize].1);
+        let mut b = [0u8; mr_sim::save::LEN];
+        b.copy_from_slice(&block[..mr_sim::save::LEN]);
+        let p = Progress(mr_sim::save::SaveBlock(b));
+        let mut best: Option<(usize, Vec<(i32, i32, u8, u8, i32, i32, u16, bool)>)> = None;
+        for vb in 0..0x1E {
+            let ours: Vec<_> = game_status(&t, &p, 0, 4, vb)
+                .into_iter()
+                .filter_map(|p| if let Prim::Sprt(s) = p { Some(s) } else { None })
+                .filter(|s| s.slot == mr_assets::hud::FONT_SLOT)
+                .map(|s| (s.x, s.y, s.u, s.v, s.w, s.h, s.attrs(&slots).1, s.raw))
+                .collect();
+            let bad = ours.iter().filter(|o| !theirs.contains(o)).count() + theirs.iter().filter(|o| !ours.contains(o)).count();
+            if best.as_ref().is_none_or(|b| bad < b.0) {
+                best = Some((bad, ours));
+            }
+        }
+        let (bad, ours) = best.unwrap();
+        let missing: Vec<_> = ours.iter().filter(|o| !theirs.contains(o)).collect();
+        let extra: Vec<_> = theirs.iter().filter(|o| !ours.contains(o)).collect();
+        assert!(theirs.len() > 100, "{} oracle glyphs", theirs.len());
+        assert_eq!(bad, 0, "port only {missing:?}; oracle only {extra:?}");
+    }
+
     fn oracle_font_sprites(json: &str, font_clut: u16) -> Vec<(i32, i32, u8, u8, i32, i32, u16, bool)> {
         // a minimal scan of the decoded GP0 JSON: each prim's words
         let mut out = Vec::new();

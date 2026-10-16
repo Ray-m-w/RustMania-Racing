@@ -584,10 +584,15 @@ pub fn stunt_from_session(s: &mr_sim::session::Session) -> Option<hud::StuntHud>
 /// +0x38C, place, clock and the course record (the session's, lowered by
 /// this win as the game's save block).
 pub fn battle_from_session(s: &mr_sim::session::Session) -> Option<hud::BattleHud> {
-    if s.globals.race_type != 2 || s.globals.challenge != 0 || crate::title::on_title() {
+    // (phase 6b: BATTLE on a race course, race flag 1, game mode 2)
+    if (s.globals.race_type != 2 && s.globals.race_flags & 1 == 0) || s.globals.challenge != 0 || crate::title::on_title() {
         return None;
     }
     let k = &s.kart;
+    // A BOSS CHALLENGE (game mode 7): the bosses past 0x800B0DFE
+    let nb = if s.config().boss_challenge { s.globals.adv.bosses.clamp(0, 3) as usize } else { 0 };
+    let first = s.others.len() + 1 - nb;
+    let boss_damage: [i16; 3] = std::array::from_fn(|i| if i < nb { s.others[first + i - 1].kart.stun } else { 0 });
     Some(hud::BattleHud {
         dealt: k.hits_dealt,
         taken: k.stun,
@@ -599,6 +604,10 @@ pub fn battle_from_session(s: &mr_sim::session::Session) -> Option<hud::BattleHu
         time: k.race_time,
         record: s.globals.lap_record,
         race_flags: s.globals.race_flags,
+        course: s.world.info.id,
+        boss_count: nb as u8,
+        boss_damage,
+        race_clock: s.race_clock(),
     })
 }
 

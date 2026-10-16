@@ -166,14 +166,17 @@ pub fn race_tick(s: &mr_sim::session::Session, place: Option<(usize, usize)>, pl
             }
             // A battle won (FUN_8007916C @0x80079398): a 1-player battle
             // with no race flags, the player the last kart standing
-            if s.globals.race_type == 2 && s.globals.race_flags == 0 && s.globals.challenge == 0 && s.kart.finished == 1 && s.kart.race_pos == 1 && st.block.race_won(w, t) {
+            // (not a BOSS CHALLENGE: game mode 7 sets flag 0x100 instead)
+            if s.globals.race_type == 2 && s.globals.race_flags == 0 && s.globals.challenge == 0 && !s.config().boss_challenge && s.kart.finished == 1 && s.kart.race_pos == 1 && st.block.race_won(w, t) {
                 info!("save: arena {w}/{t} won");
             }
         }
         // ADVENTURE and its "BEAT x" race (phase 6): the secrets found
         // (course flags 4 / 8 / 0x10 / 0x20 / 0x40 / 0x80) and the
         // characters collected (0x800E02BC), as the race code set them
-        if s.globals.challenge != 0 || s.globals.race_flags & 0x10 != 0 {
+        // Phase 6b: a BOSS CHALLENGE won (game mode 7, 0x800793E0): flag
+        // 0x100 (BATTLE AS BOSS opens)
+        if s.globals.challenge != 0 || s.globals.race_flags & 0x10 != 0 || s.config().boss_challenge {
             if let Some((w, t)) = place {
                 let f = st.block.flags(w, t);
                 if s.globals.adv.course_flags & !f != 0 {

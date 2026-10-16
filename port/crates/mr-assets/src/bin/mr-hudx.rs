@@ -170,8 +170,15 @@ pub fn states(c: &Cap, vb: u32) -> (HudState, ItemHud, [(u16, u16); 32]) {
     }
     // A battle (race type 2, game modes 2 / 10; phase 4): its HUD state
     // (the course record from MR_HUDX_RECORD, as the stunt trial's).
-    if c.read(vb, 0x800B_0B9A, 1)[0] == 2 && matches!(st.mode, 2 | 10) {
+    // Phase 6b: BATTLE on a race course (race flag 1) and a BOSS
+    // CHALLENGE (mode 7: the bosses past 0x800B0DFE).
+    let flags = le::u16(&c.read(vb, 0x800B_07E2, 2), 0);
+    if (c.read(vb, 0x800B_0B9A, 1)[0] == 2 || flags & 1 != 0) && matches!(st.mode, 2 | 7 | 10) {
         let r = &it.kart;
+        let boss_mode = le::i16(&c.read(vb, 0x800B_07E8, 2), 0) != 0;
+        let dfe = le::i16(&c.read(vb, 0x800B_0DFE, 2), 0).max(0) as u32;
+        let n_boss = if boss_mode { le::i16(&c.read(vb, 0x800B_0C98, 2), 0).clamp(0, 3) as u8 } else { 0 };
+        let boss_damage: [i16; 3] = std::array::from_fn(|i| if (i as u8) < n_boss { le::i16(&c.read(vb, 0x800C_30A8 + 0x504 * (dfe + i as u32) + 0x43E, 2), 0) } else { 0 });
         st.battle = Some(mr_assets::hud::BattleHud {
             dealt: le::i16(r, 0x43C),
             taken: le::i16(r, 0x43E),
@@ -182,7 +189,11 @@ pub fn states(c: &Cap, vb: u32) -> (HudState, ItemHud, [(u16, u16); 32]) {
             place: r[0x4BE],
             time: le::i32(r, 0x358),
             record: std::env::var("MR_HUDX_RECORD").ok().and_then(|v| v.parse().ok()).unwrap_or(i32::MIN),
-            race_flags: le::u16(&c.read(vb, 0x800B_07E2, 2), 0),
+            race_flags: flags,
+            course: c.read(vb, 0x800B_0FAC, 1)[0],
+            boss_count: n_boss,
+            boss_damage,
+            race_clock: i32at(0x800B_0A94),
         });
         if st.mode == 10 {
             let f88 = c.read(vb, 0x800B_0F88, 1)[0] != 0 || c.read(vb, 0x800B_0EBE, 1)[0] != 0;

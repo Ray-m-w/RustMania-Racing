@@ -154,6 +154,11 @@ enum Kind {
     Race,
     Adventure,
     Beat,
+    /// Phase 6b: what COURSE SECRETS starts on the course (drawn per run):
+    /// arenas BOSS CHALLENGE / BATTLE AS BOSS (ARENA/BATTLE: DOGFIGHT /
+    /// DOOZER BATTLE); race courses REVERSE RACE / BATTLE RACE; stunt
+    /// courses the reversed trial / BATTLE RACE.
+    Secrets,
 }
 
 fn run(info: &CourseInfo, title: bool, hz: u8, seed: u32, long: bool, kind: Kind) -> Outcome {
@@ -176,6 +181,24 @@ fn run(info: &CourseInfo, title: bool, hz: u8, seed: u32, long: bool, kind: Kind
                 cfg.course_flags = flags;
                 cfg.characters = 0xFF;
                 cfg.doozer_vehicle = [6, 25, 27][r.below(3) as usize];
+            }
+            Kind::Secrets => {
+                let pick = r.below(2) == 0;
+                match info.race_type {
+                    2 if info.id == 0x1B => cfg.race_flags = if pick { 0x80 } else { 0x100 },
+                    2 if mr_sim::secrets::bosses(info.id).1 > 0 => {
+                        if pick {
+                            cfg.boss_challenge = true;
+                        } else {
+                            cfg.race_flags = 0x20;
+                            cfg.boss_pick = r.below(mr_sim::secrets::bosses(info.id).1 as u32) as u8;
+                        }
+                    }
+                    2 => {}
+                    3 => cfg.race_flags = if pick { 4 } else { 1 },
+                    _ => cfg.race_flags = if pick { if info.id == 0x1F { 10 } else { 2 } } else { 1 },
+                }
+                cfg.course_flags = flags;
             }
             Kind::Beat => {
                 let c = (8 + r.below(16)) as u8;
@@ -274,6 +297,7 @@ fn main() {
             "--hz" => hzs = vec![it.next().and_then(|x| x.parse().ok()).expect("--hz 30|60")],
             "--adventure" => kind = Kind::Adventure,
             "--beat" => kind = Kind::Beat,
+            "--secrets" => kind = Kind::Secrets,
             _ => names.push(a.to_ascii_uppercase()),
         }
     }
@@ -293,6 +317,9 @@ fn main() {
     let mut courses: Vec<(CourseInfo, bool)> = CourseInfo::races(&exe).into_iter().chain(CourseInfo::stunts(&exe)).chain(CourseInfo::arenas(&exe)).map(|c| (c, false)).collect();
     if let Some(t) = CourseInfo::read(&exe, mr_sim::title::TITLE_COURSE) {
         courses.push((t, true));
+    }
+    if kind == Kind::Secrets {
+        courses.retain(|(_, t)| !*t);
     }
     if !names.is_empty() {
         courses.retain(|(c, t)| names.iter().any(|n| (*t && n == "TITLE") || (!*t && (n.eq_ignore_ascii_case(&c.name) || n == &c.id.to_string()))));

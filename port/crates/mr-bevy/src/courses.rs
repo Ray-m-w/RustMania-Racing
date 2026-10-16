@@ -156,6 +156,25 @@ pub fn beat_config(logic_hz: u8, character: u8, vehicle: u8, rival: u8) -> mr_si
     cfg
 }
 
+/// Phase 6b: a COURSE SECRETS race (docs/spec/adventure.md "COURSE
+/// SECRETS"): the race flags 0x800B07E2 (REVERSE RACE 2, BATTLE 1, BATTLE
+/// RACE 8, the reversed stunt trial 4, BATTLE AS BOSS 0x20, DOGFIGHT 0x80,
+/// DOOZER BATTLE 0x100) or an arena's BOSS CHALLENGE (0x800B07E8, game
+/// mode 7); the session places the karts as FUN_8008C4AC does.
+pub fn secret_config(logic_hz: u8, character: u8, vehicle: u8, race_flags: u16, boss: bool, boss_pick: u8, doozer_turn: u8) -> mr_sim::session::SessionConfig {
+    let mut cfg = session_config(logic_hz, character, vehicle);
+    cfg.race_flags = race_flags;
+    cfg.boss_challenge = boss;
+    cfg.boss_pick = boss_pick;
+    cfg.doozer_turn = doozer_turn;
+    // (BATTLE on a race / stunt course: a battle's six karts, 5 above cup 6)
+    if race_flags & 1 != 0 {
+        cfg.opponents = if cfg.cup > 6 { 4 } else { 5 };
+    }
+    save_bits(&mut cfg);
+    cfg
+}
+
 /// The save bits the race code reads and writes (course flags,
 /// characters collected).
 fn save_bits(cfg: &mut mr_sim::session::SessionConfig) {

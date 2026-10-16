@@ -137,7 +137,8 @@ impl ItemTables {
         let sin = i16s(addr::SIN, 4096 + 1024)?;
         let a = i16s(addr::ANIM, 16 * 3)?;
         let anim = a.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
-        let chars = exe.get(off(addr::CHARS)..off(addr::CHARS) + 0x14 * 32)?.to_vec();
+        // (48 rows: the bosses 0x20..0x28 too, phase 6b)
+        let chars = exe.get(off(addr::CHARS)..off(addr::CHARS) + 0x14 * 48)?.to_vec();
         let messages = (0..24).map(|i| pstr(exe, addr::MESSAGES + 4 * i)).collect::<Option<Vec<_>>>()?;
         let ar = i16s(addr::ARROW, 16)?;
         let mut arrow_x = [0; 8];
@@ -815,6 +816,26 @@ pub fn damage_gauge(s: &ItemHud, x: i32, y: i32) -> Vec<Prim> {
     out
 }
 
+/// FUN_80049FD8(x, y, kart, 0) (phase 6b: a BOSS CHALLENGE's bosses, at
+/// the bottom): the small gauge (the fill 0x10 - damage * 16 / 1000 rows,
+/// the heart, the outline; texture slot 0x15, CLUT + 3), or at 1000 damage
+/// the knocked-out glyph "_" (colour 5). The heart's flicker (three random
+/// bytes from 0x321 damage) is drawn grey here.
+pub fn small_gauge(ht: &HudTables, damage: i16, x: i32, y: i32) -> Vec<Prim> {
+    let d = damage as i32;
+    if d > 999 {
+        return ht.text(b"_", x, y, 0, Size::Medium, 5, 0x60).into_iter().map(Prim::Sprt).collect();
+    }
+    let fill = (0x10 - (d << 4) / 1000) as i16 as i32;
+    let mut out = Vec::new();
+    if fill > 0 {
+        out.push(Prim::Sprt(sprt(x - 9, y - (fill - 8), 0xE8, (0x23 - fill) as u8, 0x12, fill, [0x80; 3], 0x15, 3, 0x60)));
+    }
+    out.push(Prim::Sprt(sprt(x - 9, y - 8, 0xE8, 0x13, 0x12, 0x10, [0x80; 3], 0x15, 3, 0)));
+    out.push(Prim::Sprt(sprt(x - 0xC, y - 10, 0xE8, 0, 0x18, 0x13, [0x80; 3], 0x15, 3, 0x60)));
+    out
+}
+
 /// FUN_8002f5e4(x, y, w, h, r, g, b): an opaque flat rectangle.
 fn tile(x: i32, y: i32, w: i32, h: i32, rgb: [u8; 3]) -> Prim {
     Prim::Tile { x: s16(x), y: s16(y), w: s16(w), h: s16(h), rgb }
@@ -918,6 +939,9 @@ pub fn battle_hud(ht: &HudTables, t: &ItemTables, st: &crate::hud::HudState, s: 
     let mut out = p.icon;
     let c70 = st.countdown;
     let sprites = |v: Vec<crate::hud::Sprite>| v.into_iter().map(Prim::Sprt);
+    if bh.boss_count > 0 {
+        return boss_hud(ht, t, st, s, bh, out);
+    }
     if c70 <= 0 {
         if st.finished || st.mode == 10 {
             out.extend(sprites(ht.battle_results(bh)));
@@ -946,13 +970,74 @@ pub fn battle_hud(ht: &HudTables, t: &ItemTables, st: &crate::hud::HudState, s: 
                 out.extend(sprites(ht.text(ht.ready.as_bytes(), 0x100, 0xD2, 0, Size::Large, 6, 0x60)));
             }
         } else if !(s.e38 > 6 && c70 < st.countdown_start + 0xF) {
-            out.extend(sprites(ht.text(ht.battle_the_muppets.as_bytes(), 0x100, 0xD2, 0, Size::Large, 5, 0x60)));
+            // (DOOZER BATTLE: race flag 0x100)
+            let title = if bh.race_flags & 0x100 != 0 { &ht.doozer_battle } else { &ht.battle_the_muppets };
+            out.extend(sprites(ht.text(title.as_bytes(), 0x100, 0xD2, 0, Size::Large, 5, 0x60)));
             out.extend(intro_faces(t, s));
         }
         return out;
     }
     // FUN_80050B2C: the race clock at the top in mode 2
     out.extend(sprites(ht.text(crate::hud::timer_text(st.race_time).as_bytes(), 0x100, 0x1E, 0, Size::Medium, 4, 0x60)));
+    out
+}
+
+/// A BOSS CHALLENGE's HUD (game mode 7, phase 6b; FUN_8004F688 case 7,
+/// FUN_80050F64 case 6, FUN_80050B2C, FUN_8004DAE0 with 0x800B07E8):
+/// racing, the battle's (SPECIAL MOVE / arrow, weapon slots, the turbo
+/// meter while standing, the player's gauge at (0x30, 0xEF - 0x1E)), then
+/// each boss's small gauge along the bottom (y 0xD2, 0x30 apart, centred
+/// on 0x100), the minimap and the clock counting 90000 down; the intro
+/// "BEAT <BOSS>" (large, colour 5, no faces); the result WINNER (colour 5)
+/// / LOSER / OUT OF TIME (colour 7), large at (0x100, 0x1E), PRESS START.
+fn boss_hud(ht: &HudTables, t: &ItemTables, st: &crate::hud::HudState, s: &ItemHud, bh: &crate::hud::BattleHud, mut out: Vec<Prim>) -> Vec<Prim> {
+    let c70 = st.countdown;
+    let sprites = |v: Vec<crate::hud::Sprite>| v.into_iter().map(Prim::Sprt);
+    if c70 <= 0 {
+        if st.mode == 10 {
+            let (txt, col) = if bh.place == 1 && bh.time < 90_000 {
+                (&ht.winner, 5)
+            } else if bh.time > 89_999 {
+                (&ht.out_of_time, 7)
+            } else {
+                (&ht.loser, 7)
+            };
+            out.extend(sprites(ht.text(txt.as_bytes(), 0x100, 0x1E, 0, Size::Large, col, 0x60)));
+            if let Some(r) = st.results {
+                if r.press_start && r.frame.rem_euclid(0x3C) < 0x2D {
+                    out.extend(sprites(ht.text(ht.press_start.as_bytes(), 0x100, 0xD2, 0, Size::Medium, 4, 0x60)));
+                }
+            }
+            return out;
+        }
+        out.extend(status(ht, t, s));
+        out.extend(weapons(t, s, 0x2D));
+        if !st.finished {
+            out.extend(meter(t, s));
+        }
+        out.extend(damage_gauge(s, 0x30, 0xEF - 0x1E));
+        let n = bh.boss_count.min(3) as i32;
+        let mut x = 0x100 - (((n - 1) * 0x30) >> 1);
+        for i in 0..n as usize {
+            out.extend(small_gauge(ht, bh.boss_damage[i], x, 0xD2));
+            x += 0x30;
+        }
+        out.extend(minimap(t, s));
+    }
+    if c70 != 0 {
+        if c70 < st.countdown_start {
+            if c70 <= 0x77 && c70 % 0x1E >= 0xF {
+                out.extend(sprites(ht.text(ht.ready.as_bytes(), 0x100, 0xD2, 0, Size::Large, 6, 0x60)));
+            }
+        } else if !(s.e38 > 6 && c70 < st.countdown_start + 0xF) {
+            if let Some((_, b)) = ht.beat_boss.iter().find(|(c, _)| *c == bh.course) {
+                out.extend(sprites(ht.text(b.as_bytes(), 0x100, 0xD2, 0, Size::Large, 5, 0x60)));
+            }
+        }
+        return out;
+    }
+    // FUN_80050B2C: mode 7 counts 90000 down (the race clock)
+    out.extend(sprites(ht.text(crate::hud::timer_text((90_000 - bh.race_clock).max(0)).as_bytes(), 0x100, 0x1E, 0, Size::Medium, 4, 0x60)));
     out
 }
 

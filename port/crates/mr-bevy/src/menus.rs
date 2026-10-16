@@ -147,6 +147,17 @@ mod sp {
     pub const POINTS: u32 = 0x800B_0310;
     pub const QUIT_TOURNAMENT: u32 = 0x800B_02F0;
     pub const P1: u32 = 0x800B_05CC;
+    // Phase 6b: COURSE SECRETS (FUN_80051698 sub-states 8 / 9 / 0xA).
+    pub const REVERSE_RACE: u32 = 0x800B_0394;
+    pub const PLAY_MOVIE: u32 = 0x800B_0398;
+    pub const DOGFIGHT: u32 = 0x800B_039C;
+    pub const BOSS_CHALLENGE: u32 = 0x800B_03A0;
+    pub const DOOZER_BATTLE: u32 = 0x800B_03A4;
+    pub const BATTLE_AS_BOSS: u32 = 0x800B_03A8;
+    pub const CHICKEN_CHASE: u32 = 0x800B_03AC;
+    pub const REVERSE: u32 = 0x800B_03B8;
+    pub const TWO_PLAYERS: u32 = 0x800B_0418;
+    pub const REVERSE_BATTLE_RACE: u32 = 0x800B_058C;
 }
 
 /// Inline strings (the code takes their address).
@@ -189,6 +200,8 @@ mod tbl {
     pub const PLACES: u32 = 0x800A_B3F8;
     /// RACE POINTS row headings (char *[8]: race, then battle).
     pub const HEADINGS: u32 = 0x800A_B468;
+    /// The bosses' names (char *[3] per world: BATTLE AS BOSS - name).
+    pub const BOSS_NAMES: u32 = 0x800A_B0DC;
 }
 
 /// Everything the menus read from the executable.
@@ -211,6 +224,7 @@ pub struct MenuTables {
     pub sound_levels: [i16; 16],
     pub places: Vec<String>,
     pub headings: Vec<String>,
+    pub boss_names: Vec<String>,
 }
 
 impl MenuTables {
@@ -224,6 +238,8 @@ impl MenuTables {
             sp::VIBRATION, sp::RACE_LEAGUE_A, sp::RACE_LEAGUE_B, sp::BATTLE_LEAGUE, sp::RANDOM_RACE_LEAGUE, sp::RACE_POINTS, sp::TOURNAMENT_POINTS,
             sp::FINAL_TABLE, sp::AFTER, sp::RACES, sp::NEXT, sp::START_RACE, sp::POINTS, sp::QUIT_TOURNAMENT, sp::P1,
             sp::BEST_TIME, sp::ONE_PLAYER_STUNT_TRIAL, sp::TWO_PLAYER_STUNT_RACE, sp::ONE_PLAYER_BATTLE, sp::TWO_PLAYER_BATTLE,
+            sp::REVERSE_RACE, sp::PLAY_MOVIE, sp::DOGFIGHT, sp::BOSS_CHALLENGE, sp::DOOZER_BATTLE, sp::BATTLE_AS_BOSS, sp::CHICKEN_CHASE,
+            sp::REVERSE, sp::TWO_PLAYERS, sp::REVERSE_BATTLE_RACE,
         ];
         let mut s: std::collections::HashMap<u32, String> = ptrs.iter().map(|&p| (p, exe_ptr_str(exe, p))).collect();
         for a in [si::QUESTION, si::DASH, si::ON, si::OFF, si::A, si::B, si::T_PREFIX, si::X_PREFIX] {
@@ -254,6 +270,7 @@ impl MenuTables {
             sound_levels: lv(tbl::SOUND_LEVELS),
             places: (0..6).map(|i| exe_ptr_str(exe, tbl::PLACES + 8 * i)).collect(),
             headings: (0..8).map(|i| exe_ptr_str(exe, tbl::HEADINGS + 4 * i)).collect(),
+            boss_names: (0..18).map(|i| exe_ptr_str(exe, tbl::BOSS_NAMES + 4 * i)).collect(),
         }
     }
 
@@ -412,13 +429,16 @@ pub enum Page {
     LeaguePoints,
     /// QUIT TOURNAMENT's YES / NO (0x800B0EA2 = 5).
     LeagueQuit,
+    /// Phase 6b: <COURSE> SECRETS (course menu row 2; FUN_80074A94 sub-state
+    /// 8 on race courses, 9 in the arenas, 0xA on stunt courses).
+    Secrets,
 }
 
 impl Page {
     /// Pages over a loaded course whose race is not running (the session
     /// runs `menu_tick`).
     pub fn course_menu(self) -> bool {
-        matches!(self, Page::CourseMenu | Page::GameMenu | Page::WorldList | Page::CourseList | Page::CharSelect | Page::Standings(_) | Page::LeagueMenu | Page::LeaguePoints | Page::LeagueQuit)
+        matches!(self, Page::CourseMenu | Page::GameMenu | Page::WorldList | Page::CourseList | Page::CharSelect | Page::Standings(_) | Page::LeagueMenu | Page::LeaguePoints | Page::LeagueQuit | Page::Secrets)
     }
 
     /// Pages that freeze the race (virtual time paused).
@@ -476,6 +496,37 @@ pub struct Front {
     pub beat: Option<u8>,
     /// 0x800B0A10: the Doozer's vehicle turn (0..2).
     pub doozer_turn: u8,
+    /// Phase 6b: the COURSE SECRETS mode chosen (race flags 0x800B07E2,
+    /// BOSS CHALLENGE 0x800B07E8) for the coming race.
+    pub secret: Option<Secret>,
+    /// 0x800B07F3: BATTLE AS BOSS's boss (LEFT / RIGHT; FUN_8008ACE4
+    /// clears it at the course load).
+    pub boss_pick: u8,
+}
+
+/// One COURSE SECRETS row: its text ("?" while its secret is not found),
+/// and what CROSS does.
+pub struct SecretRow {
+    pub text: String,
+    pub open: bool,
+    pub action: SecretAction,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SecretAction {
+    /// The character select, then the race in this mode.
+    CharSelect(Secret),
+    /// The race at once (BATTLE AS BOSS, DOOZER BATTLE: 0x800B0F10 = 2).
+    Race(Secret),
+    /// Two-player modes (phase 7), PLAY MOVIE (phase 9): shown, greyed.
+    NotPorted,
+}
+
+/// What a COURSE SECRETS row starts (FUN_80074A94 sub-states 8 / 9 / 0xA).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Secret {
+    pub race_flags: u16,
+    pub boss: bool,
 }
 
 impl Front {
@@ -490,6 +541,62 @@ impl Front {
             Some((6, 1)) | Some((8, _)) => 2,
             _ => 0,
         }
+    }
+
+    /// Phase 6b: the COURSE SECRETS page's four rows (FUN_80051698 cases 8 /
+    /// 9 / 0xA: the text; FUN_80074A94 sub-states 8 / 9 / 0xA: CROSS). The
+    /// course's save flags (0x800E0196 + 8 * slot + 0x20 * world) open
+    /// them: every item box (8), every turbo token (0x10), both (0x18), the
+    /// ten targets (4), the movie object (0x80), the boss beaten (0x100).
+    /// One player: the "n PLAYERS" choice stays at 1 PLAYER.
+    pub fn secret_rows(&self, t: &MenuTables) -> [SecretRow; 4] {
+        let f = self.here.map(|(w, c)| self.progress.0.flags(w, c)).unwrap_or(0);
+        let txt = |a: u32| t.st(a).to_string();
+        let one = |a: &str| format!("{} - {}", a, t.st(sp::ONE_PLAYER));
+        let row = |open: bool, text: String, action: SecretAction| SecretRow { text: if open { text } else { t.st(si::QUESTION).to_string() }, open, action };
+        let sec = |race_flags: u16| Secret { race_flags, boss: false };
+        let movie = row(f & 0x80 != 0, txt(sp::PLAY_MOVIE), SecretAction::NotPorted);
+        let chicken = row(f & 4 != 0, txt(sp::CHICKEN_CHASE), SecretAction::NotPorted);
+        match self.race_type() {
+            2 if self.course == 0x1B => [
+                row(f & 8 != 0, one(t.st(sp::DOGFIGHT)), SecretAction::CharSelect(sec(0x80))),
+                row(f & 0x10 != 0, one(t.st(sp::DOOZER_BATTLE)), SecretAction::Race(sec(0x100))),
+                chicken,
+                movie,
+            ],
+            2 => {
+                let w = self.here.map_or(0, |h| h.0);
+                let name = t.boss_names.get(w * 3 + self.boss_pick as usize).cloned().unwrap_or_default();
+                [
+                    row(f & 0x18 == 0x18, txt(sp::BOSS_CHALLENGE), SecretAction::CharSelect(Secret { race_flags: 0, boss: true })),
+                    row(f & 0x100 != 0, format!("{} - {}", t.st(sp::BATTLE_AS_BOSS), name), SecretAction::Race(sec(0x20))),
+                    chicken,
+                    movie,
+                ]
+            }
+            3 => [
+                row(f & 8 != 0, one(t.st(sp::REVERSE)), SecretAction::CharSelect(sec(4))),
+                // (BATTLE on a stunt course is two-player: 0x800B07CB = 2)
+                row(f & 0x10 != 0, txt(sp::BATTLE), SecretAction::NotPorted),
+                chicken,
+                movie,
+            ],
+            _ => {
+                let disco = self.course == 0x1F;
+                [
+                    row(f & 8 != 0, one(t.st(if disco { sp::REVERSE_BATTLE_RACE } else { sp::REVERSE_RACE })), SecretAction::CharSelect(sec(if disco { 10 } else { 2 }))),
+                    row(f & 0x10 != 0, one(t.st(sp::BATTLE)), SecretAction::CharSelect(sec(1))),
+                    if disco { chicken } else { row(f & 4 != 0, one(t.st(sp::BATTLE_RACE)), SecretAction::CharSelect(sec(8))) },
+                    movie,
+                ]
+            }
+        }
+    }
+
+    /// COURSE SECRETS on this course: worlds 0..6 (the cups above 6 have
+    /// the secret screen's own course menus: not ported).
+    pub fn secrets_offered(&self) -> bool {
+        self.here.is_some_and(|(w, _)| w <= 6)
     }
 
     /// The state on a loaded course `id` (tests; `Default` takes this run's).
@@ -539,6 +646,8 @@ impl Default for Front {
             adventure: false,
             beat: None,
             doozer_turn: 0,
+            secret: None,
+            boss_pick: 0,
         };
         if crate::title::on_title() { f } else { f.on_course(info.id, info.lap_record) }
     }
@@ -589,6 +698,7 @@ impl Front {
     pub fn to_course_menu(&mut self) {
         self.adventure = false;
         self.beat = None;
+        self.secret = None;
         self.refresh();
         let page = if self.league.as_ref().is_some_and(|l| l.started) { Page::Standings(1) } else { Page::CourseMenu };
         self.open(page);
@@ -622,6 +732,7 @@ impl Front {
             Page::Leagues => 4,
             Page::LeagueMenu => 3,
             Page::LeagueQuit => 2,
+            Page::Secrets => 4,
             Page::LeaguePoints => 1,
             Page::Standings(_) | Page::None => 1,
         }
@@ -884,7 +995,7 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
             }
             sp_out.extend(back_button(t, 0x100, 0x1E, 0, false));
         }
-        Page::CourseMenu | Page::GameMenu | Page::WorldList | Page::CourseList => {
+        Page::CourseMenu | Page::GameMenu | Page::WorldList | Page::CourseList | Page::Secrets => {
             // game mode 0 (FUN_80051698 case 0): the course's name and lap
             // record, SELECT bottom left, BACK top left (not on the course
             // menu itself)
@@ -900,7 +1011,7 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
                     // FUN_80051698 case 0, race type 3: the stunt trial
                     Item::new(txt(sp::ONE_PLAYER_STUNT_TRIAL)),
                     Item::new(txt(sp::TWO_PLAYER_STUNT_RACE)).grey(true),
-                    Item::new(format!("{} {}", here, txt(sp::SECRETS))).grey(true),
+                    Item::new(format!("{} {}", here, txt(sp::SECRETS))).grey(!fr.secrets_offered()),
                     Item::new(txt(sp::GAME_MENU)).tint([0x1F, 0xFF, 0x1F]),
                     Item::new(txt(sp::BACK_TO_MAIN_MENU)).tint([0xFF, 0x1F, 0x1F]),
                 ],
@@ -908,7 +1019,7 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
                     // FUN_80051698 case 0, race type 2: the arena (phase 4)
                     Item::new(txt(sp::ONE_PLAYER_BATTLE)),
                     Item::new(txt(sp::TWO_PLAYER_BATTLE)).grey(true),
-                    Item::new(format!("{} {}", here, txt(sp::SECRETS))).grey(true),
+                    Item::new(format!("{} {}", here, txt(sp::SECRETS))).grey(!fr.secrets_offered()),
                     Item::new(txt(sp::GAME_MENU)).tint([0x1F, 0xFF, 0x1F]),
                     Item::new(txt(sp::BACK_TO_MAIN_MENU)).tint([0xFF, 0x1F, 0x1F]),
                 ],
@@ -918,11 +1029,12 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
                     vec![
                         Item::new(format!("{} - {} {}", txt(sp::ONE_PLAYER_RACE), laps, lap_s)),
                         Item::new(format!("{} - {} {}", txt(sp::TWO_PLAYER_RACE), laps, lap_s)).grey(true),
-                        Item::new(format!("{} {}", here, txt(sp::SECRETS))).grey(true),
+                        Item::new(format!("{} {}", here, txt(sp::SECRETS))).grey(!fr.secrets_offered()),
                         Item::new(txt(sp::GAME_MENU)).tint([0x1F, 0xFF, 0x1F]),
                         Item::new(txt(sp::BACK_TO_MAIN_MENU)).tint([0xFF, 0x1F, 0x1F]),
                     ]
                 }
+                Page::Secrets => fr.secret_rows(t).into_iter().map(|r| Item::new(r.text).grey(r.open && r.action == SecretAction::NotPorted)).collect(),
                 Page::GameMenu => vec![
                     Item::new(txt(sp::ADVENTURE)),
                     Item::new(txt(sp::GAME_STATUS)).grey(true),
@@ -1493,6 +1605,10 @@ impl Front {
                             self.open(Page::CharSelect);
                             self.request = Request::Menu { keep_camera: true };
                         }
+                        2 if self.secrets_offered() => {
+                            confirm(&mut fx);
+                            self.open(Page::Secrets);
+                        }
                         3 => {
                             confirm(&mut fx);
                             self.open(Page::GameMenu);
@@ -1501,6 +1617,42 @@ impl Front {
                         4 => {
                             confirm(&mut fx);
                             fx.relaunch_title = true;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Page::Secrets => {
+                let rows = self.secret_rows(t);
+                // LEFT / RIGHT on BATTLE AS BOSS: the boss (0x800B07F3,
+                // 0..0x800B0A61 - 1)
+                let d = right as i32 - left as i32;
+                if d != 0 && self.row == 1 && self.race_type() == 2 && self.course != 0x1B && rows[1].open {
+                    let n = mr_sim::secrets::bosses(self.course).1 as i32;
+                    let b = (self.boss_pick as i32 + d).clamp(0, (n - 1).max(0)) as u8;
+                    if b != self.boss_pick {
+                        self.boss_pick = b;
+                        fx.sfx.push(NAV_SFX);
+                    }
+                }
+                if back {
+                    confirm(&mut fx);
+                    self.open(Page::CourseMenu);
+                    self.row = 2;
+                } else if cross {
+                    let r = &rows[self.row.clamp(0, 3) as usize];
+                    match (r.open, r.action) {
+                        (true, SecretAction::CharSelect(m)) => {
+                            confirm(&mut fx);
+                            self.secret = Some(m);
+                            self.open(Page::CharSelect);
+                            self.request = Request::Menu { keep_camera: true };
+                        }
+                        (true, SecretAction::Race(m)) => {
+                            confirm(&mut fx);
+                            self.secret = Some(m);
+                            self.page = Page::None;
+                            self.request = Request::Race;
                         }
                         _ => {}
                     }
@@ -1595,7 +1747,8 @@ impl Front {
                         crate::league::League::clear();
                     }
                     self.adventure = false;
-                    self.open(Page::CourseMenu);
+                    let from_secrets = self.secret.take().is_some();
+                    self.open(if from_secrets { Page::Secrets } else { Page::CourseMenu });
                     self.request = Request::Menu { keep_camera: true };
                 } else if cross && self.progress.char_open(self.character) && self.progress.vehicle_open(self.character, self.vehicle) {
                     // FUN_80073C58: the character (and its vehicle) collected

@@ -205,6 +205,14 @@ pub struct HudTables {
     pub damage: String,
     pub best_crash: String,
     pub knockouts: String,
+    /// Phase 6b: "DOOZER BATTLE" (race flag 0x100's intro), the BOSS
+    /// CHALLENGE intros by course (FUN_80050F64 case 6: CANYON, CHAMBER,
+    /// LAB, T_SQUARE, THEATRE, LAGOON) and its result (FUN_8004DAE0 with
+    /// 0x800B07E8: WINNER / LOSER).
+    pub doozer_battle: String,
+    pub beat_boss: Vec<(u8, String)>,
+    pub winner: String,
+    pub loser: String,
 }
 
 impl HudTables {
@@ -246,6 +254,13 @@ impl HudTables {
             damage: exe_ptr_str(exe, addr::PTR_DAMAGE)?,
             best_crash: exe_ptr_str(exe, addr::PTR_BEST_CRASH)?,
             knockouts: exe_ptr_str(exe, addr::PTR_KNOCKOUTS)?,
+            doozer_battle: exe_ptr_str(exe, 0x800B_03A4)?,
+            beat_boss: [(5u8, 0x800B_0320u32), (0x13, 0x800B_0324), (0x14, 0x800B_0328), (0xD, 0x800B_032C), (0x15, 0x800B_0330), (0xE, 0x800B_0334)]
+                .iter()
+                .map(|&(c, a)| exe_ptr_str(exe, a).map(|s| (c, s)))
+                .collect::<Option<Vec<_>>>()?,
+            winner: exe_ptr_str(exe, 0x800B_0248)?,
+            loser: exe_ptr_str(exe, 0x800B_0254)?,
         })
     }
 
@@ -514,6 +529,14 @@ pub struct BattleHud {
     /// race flags (the flash needs 0).
     pub record: i32,
     pub race_flags: u16,
+    /// Phase 6b: a BOSS CHALLENGE (game mode 7): the course (its "BEAT x"
+    /// intro) and the bosses' damage (+0x43E: their gauges at the bottom,
+    /// FUN_80049FD8(x, 0xD2, boss, 0)); `boss_count` 0 = a battle.
+    pub course: u8,
+    pub boss_count: u8,
+    pub boss_damage: [i16; 3],
+    /// The race clock 0x800B0A94 (mode 7 shows 90000 minus it).
+    pub race_clock: i32,
 }
 
 /// What the stunt trial's HUD reads (race type 3, game modes 3 and 10):

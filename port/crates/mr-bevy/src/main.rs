@@ -713,6 +713,11 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
                         cfg
                     } else if let Some(r) = front.beat {
                         courses::beat_config(hz, front.character, front.vehicle, r)
+                    } else if let Some(m) = front.secret {
+                        // Phase 6b: COURSE SECRETS (race flags, BOSS
+                        // CHALLENGE, BATTLE AS BOSS's boss, the Doozers'
+                        // vehicle turn)
+                        courses::secret_config(hz, front.character, front.vehicle, m.race_flags, m.boss, front.boss_pick, front.doozer_turn)
                     } else {
                         courses::session_config(hz, front.character, front.vehicle)
                     };

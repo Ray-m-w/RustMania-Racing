@@ -14,7 +14,7 @@ teacher-forced + free run on one capture), tests green, docs + log updated.
 | 0 | Stability | TRIANGLE lock-on (A-key freeze), every reachable stub ported, fuzz, crash log instead of freeze | DONE 2026-10-16 (1,520 fuzz runs, 0 panics) |
 | 1 | Front end | main menu, 1P race flow: character, vehicle, course select (replaces the pick-list), pause menu, options menu (= our settings, incl. faithful toggles) | DONE 2026-10-16 (title main menu, film-strip course select, course / game menus, world + course lists, character / vehicle select, pause + YES/NO, adjust sound, set controllers, port settings; GP0 font match on 7 screens; not-ported entries greyed, docs/spec/frontend.md "Menus") |
 | 2 | Saves + progression | memory-card-style save file (progress, unlocks, lap records, options), cups / tournament flow and standings, unlocks (secret courses, world 7), rival races ("YOU BEAT x") | DONE 2026-10-16 (save.bin = the game's block 0x800E0190 + header, autosave, card import; progression FUN_8008BE68 matched on the oracle; lap records / BEST LAP, won bits, vehicles; TOURNAMENT race leagues A / B / random with league menu, points and standings, GP0 match on 5 screens. Left: GAME STATUS, ADVENTURE / "BEAT x" (phase 6), battle league (phase 4), tie-break + presentation, standings' 3D line-up; frontend.md "Not ported in phase 2") |
-| 3 | Time trial | time trial mode, ghosts (FUN_8006F64C), records | |
+| 3 | Time trial | time trial mode, ghosts (FUN_8006F64C), records | in progress |
 | 4 | Battle | the 10 arenas (ARENA/* + VOLCANO, HOUSE, WHATEVER), battle rules, Chicken Chase | |
 | 5 | Stunt | the 6 STUNT courses and their mode | |
 | 6 | Challenge / boss | challenge races (race flag 0x10), boss races (flag 0x40) | |
@@ -28,5 +28,6 @@ work): fresh-title random byte; GRAVE/BOG weather frames; DISCO floor
 animation timing; GRAVE far pickup; item sound key-on check; AI R2 specials
 check; course-select sky backdrop + world props; fades / LOADING screen
 between menus; menu voice clips (phase 8); in-process course change (no
-relaunch). Deferred by the owner: DLSS. Optional: AI personalities, control
+relaunch); save.bin lives beside the exe in port/target (a cargo clean
+would delete it): move it to a user-data folder in phase 10. Deferred by the owner: DLSS. Optional: AI personalities, control
 remapping.

@@ -164,6 +164,17 @@ impl CourseInfo {
         Self::all(exe).into_iter().filter(|c| c.is_stunt()).collect()
     }
 
+    /// The arenas (race type 2, game mode 2: 1 PLAYER BATTLE): the six
+    /// ARENA/* courses of cups 0..5 slot 2, ARENA/BATTLE (0x1B, cup 6) and
+    /// cup 8's VOLCANO, HOUSE, WHATEVER (docs/spec/battle.md).
+    pub fn arenas(exe: &ExeImage) -> Vec<CourseInfo> {
+        Self::all(exe).into_iter().filter(|c| c.is_arena()).collect()
+    }
+
+    pub fn is_arena(&self) -> bool {
+        self.race_type == 2 && self.mode == 2 && self.cup >= 0 && self.id != ATTRACT
+    }
+
     pub fn is_stunt(&self) -> bool {
         self.race_type == 3 && self.mode == 3 && self.path.starts_with("STUNT")
     }

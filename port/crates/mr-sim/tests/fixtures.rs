@@ -100,7 +100,7 @@ fn ground_matches() {
 
 #[test]
 fn track_direction_matches() {
-    check_kart_fn(0x8008_6B7C, |k, g, w, _m| mr_sim::progress::track_direction(k, g, w));
+    check_kart_fn(0x8008_6B7C, |k, g, w, _m| mr_sim::progress::track_direction(k, g, w, &[]));
 }
 
 #[test]

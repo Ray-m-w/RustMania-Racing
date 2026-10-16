@@ -92,9 +92,13 @@ pub fn init_kart(p: &KartInit, rng: &mut u32, rand: &mut dyn FnMut() -> i32) -> 
     // 1/2/4 clear: index = `grid` again) [CODE 800609f4].
     // The stunt trial (mode 3, race type 3; 0x80060B3C): one kart
     // (0x800B0DFE == 1) takes grid point `grid` + 2.
+    // A battle (mode 2, race type 2; phase 4): 0x80060B04 takes 6 + 1,
+    // then the plain path again (flags 0x20 / 0x40 and race flags 1/2/4
+    // clear, no challenge): index = `grid`.
     let title = s.mode == 0x10 && s.race_type == 2;
     let stunt = s.mode == 3 && s.race_type == 3;
-    if !(s.mode == 1 && (0..=1).contains(&s.race_type) || title || stunt) || s.race_flags & 7 != 0 || s.challenge != 0 || p.flags & 0x60 != 0 {
+    let battle = s.mode == 2 && s.race_type == 2;
+    if !(s.mode == 1 && (0..=1).contains(&s.race_type) || title || stunt || battle) || s.race_flags & 7 != 0 || s.challenge != 0 || p.flags & 0x60 != 0 {
         crate::unreachable_in_scope!("grid placement outside a plain one-player race");
     }
     let gi = (p.grid + if stunt && s.karts == 1 { 2 } else { 0 }) as usize;

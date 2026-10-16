@@ -201,13 +201,18 @@ pub fn lap_timing(k: &mut KartState, g: &mut RaceGlobals, w: &World, rand: &mut 
     if g.challenge != 0 || g.countdown != 0 || g.mode == 20 {
         return;
     }
-    if g.mode == 2 || g.mode == 7 {
-        unreachable_in_scope!("lap timing for modes 2/7");
+    let battle = g.mode == 2 || g.mode == 7;
+    if battle && g.race_flags & 8 == 0 && k.finished == 0 && k.impact < 1000 && !(g.game_state == 0x1E && k.impact >= 0x7D) {
+        // A battle (modes 2 / 7; phase 4, docs/spec/battle.md): no laps,
+        // the kart's own clock +0x358 runs (at most 180000) while it is
+        // standing (0x80082790).
+        k.race_time = k.race_time.wrapping_add(g.dt * 5).min(180_000);
+        return;
     }
-    if g.race_flags & 8 != 0 && k.finished == 0 && (k.impact >= 1000 || (g.game_state == 0x1E && k.impact >= 0x7D)) {
-        // Race flag 8 (DISCO: the menu sets it for course 0x1F): a kart
-        // with 1000 damage is knocked out (0x8008279C); lap timing goes on
-        // either way (LAB_80082B84).
+    if (battle || g.race_flags & 8 != 0) && k.finished == 0 && (k.impact >= 1000 || (g.game_state == 0x1E && k.impact >= 0x7D)) {
+        // Race flag 8 (DISCO: the menu sets it for course 0x1F) or a
+        // battle: a kart with 1000 damage is knocked out (0x8008279C);
+        // with race flag 8 lap timing goes on either way (LAB_80082B84).
         knocked_out(k, g, w);
         // The title (course 0x1E): the kart is re-created at once
         // (0x800828C4; title.rs); with race flag 8 the lap timing below
@@ -215,6 +220,9 @@ pub fn lap_timing(k: &mut KartState, g: &mut RaceGlobals, w: &World, rand: &mut 
         if g.game_state == crate::title::TITLE_COURSE as i32 {
             crate::title::respawn_in_update(k, g, w, rand);
         }
+    }
+    if battle && g.race_flags & 8 == 0 {
+        return;
     }
     if g.race_type == 3 {
         // 0x80082A40: the stunt trial's gates and clock (stunt.rs).
@@ -316,6 +324,13 @@ fn knocked_out(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
     if k.effect == -1 {
         crate::items::specials::morph(k, [0x400; 3], [0x1000; 3], 0x3C);
     }
+    if g.race_flags & 8 == 0 {
+        // A battle (0x800827F0): the kart takes the place of the karts
+        // left (0x800B0CD8, then one fewer), its damage 1000 + that place.
+        k.race_pos = g.end_mode;
+        k.impact = (g.end_mode as i16).wrapping_add(1000);
+        g.end_mode = g.end_mode.wrapping_sub(1);
+    }
     k.finished = 2;
     if !((k.player_index as i32) < g.humans as i32 && g.game_state != 0x1E) {
         let r = crate::update::rng_next(g, w) as i8;
@@ -413,14 +428,26 @@ pub fn path_ahead(w: &World, seg: i16, pt: i16, n: i32) -> Option<(i16, i16)> {
 
 /// FUN_80086B7C: ease +0x48E toward the direction of a path point a few
 /// points ahead (further at higher speed).
-pub fn track_direction(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
+/// `karts`: every kart's (x, z) as the loop has left them (the battle's
+/// target is read live).
+pub fn track_direction(k: &mut KartState, g: &mut RaceGlobals, w: &World, karts: &[(i32, i32)]) {
     if g.race_type == 3 {
         return;
     }
     if g.mode != 1 {
-        if g.mode == 2 || g.mode == 7 || g.mode == 0x14 {
-            unreachable_in_scope!("track direction for modes 2/7/0x14");
-        }
+        // Modes 2 / 7 (battles): toward the nearest kart (+0x4DC); mode
+        // 0x14 (CHICKEN CHASE, two players: not ported) toward the chicken
+        // 0x800CB658 (0x80086C88).
+        let target = match g.mode {
+            2 | 7 => {
+                let Some(t) = karts.get(k.nearest_kart as usize).filter(|_| k.nearest_kart >= 0) else { return };
+                (s16(t.0 >> 9), s16(t.1 >> 9))
+            }
+            0x14 => unreachable_in_scope!("track direction for mode 0x14 (CHICKEN CHASE)"),
+            _ => return,
+        };
+        let a = ratan2(&w.tables, target.0 - (k.x >> 9), target.1 - (k.z >> 9));
+        steer_track_dir(k, g, a);
         return;
     }
     let mut n: i32 = 3;
@@ -438,6 +465,11 @@ pub fn track_direction(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
     let px = s16(((p.x as u32) >> 4) as i32);
     let pz = s16(((p.z as u32) >> 4) as i32);
     let a = ratan2(&w.tables, px - (k.x >> 9), pz - (k.z >> 9));
+    steer_track_dir(k, g, a);
+}
+
+/// 0x80086D7C: ease +0x48E an eighth of the way toward angle `a`, dt times.
+fn steer_track_dir(k: &mut KartState, g: &RaceGlobals, a: i32) {
     for _ in 0..substeps(g.dt) {
         let d = s16((a & 0xFFF) - (k.track_dir as u16 as i32));
         let d = wrap_angle(d);

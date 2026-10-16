@@ -523,10 +523,17 @@ impl Session {
         // Race courses (mode 1) and the stunt courses' 1 PLAYER STUNT TRIAL
         // (race type 3, mode 3: one kart, FUN_8008C4AC).
         let stunt = world.info.mode == 3;
-        if world.info.mode != 1 && !stunt && !title {
+        // The arenas' 1 PLAYER BATTLE (race type 2, mode 2; phase 4,
+        // docs/spec/battle.md): 6 karts (5 above cup 6), grid draws
+        // modulo 6, 0x800B0CD8 = the karts left standing.
+        let battle = world.info.mode == 2 && !title;
+        if world.info.mode != 1 && !stunt && !battle && !title {
             return Err(SessionError::OutOfScope(format!("course {} is not a race course (mode {})", world.info.name, world.info.mode)));
         }
         let n = if stunt { 1 } else { n };
+        // FUN_8008C4AC @0x8008DE48: the grid draw's modulus (6 in modes 2 /
+        // 7 / 0x14, else the kart count).
+        let grid_mod = if battle { 6 } else { n };
         let race_flags = if title { crate::title::TITLE_RACE_FLAGS } else { cfg.race_flags };
         let mode = if title { crate::title::TITLE_MODE } else { world.info.mode };
         let setup = RaceSetup { mode, race_type, race_flags, challenge: 0, humans: 1, karts: n as i16 };
@@ -538,8 +545,8 @@ impl Session {
             // FUN_8008C4AC @0x8008DA4C: 300 + 180 VBlanks to GO (none on
             // the title: 0x800B0C70 = 0 for course 0x1E).
             // Mode 3 (the stunt trial): 0x78 + 180 (0x8008DA2C).
-            countdown: if title { 0 } else if stunt { 0x78 + 180 } else { crate::race::COUNTDOWN_START },
-            countdown_len: if stunt { 0x78 } else { 300 },
+            countdown: if title { 0 } else if stunt || battle { 0x78 + 180 } else { crate::race::COUNTDOWN_START },
+            countdown_len: if stunt || battle { 0x78 } else { 300 },
             race_flags,
             challenge: 0,
             race_type,
@@ -552,8 +559,9 @@ impl Session {
             rng: cfg.rng_start,
             alt_controls: [cfg.alt_controls as u8, 0],
             sound_event: 0,
-            // 0x800B0CD8 is 1 during a race (finishing order counter).
-            end_mode: 1,
+            // 0x800B0CD8 is 1 during a race (finishing order counter); in
+            // race type 2 the karts left (FUN_8008C4AC @0x8008D9F0).
+            end_mode: if battle { n as u8 } else { 1 },
             lap_threshold: 0,
             lap_record: cfg.lap_record,
             karts: n as i16,
@@ -577,7 +585,7 @@ impl Session {
         // FUN_8008C4AC: the first human's grid slot (*rng++ % karts), the
         // other karts on the following slots; with no opponents the
         // configured slot.
-        let grid0 = if (n > 1 || stunt) && (cfg.lineup.is_none() || cfg.draw_grid) { crate::ai::grid_start(&mut globals, &world, n as i16) } else { cfg.grid };
+        let grid0 = if (n > 1 || stunt) && (cfg.lineup.is_none() || cfg.draw_grid) { crate::ai::grid_start(&mut globals, &world, grid_mod as i16) } else { cfg.grid };
         // The title's kart 0 is an AI kart like the others (FUN_8008C4AC
         // @0x8008DCC4: the same draw for every slot).
         let mut title_first: Option<(u8, u8)> = None;
@@ -621,7 +629,7 @@ impl Session {
                 let mut t = tpl[v as usize];
                 crate::ai::place_wheels(&mut t, &read_mdl(disc, &vpath)?);
                 let cm = read_mdl(disc, &cpath)?;
-                let o = crate::ai::Opponent { slot: s as u8, character: c, vehicle: v, grid: (grid0 + s as i32) % n as i32 };
+                let o = crate::ai::Opponent { slot: s as u8, character: c, vehicle: v, grid: (grid0 + s as i32) % grid_mod as i32 };
                 let (rec, k) = {
                     let mut rand = || bios_rand(&mut rand_state);
                     crate::ai::init_opponent(&world, &t, setup, o, cm.parts[0].record.pivot[1], &mut globals.rng, &mut rand)
@@ -662,7 +670,7 @@ impl Session {
         let camera_globals = CameraGlobals {
             dt: if cfg.logic_hz == 60 { 1 } else { 2 },
             countdown: 0,
-            countdown_len: if stunt { 0x78 } else { 300 },
+            countdown_len: if stunt || battle { 0x78 } else { 300 },
             laps: cfg.laps,
             finish_gate_a: 0,
             finish_gate_b: 0,
@@ -971,7 +979,29 @@ impl Session {
         // tri/DOCK_FINISH and tri/DOCK_TIMEUP show the karts moving in it.)
         // With two humans and one finished the game just goes on
         // (0x80079708).
-        if (g.mode == 1 || g.mode == 3) && g.race_over == 0 {
+        // A battle (modes 2 / 7; 0x800791C8): with one kart left standing
+        // (0x800B0CD8 == 1) each human still in wins: out (+0x4C7 = 1),
+        // place 1, its clock rounded to a multiple of 3, the AI takes it.
+        // (The course record / won bit: SaveBlock::battle_won, outside.)
+        if (g.mode == 2 || g.mode == 7) && g.challenge == 0 && g.end_mode == 1 {
+            for k in ks.iter_mut().filter(|x| (x.player_index as i32) < g.humans as i32 && x.finished == 0) {
+                k.finished = 1;
+                k.shown_pos = 1;
+                k.race_pos = 1;
+                let t = k.race_time;
+                k.race_time = (t / 3) * 3 + if t % 3 > 1 { 3 } else { 0 };
+                // 0x80079318: a 1-player battle with no race flags (the
+                // human not AI-driven): a faster win is the course's record
+                // (BEST TIME), applied to the save block outside
+                // (SaveBlock::lap_record from `lap_record`).
+                if g.race_type == 2 && g.mode == 2 && g.race_flags == 0 && g.split_screen == 0 && k.flags & 1 == 0 && k.race_time < g.lap_record {
+                    g.lap_record = k.race_time;
+                }
+                k.pause_bits = 0x80;
+                k.flags |= 1;
+            }
+        }
+        if (g.mode == 1 || g.mode == 2 || g.mode == 3 || g.mode == 7) && g.race_over == 0 {
             let humans_done = ks.iter().filter(|x| (x.player_index as i32) < g.humans as i32 && x.finished != 0).count() as i32;
             if humans_done > 0 && humans_done == g.humans as i32 {
                 g.mode = 10;
@@ -1067,7 +1097,8 @@ impl Session {
                 crate::update::kart_update_at(ks, s, g, w, &inp, b, s as i16, &mut rand);
             }
             if s < g.humans as usize {
-                crate::progress::track_direction(&mut ks[s], g, w);
+                let pos: Vec<(i32, i32)> = ks.iter().map(|x| (x.x, x.z)).collect();
+                crate::progress::track_direction(&mut ks[s], g, w, &pos);
             }
         }
         // 5. After the kart loop: wheel / driver part matrices (FUN_80086DF0),

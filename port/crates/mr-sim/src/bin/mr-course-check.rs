@@ -60,7 +60,7 @@ fn frames(cap: &Capture) -> Option<Ends> {
     // (a mode-3 capture's clock plan must not leak into the next course)
     CLOCKS.with(|c| c.borrow_mut().clear());
     let key = |vb: u32| (cap.i32(vb, 0x800B_0C70).unwrap(), cap.i32(vb, 0x800B_0A94).unwrap());
-    let load = *cap.vbs.iter().find(|&&v| (key(v).0 == 480 || key(v).0 == 300) && matches!(cap.read(v, 0x800B_0D46, 2).unwrap(), [1, 0] | [3, 0]))?;
+    let load = *cap.vbs.iter().find(|&&v| (key(v).0 == 480 || key(v).0 == 300) && matches!(cap.read(v, 0x800B_0D46, 2).unwrap(), [1, 0] | [2, 0] | [3, 0]))?;
     let vbs: Vec<u32> = cap.vbs.iter().copied().filter(|&v| v >= load).collect();
     let mut ends: Vec<u32> = vbs.windows(2).filter(|w| key(w[0]) != key(w[1])).map(|w| w[0]).collect();
     // The stunt trial (mode 3): its VBlank samples fall either side of the
@@ -300,7 +300,7 @@ fn main() {
         // the race clock stops, the frame counter runs on).
         let key = |vb: u32| (cap.i32(vb, 0x800B_0C70).unwrap(), cap.i32(vb, 0x800B_0A94).unwrap(), cap.i32(vb, 0x800B_0D90).unwrap());
         let mode = |v: u32| cap.read(v, 0x800B_0D46, 2).unwrap().to_vec();
-        let vbs: Vec<u32> = cap.vbs.iter().copied().filter(|&v| mode(v) == [1, 0] || mode(v) == [3, 0] || mode(v) == [10, 0]).collect();
+        let vbs: Vec<u32> = cap.vbs.iter().copied().filter(|&v| mode(v) == [1, 0] || mode(v) == [2, 0] || mode(v) == [3, 0] || mode(v) == [10, 0]).collect();
         let mut ends: Vec<u32> = vbs.windows(2).filter(|w| key(w[0]) != key(w[1])).map(|w| w[0]).collect();
         // A stunt-trial capture (mode 3): its samples hold the next frame's
         // clock step (mode3_ends; the first sample taken as frame 0 with
@@ -315,6 +315,12 @@ fn main() {
             cfg.logic_hz = 30;
             let m = cap.mem_at(ends[0], None);
             cfg.faces = Some(m.u32(0x800B_0FA4));
+            // The karts' own characters / vehicles (+0x4B2 / +0x4B1): the
+            // driver models' pivots feed the render pass (look points,
+            // driver positions) the contacts and the battle AI read.
+            let cv = |i: u32| (m.u8(KART_ARRAY + 0x504 * i + 0x4B2), m.u8(KART_ARRAY + 0x504 * i + 0x4B1));
+            (cfg.character, cfg.vehicle) = cv(0);
+            cfg.lineup = Some([cv(1), cv(2), cv(3), cv(4), cv(5)]);
             let mut s = Session::with_config(disc, cfg).expect("session");
             // A capture with the kart count poked down (0x800B0DFE, e.g.
             // tools/oracle/routes/tri_solo_*.json): the race frame runs
@@ -620,7 +626,16 @@ fn teacher_forced(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_f
         // menu's; keep the session's own too.
         let keep_lifts = cap.read(ends[j - 1], 0x800D_D708, 4).is_none().then(|| (s.globals.objects.lifts.clone(), s.globals.objects.lift_offsets.clone()));
         let keep_groups = cap.read(ends[j - 1], mprev.u32(0x800B_0FA4), 4).is_none().then(|| (s.globals.objects.group_enabled.clone(), s.globals.objects.hidden_slots.clone()));
+        // Nor are the history rings (0x800D4098, the camera's trail): keep
+        // the session's own.
+        let keep_trails = cap.read(ends[j - 1], 0x800D_4098, 16).is_none().then(|| (s.kart.trail, s.others.iter().map(|o| o.kart.trail).collect::<Vec<_>>()));
         s.load_mem(&mprev);
+        if let Some((t0, ts)) = keep_trails {
+            s.kart.trail = t0;
+            for (o, t) in s.others.iter_mut().zip(ts) {
+                o.kart.trail = t;
+            }
+        }
         if let Some((l, o)) = keep_lifts {
             s.globals.objects.lifts = l;
             s.globals.objects.lift_offsets = o;
@@ -664,7 +679,12 @@ fn teacher_forced(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_f
             println!("      tf {j} vb {}: countdown {} vs {}, clock {} vs {}", ends[j], s.countdown(), m.i32(0x800B_0C70), s.globals.race_clock, m.i32(0x800B_0A94));
         }
         if cap.read(ends[j], 0x800C_4F40, mr_sim::camera::CAMERA_SIZE).is_some() {
-            for d in camera_diff(s, &m) {
+            let cd = camera_diff(s, &m);
+            if !cd.is_empty() && std::env::var("MR_TFCAM").is_ok() {
+                let oc = mr_sim::camera::CameraState::from_bytes(m.slice(0x800C_4F40, mr_sim::camera::CAMERA_SIZE));
+                println!("      tf cam {j}: {cd:?} port mode {} pos {:?} | oracle mode {} pos {:?}", s.camera.mode, s.camera.pos, oc.mode, oc.pos);
+            }
+            for d in cd {
                 cam_bad.entry(d).or_insert((0, j)).0 += 1;
             }
         }

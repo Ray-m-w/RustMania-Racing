@@ -355,7 +355,10 @@ pub fn hud_draws(g: &mut RaceGlobals, w: &World, k: &KartState) {
     // Race flag 8 (DISCO), racing: FUN_80049FD8 (the damage gauge) jitters
     // its colour with three bytes while +0x43E is 0x321..0x3E7.
     g.hud_gauge_rgb = None;
-    if g.mode == 1 && g.countdown == 0 && k.finished == 0 && g.race_flags & 8 != 0 && ((k.stun as u16).wrapping_sub(0x321)) < 199 {
+    // Battles (mode 2, FUN_8004F688 case 2; phase 4): the gauge while the
+    // kart is standing.
+    let gauge = (g.mode == 1 && g.race_flags & 8 != 0) || g.mode == 2;
+    if gauge && g.countdown == 0 && k.finished == 0 && ((k.stun as u16).wrapping_sub(0x321)) < 199 {
         // (render side: the colour the gauge's heart is drawn with)
         g.hud_gauge_rgb = Some([w.rng_byte(g.rng), w.rng_byte(g.rng.wrapping_add(1)), w.rng_byte(g.rng.wrapping_add(2))]);
         g.rng = g.rng.wrapping_add(3);

@@ -255,7 +255,7 @@ fn main() {
     let mut disc = mr_disc::Disc::open_default().expect("open the owner's disc");
     let exe = mr_sim::tables::ExeImage::parse(&disc.read("SLUS_012.37").expect("exe")).expect("exe");
     // Race courses and (phase 3) the stunt courses' trial.
-    let mut courses: Vec<(CourseInfo, bool)> = CourseInfo::races(&exe).into_iter().chain(CourseInfo::stunts(&exe)).map(|c| (c, false)).collect();
+    let mut courses: Vec<(CourseInfo, bool)> = CourseInfo::races(&exe).into_iter().chain(CourseInfo::stunts(&exe)).chain(CourseInfo::arenas(&exe)).map(|c| (c, false)).collect();
     if let Some(t) = CourseInfo::read(&exe, mr_sim::title::TITLE_COURSE) {
         courses.push((t, true));
     }

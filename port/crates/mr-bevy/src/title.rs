@@ -26,7 +26,12 @@
 //! - START (pressed, fade done; FUN_80073138) plays the confirm sound 0xF
 //!   (FUN_8005EECC(0xF, 0x1800, 0x60, 0x60)) and opens the game's main menu
 //!   over the same scene (sub-state 1; menus.rs, Session 7).
-//! After 1800 VBlanks the game would run its attract demo race: not ported.
+//! After 1800 idle VBlanks the attract demo (demo.rs, phase 8). The cheat
+//! codes (phase 8): face-button presses on the title go to
+//! mr_sim::save::Cheats; a completed code changes the save
+//! (`SaveBlock::cheat`, autosaved), plays sound 0x24 and shows its name
+//! for 0x3C VBlanks (FUN_80051698 case 0: FUN_800474E8(name, 0x100, 0x1E,
+//! 0, 1, 5 (RESET 7), 0x60)).
 
 use bevy::prelude::*;
 use mr_assets::hud::{self as ahud, HudTables, Sprite};
@@ -140,7 +145,18 @@ struct TitleRes {
     hud: HudTables,
     prev_buttons: u16,
     shot_wait: u32,
+    cheats: mr_sim::save::Cheats,
+    /// The code names (0x800B0590 + 4 * (code - 1)).
+    cheat_names: Vec<String>,
+    /// 0x800B080F (VBlanks left) / 0x800B0811 (the code).
+    cheat_shown: i32,
+    cheat_code: u8,
+    last_frame: i32,
 }
+
+/// The code names' pointers (FUN_80051698 @0x8005A50C): MUPPETS AND
+/// VEHICLES, STUDIO, ARCHES, FRAGGLE ROCK, END COURSES, RESET.
+pub const CHEAT_NAMES: [u32; 6] = [0x800B_0590, 0x800B_0594, 0x800B_0598, 0x800B_059C, 0x800B_05A0, 0x800B_05AC];
 
 pub struct TitlePlugin;
 
@@ -159,7 +175,18 @@ fn setup(mut commands: Commands) {
     }
     let mut disc = mr_disc::Disc::open_default().expect("open the disc");
     let exe = disc.read("SLUS_012.37").expect("read the executable");
-    commands.insert_resource(TitleRes { hud: HudTables::from_exe(&exe).expect("HUD tables"), prev_buttons: 0, shot_wait: 0 });
+    let img = mr_sim::tables::ExeImage::parse(&exe).expect("exe");
+    let name = |p: u32| {
+        let mut a = img.i32(p) as u32;
+        let mut s = String::new();
+        while img.contains(a) && img.u8(a) != 0 && s.len() < 40 {
+            s.push(img.u8(a) as char);
+            a += 1;
+        }
+        s
+    };
+    let cheat_names = CHEAT_NAMES.iter().map(|&p| name(p)).collect();
+    commands.insert_resource(TitleRes { hud: HudTables::from_exe(&exe).expect("HUD tables"), prev_buttons: 0, shot_wait: 0, cheats: mr_sim::save::Cheats::from_exe(&img), cheat_names, cheat_shown: 0, cheat_code: 0, last_frame: 0 });
 }
 
 /// The session's frame counter 0x800B0D90 (the title's clock).
@@ -199,7 +226,32 @@ fn overlay(
     }
     // PRESS START (sub-state 0 only; the menus draw their own layer)
     let menu = front.page != crate::menus::Page::None;
-    let sprites = if menu { Vec::new() } else { text_sprites(&res.hud, c, done) };
+    let mut sprites = if menu { Vec::new() } else { text_sprites(&res.hud, c, done) };
+    // the cheat codes (sub-state 0): the face buttons, the code's name
+    let step = (c - res.last_frame).max(0);
+    res.last_frame = c;
+    res.cheat_shown = (res.cheat_shown - step).max(0);
+    if !menu && !crate::menus::tool_run() {
+        if let Some(code) = res.cheats.frame(latch.now) {
+            crate::save::with(|s| {
+                let t = s.tables.clone();
+                s.block.cheat(code, &t);
+            });
+            crate::save::persist();
+            sfx.play((0x24, 5000, 0x80, 0x80));
+            info!("title: cheat code {code} ({})", res.cheat_names.get(code as usize - 1).cloned().unwrap_or_default());
+            res.cheat_code = code;
+            res.cheat_shown = 0x3C;
+        }
+        if res.cheat_shown > 0 {
+            if let Some(n) = res.cheat_names.get(res.cheat_code as usize - 1) {
+                let colour = if res.cheat_code == 6 { 7 } else { 5 };
+                sprites.extend(res.hud.text(n.as_bytes(), 0x100, 0x1E, 0, ahud::Size::from_arg(1), colour, 0x60));
+            }
+        }
+    } else {
+        res.cheats.reset();
+    }
     let want = Some(sprites.into_iter().map(Prim::Sprt).collect::<Vec<_>>());
     if ov.0 != want {
         ov.0 = want;

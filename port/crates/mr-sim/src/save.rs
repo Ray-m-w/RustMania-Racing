@@ -72,6 +72,61 @@ impl std::fmt::Debug for SaveBlock {
     }
 }
 
+/// Phase 8: the cheat codes' table (7 rows of 10 buttons; 0 SQUARE, 1
+/// TRIANGLE, 2 CIRCLE, 3 CROSS; FUN_8008F7E8 tries rows 1..6).
+pub const CHEAT_TABLE: u32 = 0x800A_D08C;
+
+/// The title's code entry (FUN_80074A94 sub-state 0 + FUN_8008F7E8 /
+/// FUN_8008F788): each new face-button press (one button alone) goes into
+/// the 10-press buffer 0x800C54A8 (newest first); when the last ten
+/// presses, oldest first, equal a row of `CHEAT_TABLE` the buffer clears
+/// and that code applies (`SaveBlock::cheat`).
+#[derive(Clone, Debug)]
+pub struct Cheats {
+    pub codes: [[u8; 10]; 7],
+    buf: [u8; 10],
+    /// 0x800B0810: a face button is held (waits for its release).
+    held: bool,
+}
+
+impl Cheats {
+    pub fn from_exe(exe: &ExeImage) -> Cheats {
+        let codes = std::array::from_fn(|r| std::array::from_fn(|i| exe.u8(CHEAT_TABLE + 10 * r as u32 + i as u32)));
+        Cheats { codes, buf: [0xFF; 10], held: true }
+    }
+
+    /// FUN_8008F788 (the title's load, a code taken).
+    pub fn reset(&mut self) {
+        self.buf = [0xFF; 10];
+        self.held = true;
+    }
+
+    /// One frame's pad word (0x800B0CE8); Some(code) when a code completes.
+    pub fn frame(&mut self, pad: u16) -> Option<u8> {
+        let face = pad & 0xF000;
+        if face == 0 {
+            self.held = false;
+            return None;
+        }
+        if self.held {
+            return None;
+        }
+        self.held = true;
+        let b = match face {
+            0x8000 => 0,
+            0x1000 => 1,
+            0x2000 => 2,
+            0x4000 => 3,
+            _ => return None,
+        };
+        self.buf.copy_within(0..9, 1);
+        self.buf[0] = b;
+        let code = (1..7).find(|&r| (0..10).all(|i| self.buf[9 - i] == self.codes[r][i]))?;
+        self.reset();
+        Some(code as u8)
+    }
+}
+
 /// The exe tables the save code reads.
 #[derive(Clone, Debug)]
 pub struct SaveTables {
@@ -336,6 +391,82 @@ impl SaveBlock {
                 let oo = o + 4 * (v as usize >> 5);
                 let m = self.u32(oo) | 1 << (v & 0x1F);
                 self.set_u32(oo, m);
+            }
+        }
+    }
+
+    /// Phase 8: FUN_8008F884(code), a cheat code's effect (docs/spec/
+    /// frontend.md "Cheat codes"), then FUN_8008BE68 (0x800B0800 = -1
+    /// after it: no course loaded for it). Codes 1..6 are typed on the
+    /// title (`CHEATS`); 0 and 7 are not reachable there.
+    /// 0: worlds 0..5 open (won on the race slots), leagues 0..2 open;
+    /// 1 MUPPETS AND VEHICLES: every character and vehicle (FUN_8008F2AC:
+    /// also flag 0x40 on every course); 2 STUDIO / 3 ARCHES / 4 FRAGGLE
+    /// ROCK: flag 0x08 / 0x10 / 0x20 on the 24 courses of worlds 0..5 and
+    /// world 6 slot 0 / 1 / 2 open (4: the Doozer, character 24, too);
+    /// 5 END COURSES: 0x800E02B9 = 3; 6 RESET: the course flags, leagues
+    /// and characters of a new game (records and options kept); 7: the
+    /// "everything" code (`unlock_all`).
+    pub fn cheat(&mut self, code: u8, t: &SaveTables) {
+        let or_all = |s: &mut SaveBlock, f: u16| {
+            for w in 0..6 {
+                for k in 0..4 {
+                    s.or_flags(w, k, f);
+                }
+            }
+        };
+        match code {
+            0 => {
+                for w in 0..6 {
+                    for k in 0..4 {
+                        self.or_flags(w, k, if k > 2 { 1 } else { 3 });
+                    }
+                }
+                for l in 0..3 {
+                    let v = self.u8(0x120 + 2 * l) | 1;
+                    self.set_u8(0x120 + 2 * l, v);
+                }
+            }
+            1 => self.all_characters(),
+            2 | 3 | 4 => {
+                or_all(self, [8, 0x10, 0x20][code as usize - 2]);
+                self.or_flags(6, code as usize - 2, 1);
+                if code == 4 {
+                    let c = self.u32(0x12C) | 0x0100_0000;
+                    self.set_u32(0x12C, c);
+                }
+            }
+            5 => self.set_u8(0x129, 3),
+            6 => {
+                self.set_u8(0x129, 0);
+                self.init_courses(t);
+                for l in 0..4 {
+                    self.set_u8(0x120 + 2 * l, (l < 3) as u8);
+                    self.set_u8(0x121 + 2 * l, 0xF);
+                    self.set_u8(0x1F8 + l, 3);
+                }
+                self.init_characters(t);
+            }
+            7 => {
+                self.unlock_all(t);
+                return;
+            }
+            _ => return,
+        }
+        self.progression(t);
+    }
+
+    /// FUN_8008F2AC: every character and vehicle, flag 0x40 on every
+    /// course.
+    fn all_characters(&mut self) {
+        self.set_u32(0x12C, 0xFFFF_FFFF);
+        for c in 0..25 {
+            self.set_u32(0x130 + 8 * c, 0xFFFF_FFFF);
+            self.set_u32(0x134 + 8 * c, 0xFFFF_FFFF);
+        }
+        for w in 0..9 {
+            for k in 0..4 {
+                self.or_flags(w, k, 0x40);
             }
         }
     }

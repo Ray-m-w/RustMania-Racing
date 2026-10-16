@@ -51,11 +51,20 @@ frontend.md "Menus"):
   trial: one kart through the course's gates against the clock (FINISH THE
   COURSE, the progress bar, the timer; the strip camera), the result
   (COURSE FINISHED and the time, or OUT OF TIME after 10 minutes); a time
-  under the course's BEST TIME becomes the record (save.bin).
+  under the course's BEST TIME becomes the record (save.bin);
+- the arenas (phase 4, ../docs/spec/battle.md): a world's BATTLE course
+  (CANYON, T_SQUARE, THEATRE, CHAMBER, LAGOON, LAB; SECRET COURSES' BATTLE;
+  VOLCANO, HOUSE, WHATEVER once everything is complete) -> 1 PLAYER BATTLE
+  -> character select -> six karts (five on the last three) battle: damage
+  from contacts and weapons (the heart gauge), a kart at 1000 damage is
+  knocked out, the last one standing wins (the clock at the top); the
+  result cycles DAMAGE / BEST CRASH / KNOCKOUTS with the place and time; a
+  win faster than the course's BEST TIME becomes the record, and the win
+  opens the world's stunt course.
 Menu keys: arrows move, X (CROSS) selects, A (TRIANGLE) goes back; pad: D-pad,
 south, north. Shown greyed and not selectable (later phases): MEET THE
-MUPPETS, GAME STATUS, ADVENTURE, 2 PLAYER RACE / STUNT RACE, SECRETS, ADJUST
-SCREEN, MEMORY CARD, VIBRATION, BATTLE LEAGUE, MOVIE / MUSIC, battle courses.
+MUPPETS, GAME STATUS, ADVENTURE, 2 PLAYER RACE / STUNT RACE / BATTLE,
+SECRETS, ADJUST SCREEN, MEMORY CARD, VIBRATION, BATTLE LEAGUE, MOVIE / MUSIC.
 Another course (or the title) restarts the program on it (`--course NAME
 --skip-title --menu --character C --vehicle V`, `--league` within a league;
 the scene is built at start-up).

@@ -1,0 +1,81 @@
+{
+ "name": "battle_win_fx",
+ "slot": 11,
+ "state": "LAGOON_grid.pst",
+ "end_vb": 400,
+ "steps": [
+  [
+   0,
+   "cross"
+  ]
+ ],
+ "pokes": [
+  [
+   2148284908,
+   1000,
+   2,
+   1
+  ],
+  [
+   2148284906,
+   1000,
+   2,
+   1
+  ],
+  [
+   2148286192,
+   1000,
+   2,
+   1
+  ],
+  [
+   2148286190,
+   1000,
+   2,
+   1
+  ],
+  [
+   2148287476,
+   1000,
+   2,
+   1
+  ],
+  [
+   2148287474,
+   1000,
+   2,
+   1
+  ],
+  [
+   2148288760,
+   1000,
+   2,
+   1
+  ],
+  [
+   2148288758,
+   1000,
+   2,
+   1
+  ],
+  [
+   2148290044,
+   1000,
+   2,
+   1
+  ],
+  [
+   2148290042,
+   1000,
+   2,
+   1
+  ],
+  [
+   2148283392,
+   30000,
+   4,
+   1
+  ]
+ ],
+ "note": "Session 7 phase 4: LAGOON grid (slot 11 = analysis/states/courses/LAGOON_grid.pst), opponents' damage 1000, player's clock 30000 (tools/oracle/routes/battle_win_pokes.json), CROSS held"
+}

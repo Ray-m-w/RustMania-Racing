@@ -164,8 +164,9 @@ Timer +0x4A2 -= dt; on expiry or in state 0x10 without a close kart: state
 in state 8 with a close kart: state 0x11 (chase); otherwise 1/1024 chance
 to flip the path direction. State without 8 or no path: steer at the
 nearest kart's driver position (+0x330.. of kart +0x4DC, >> 5) and roll the
-weapons; else FUN_80090D00(k, +0x4DF). Ported, not verified (no battle
-capture).
+weapons; else FUN_80090D00(k, +0x4DF). Exact against the oracle's battle
+captures (phase 4, battle.md: LAGOON free run 1219 frames, battle/ko
+1510 frames with three knock-outs).
 
 ### Inside FUN_80064B5C (update.rs stubs both; ai.rs has the code)
 - 0x80065850 catch-up scaling: after the catch-up step, for an AI kart

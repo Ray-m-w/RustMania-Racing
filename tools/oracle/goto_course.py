@@ -79,6 +79,8 @@ COURSES = {
     "WHATEVER": (36, 8, 2, "(world 8, poked) / WHATEVER"),
     # Session 7, stunt trial (race type 3): world 4's stunt course.
     "MOUNTAIN": (12, 4, 3, "MUPPET TREASURE ISLAND / STUNT"),
+    # Session 7, battle (race type 2, game mode 2): world 4's arena.
+    "LAGOON": (21, 4, 2, "MUPPET TREASURE ISLAND / BATTLE"),
 }
 GRID_SLOTS = {n: 3 + i for i, n in enumerate(list(COURSES)[:8])}
 

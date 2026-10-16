@@ -117,7 +117,7 @@ def run(name, end_vb=3400, grid=True, steps=None):
                 if g == gen and vbr not in rows:
                     rows[vbr] = data
             vb = b.vb_since_restore
-            if race_vb is None and vb > 130 and int.from_bytes(o.read(0x800B0D46, 2), "little") in (1, 3):
+            if race_vb is None and vb > 130 and int.from_bytes(o.read(0x800B0D46, 2), "little") in (1, 2, 3):
                 race_vb = vb
             if grid and race_vb is not None and grid_vb is None and vb >= race_vb + 60:
                 grid_vb = b.vb_since_restore

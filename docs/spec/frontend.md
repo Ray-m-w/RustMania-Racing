@@ -212,11 +212,11 @@ local, not committed).
 | options | 0x1E / 0x10 / 3 (5 rows, 4 drawn) | ADJUST SOUND, SET CONTROLLERS, ADJUST SCREEN (sub-state 4), MEMORY CARD | yes; 3, 4 greyed; 5th row = the port's PORT SETTINGS |
 | adjust sound | 0x800B07CD | MUSIC VOLUME - n, SOUND VOLUME - n (0..15; levels 0x800AC118 / 0x800AC138, default 12 = 0x6C / 0x60; FUN_80074850: LEFT / RIGHT, CROSS keeps, TRIANGLE restores) | yes (settings music_volume / sound_volume; bus gains level / level(12)) |
 | set controllers | 0x800B07CC | CONTROLLER 1, s JUMP / BRAKE o, CONFIGURATION - A/B, VIBRATION - ON/OFF | configuration only (settings controller_config -> SessionConfig::alt_controls); one controller |
-| course select | 0x1E / 0xC | world name (0x100, 0x3C), the slot's type RACE A / RACE B / BATTLE / STUNT (worlds 0..5; RACE / BATTLE / RACE / BATTLE RACE above; 0x80058E30) (0x9F, size 2, colour 1), course name (0xB4, size 1, colour 5) or "?" (colour 7); s MOVIE, x SELECT, o MUSIC (0xD2); camera mode 5 (0x80070E4C): eye (0xA000, (row * 10000 - 25000) * 32, -0x28000) looking along +z, angles fixed at 0 on event 0x1E (0x80072394) | yes; CROSS on an open race or stunt course restarts on it; MOVIE / MUSIC greyed; the backdrop (sky, ship) and the world's 3D prop not drawn |
-| course menu | course / 0 / 0x800B0EA2 = 0 | 1 PLAYER RACE - n LAPS, 2 PLAYER RACE - n LAPS, COURSE SECRETS, GAME MENU, BACK TO MAIN MENU; course name (0x1E0, 0x1E, right), BEST LAP m:ss.hh (the save's record / 3 = hundredths), SELECT bottom left; LEFT / RIGHT on the race rows: laps 1..10 (0x800E038C) once the course is won (flags & 3 == 3); camera mode 1 (orbit, DAT chunks 0x0B / 0x0A). A stunt course (race type 3): 1 PLAYER STUNT TRIAL, 2 PLAYER STUNT RACE, COURSE SECRETS, GAME MENU, BACK TO MAIN MENU, "BEST TIME" (race types 2 / 3, 0x80052D90), no laps, camera mode 9 (stunt-trial.md) | yes (2, 3 greyed); BACK TO MAIN MENU restarts on the title (or on a course the progression check opened) |
+| course select | 0x1E / 0xC | world name (0x100, 0x3C), the slot's type RACE A / RACE B / BATTLE / STUNT (worlds 0..5; RACE / BATTLE / RACE / BATTLE RACE above; 0x80058E30) (0x9F, size 2, colour 1), course name (0xB4, size 1, colour 5) or "?" (colour 7); s MOVIE, x SELECT, o MUSIC (0xD2); camera mode 5 (0x80070E4C): eye (0xA000, (row * 10000 - 25000) * 32, -0x28000) looking along +z, angles fixed at 0 on event 0x1E (0x80072394) | yes; CROSS on an open race, stunt or arena course restarts on it; MOVIE / MUSIC greyed; the backdrop (sky, ship) and the world's 3D prop not drawn |
+| course menu | course / 0 / 0x800B0EA2 = 0 | 1 PLAYER RACE - n LAPS, 2 PLAYER RACE - n LAPS, COURSE SECRETS, GAME MENU, BACK TO MAIN MENU; course name (0x1E0, 0x1E, right), BEST LAP m:ss.hh (the save's record / 3 = hundredths), SELECT bottom left; LEFT / RIGHT on the race rows: laps 1..10 (0x800E038C) once the course is won (flags & 3 == 3); camera mode 1 (orbit, DAT chunks 0x0B / 0x0A). A stunt course (race type 3): 1 PLAYER STUNT TRIAL, 2 PLAYER STUNT RACE, COURSE SECRETS, GAME MENU, BACK TO MAIN MENU, "BEST TIME" (race types 2 / 3, 0x80052D90), no laps, camera mode 9 (stunt-trial.md). An arena (race type 2, phase 4): 1 PLAYER BATTLE, 2 PLAYER BATTLE, COURSE SECRETS, GAME MENU, BACK TO MAIN MENU, BEST TIME (cups above 6: sub-state 0xC, 1 PLAYER BATTLE, 2 PLAYER BATTLE, CHICKEN CHASE, BACK TO CREDITS; battle.md) | yes (2, 3 greyed); BACK TO MAIN MENU restarts on the title (or on a course the progression check opened) |
 | game menu | course / 0 / (BACK shown) | ADVENTURE, GAME STATUS, CHANGE COURSE, TOURNAMENT - 1 PLAYER | CHANGE COURSE only |
-| world list | course / 0 / 1 | the 7 world names (cursor on the current world) | yes; + SWEETUMS (world 7) while unlock_all |
-| course list | course / 0 / 2 | the world's 4 courses, the cursor's " - RACE A" etc. (as the course select's types), "?" when closed, the current course greyed | yes; battle greyed |
+| world list | course / 0 / 1 | the 7 world names (cursor on the current world) | yes; + world 7 (SPEEDWAY, RALLY, GLACIER) once DISCO is won and world 8 (VOLCANO, HOUSE, WHATEVER) once everything is complete (the game's secret screen 0x1D, not ported, offers them) |
+| course list | course / 0 / 2 | the world's 4 courses, the cursor's " - RACE A" etc. (as the course select's types), "?" when closed, the current course greyed | yes (arenas playable since phase 4) |
 | character select | course / 0 / 0x800B07CB = 1 | name (0x100, 0x3C, top, size 2), vehicle (0xB4, bottom), up / down arrows (0x32 / 0x50), left / right arrows at the vehicle name's ends +- 0x10 (0xAE); "?" + blinking NOT COLLECTED (0xFF, 0x7F, 0) MUPPET / NOT WON (0, 0xFF, 0xFF) VEHICLE (f % 30 < 15); lists 0x800AC6A4 / 0x800AC6C0 = the 5 x 5 grid 0x800AC208 order and each character's own vehicle (FUN_80092B08 / FUN_80092928); the kart alone on grid slot 0 (FUN_80072D8C -> FUN_800609F4(kart, c, v, 0, 0)); camera mode 1 | yes; the menu session is rebuilt per pick, the camera carried over |
 | pause | race / 0x800B0BD0 != 0 / 0x800B0E78 = 0 | CONTINUE, RETIRE, RESTART, ADJUST SOUND; PAUSED (0x1E0, 0x1E, right; 0x800B07D0 % 60 < 45), SELECT (0x20, 0xD2) | yes (virtual time and the XA music paused) |
 | retire / restart | 0x800B0E78 = 1 / 0xB | YES, NO (opens on NO); YES = game mode 0 (course menu) / the same race again | yes |
@@ -246,7 +246,7 @@ game's everything code applied to a copy.
 MEET THE MUPPETS (game mode 0xD, camera mode 6: the 5 x 5 character
 gallery, TEST DRIVE, voice clips FUN_80060580), GAME STATUS and ADVENTURE
 ("Not ported in phase 2" below), 2 PLAYER RACE / STUNT RACE (phase 7),
-SECRETS, the battle courses (phase 4), MEMORY CARD and GAME STATUS CHANGED - SAVE
+SECRETS, 2 PLAYER BATTLE / CHICKEN CHASE (phase 7; battle.md), MEMORY CARD and GAME STATUS CHANGED - SAVE
 GAME (the port autosaves), ADJUST SCREEN, VIBRATION, MOVIE / MUSIC in the
 course select (phases 9 / 8), the fades and LOADING screen between screens,
 the attract demo.
@@ -407,7 +407,8 @@ Port: port/crates/mr-bevy/src/league.rs, menus.rs (`Leagues`, `LeagueMenu`,
   title.
 - Not ported: the karts lined up behind the standings, the tie-break race
   (the port's table keeps the player first among equals), the presentation
-  on course 0x1A, BATTLE LEAGUE (phase 4), 2 player leagues.
+  on course 0x1A, BATTLE LEAGUE (left after phase 4: battle.md "Not
+  ported"), 2 player leagues.
 
 ## Checks
 - `save_check.py league` (one run; the player's kart marked finished 300

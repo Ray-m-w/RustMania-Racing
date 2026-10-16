@@ -51,9 +51,9 @@ places it is not one-for-one:
 - update.rs now calls `ai::catchup_scale` (0x80065850) and `ai::reroll`
   (0x80068078) in place; the mr-ai harness's `ai_kart_tick` (flag bit 0
   cleared, both after the update) is kept for its teacher forcing only.
-- FUN_80090FAC (battle AI) and FUN_80090670 (backward path walk) are
-  ported from the code but never ran against the oracle (no battle /
-  reverse capture). The race type 3 branch of FUN_800912F8 (once called
+- FUN_80090FAC (battle AI) and FUN_80090670 (backward path walk, the
+  battle AI's path direction) are exact against the oracle's battle
+  captures (phase 4: LAGOON, battle/ko, battle/win; battle.md). The race type 3 branch of FUN_800912F8 (once called
   the "time-trial ghost") is the stunt trial's out kart on random buttons:
   exact in the oracle's stunt finish capture (phase 3, stunt-trial.md).
 - Opponent choice (`ai::pick_opponent`) uses the exe's racing flag; the
@@ -140,6 +140,17 @@ courses):
 | init.rs / session.rs | the trial's set-up: grid index + 2, one kart, countdown 0x78 + 180, the special-move roll, +0x488 = -1, +0x490 / +0x4A9 | MOUNTAIN: race load exact |
 | session.rs | mode 3 goes to the results (mode 10) as mode 1; 0x800B0AF0 (`results_clock`) | stunt/finish: exact through mode 10 |
 
+Ported in Session 7, phase 4 (1 PLAYER BATTLE, race type 2 / game mode 2;
+docs/spec/battle.md; reached from the arenas' course menus):
+| where | branch | evidence |
+|---|---|---|
+| progress.rs | lap timing for modes 2 / 7 (0x80082790): the battle clock +0x358, the knock-out's place (+0x4BE, +0x440 = 1000 + place, 0x800B0CD8 - 1) | oracle LAGOON, battle/ko, battle/win: free run / teacher forced exact |
+| progress.rs | track direction for modes 2 / 7 (toward the nearest kart +0x4DC, read live) | the same captures (+0x48E exact) |
+| session.rs | the battle's set-up (6 / 5 karts, grid draws mod 6, countdown 0x78 + 180, 0x800B0CD8 = karts) and the win (FUN_8007916C @0x800791C8: last kart standing, record, then mode 10) | race load exact; battle/win: the win frame and the save block (test) |
+| init.rs | grid placement in a battle (mode 2, race type 2: index = grid) | race load exact |
+| race.rs | the damage gauge's random bytes in mode 2 | free runs exact (random state) |
+| bin/mr-course-check | `--dir`: the karts' own characters / vehicles; teacher forcing keeps the session's history rings (not captured) | the teacher-forced camera now exact on the race captures too |
+
 Remaining stubs (all unreachable in the port today):
 | where | branch | why unreachable |
 |---|---|---|
@@ -154,11 +165,11 @@ Remaining stubs (all unreachable in the port today):
 | camera.rs | event 30 fixed angles outside modes 1 / 7 | event 30 = the title, always mode 1 |
 | camera.rs | orbit (mode 1) with only the eye path (chunk 0x0B, no 0x0A): looks at the kart, the game at a stale stack value [INFER] | no course: DISCO / the title have both |
 | progress.rs | FUN_800627E0 (+0x4EE) | never set |
-| progress.rs | lap timing in modes 2/7; finish line with race flag 2; challenge win bits (race flag 0x10) | modes / flags not used |
-| progress.rs | track direction in modes 2/7/0x14; FUN_80090670 path mode (+0x4DF != 0) for a human | +0x4DF of the player changes only under the battle / time-trial AI |
+| progress.rs | finish line with race flag 2; challenge win bits (race flag 0x10) | flags not used |
+| progress.rs | track direction in mode 0x14 (CHICKEN CHASE: toward the chicken); FUN_80090670 path mode (+0x4DF != 0) for a human in mode 1 | CHICKEN CHASE is two-player (phase 7); +0x4DF of a mode-1 human is race flag 2's bit |
 | race.rs | race progress with race flag 1 | not used |
 | render.rs | race flag 0x40: aim at the boss | boss races not ported |
-| init.rs | grid placement outside a plain one-player race or the stunt trial (race flags 1/2/4, challenge, flags 0x20/0x40); grid index past the course's grid | one player; every race / stunt course's grid holds its karts (all 18 + 6 load; mr-fuzz) |
+| init.rs | grid placement outside a plain one-player race, the stunt trial or a battle (race flags 1/2/4, challenge, flags 0x20/0x40); grid index past the course's grid | one player; every race / stunt / arena grid holds its karts (18 + 6 + 10 load; mr-fuzz) |
 | items | challenge-mode boxes / tokens / objects (0x800B07E6), mode 20 projectile hits | challenge / mode 0x14 |
 | collide.rs | challenge tag on kart contact (0x800B07E6, 0x800B07FE) | challenge mode |
 

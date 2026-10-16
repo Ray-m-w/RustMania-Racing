@@ -34,7 +34,9 @@ mr-bevy courses.rs (course choice, pick-list). Tags as elsewhere: [CODE addr],
 The race courses are the 18 of race type 0 / 1. VOLCANO, HOUSE and WHATEVER
 (COURSE_C, cup 8) are arenas: race type 2, no finish line (DAT chunk 3) and no
 course points (chunk 5); the game's VOLCANO course menu offers only battle and
-CHICKEN CHASE (track O). The six ARENA/* courses are battle arenas; the six
+CHICKEN CHASE (track O). The six ARENA/* courses are battle arenas (with
+ARENA/BATTLE, course 0x1B, and the three cup-8 courses: the ten arenas of
+the 1 PLAYER BATTLE, phase 4, docs/spec/battle.md; oracle LAGOON exact); the six
 STUNT/* courses (FUN, REST, DINER, ROOFTOPS, MOUNTAIN, MLABS: cups 0..5 slot
 3, race type 3) run the stunt trial (docs/spec/stunt-trial.md).
 

@@ -1,0 +1,75 @@
+{
+ "name": "battle_ko_fx",
+ "slot": 11,
+ "state": "LAGOON_grid.pst",
+ "end_vb": 950,
+ "steps": [
+  [
+   0,
+   "cross"
+  ]
+ ],
+ "pokes": [
+  [
+   2148284908,
+   950,
+   2,
+   1
+  ],
+  [
+   2148284906,
+   950,
+   2,
+   1
+  ],
+  [
+   2148286192,
+   950,
+   2,
+   1
+  ],
+  [
+   2148286190,
+   950,
+   2,
+   1
+  ],
+  [
+   2148287476,
+   950,
+   2,
+   1
+  ],
+  [
+   2148287474,
+   950,
+   2,
+   1
+  ],
+  [
+   2148288760,
+   950,
+   2,
+   1
+  ],
+  [
+   2148288758,
+   950,
+   2,
+   1
+  ],
+  [
+   2148290044,
+   950,
+   2,
+   1
+  ],
+  [
+   2148290042,
+   950,
+   2,
+   1
+  ]
+ ],
+ "note": "Session 7 phase 4: LAGOON grid (slot 11 = analysis/states/courses/LAGOON_grid.pst), opponents' damage 950 (tools/oracle/routes/battle_ko_pokes.json), CROSS held"
+}

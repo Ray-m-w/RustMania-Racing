@@ -163,6 +163,9 @@ enum Kind {
     /// RACE, and on some runs CHICKEN CHASE (race flag 0x40, any course);
     /// player 2's pad mashed by its own stream.
     Two,
+    /// Phase 8: the attract demo (all AI, no pad; ends at 0x4651 race clock
+    /// or kart 0's finish); stunt courses run as plain races.
+    Demo,
 }
 
 fn run(info: &CourseInfo, title: bool, hz: u8, seed: u32, long: bool, kind: Kind) -> Outcome {
@@ -204,6 +207,7 @@ fn run(info: &CourseInfo, title: bool, hz: u8, seed: u32, long: bool, kind: Kind
                 }
                 cfg.course_flags = flags;
             }
+            Kind::Demo => cfg.demo = info.race_type != 3,
             Kind::Two => {
                 cfg.players = 2;
                 cfg.character = r.below(8) as u8;
@@ -275,6 +279,9 @@ fn run(info: &CourseInfo, title: bool, hz: u8, seed: u32, long: bool, kind: Kind
             out.panic = Some((s.ticks, panic_text(e.to_string())));
             break;
         }
+        if s.demo_over() {
+            break;
+        }
         if title {
             if s.ticks >= title_ticks {
                 break;
@@ -318,6 +325,7 @@ fn main() {
             "--beat" => kind = Kind::Beat,
             "--secrets" => kind = Kind::Secrets,
             "--two" => kind = Kind::Two,
+            "--demo" => kind = Kind::Demo,
             _ => names.push(a.to_ascii_uppercase()),
         }
     }
@@ -340,6 +348,10 @@ fn main() {
     }
     if kind == Kind::Secrets || kind == Kind::Two {
         courses.retain(|(_, t)| !*t);
+    }
+    // (the demo: FUN_80089CA8's courses, races and arenas)
+    if kind == Kind::Demo {
+        courses.retain(|(c, t)| !*t && c.race_type != 3);
     }
     if !names.is_empty() {
         courses.retain(|(c, t)| names.iter().any(|n| (*t && n == "TITLE") || (!*t && (n.eq_ignore_ascii_case(&c.name) || n == &c.id.to_string()))));

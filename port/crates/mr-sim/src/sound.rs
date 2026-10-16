@@ -285,7 +285,7 @@ pub fn countdown(g: &mut RaceGlobals) {
         matches!(g.mode, 1 | 2 | 3 | 7 | 0x14)
     };
     let n = g.countdown - g.dt;
-    if g.race_over == 0 && on && n < 0x78 && n / 0x1E < (g.countdown as i16 as i32) / 0x1E {
+    if g.demo == 0 && on && n < 0x78 && n / 0x1E < (g.countdown as i16 as i32) / 0x1E {
         play(g, 9, 0x1194, 0x80, 0x80);
     }
     if n < 1 && on {

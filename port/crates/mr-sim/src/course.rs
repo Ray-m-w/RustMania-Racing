@@ -33,7 +33,7 @@ pub const COURSES: u8 = 37;
 pub const CUPS: usize = 9;
 /// Course 10: the front end (its name is "\", no files).
 pub const FRONTEND: u8 = 10;
-/// Course 0x1E: the attract demo course index (main @0x80078740).
+/// Course 0x1E: the frontend scene (the title and menus; main @0x80078740).
 pub const ATTRACT: u8 = 0x1E;
 pub const DOCK: u8 = 3;
 

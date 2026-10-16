@@ -22,9 +22,10 @@ pub struct RaceGlobals {
     pub challenge: i16,
     /// 0x800B0B9A: race type (3 = time trial ghost).
     pub race_type: i16,
-    /// 0x800B0BD2: race over / paused flag.
-    pub race_over: u8,
-    /// 0x800B0FAC: top-level game state (0x1E = attract demo).
+    /// 0x800B0BD2: the attract demo race (phase 8; FUN_80074A94
+    /// sets it with 0x800B0A82, FUN_8008C4AC keeps it for the race).
+    pub demo: u8,
+    /// 0x800B0FAC: the course (0x1E = the title / frontend scene).
     pub game_state: i32,
     /// 0x800B0CA6: two-player split screen.
     pub split_screen: u8,
@@ -214,7 +215,7 @@ pub mod addr {
     pub const RACE_FLAGS: u32 = 0x800B_07E2;
     pub const CHALLENGE: u32 = 0x800B_07E6;
     pub const RACE_TYPE: u32 = 0x800B_0B9A;
-    pub const RACE_OVER: u32 = 0x800B_0BD2;
+    pub const DEMO: u32 = 0x800B_0BD2;
     pub const GAME_STATE: u32 = 0x800B_0FAC;
     pub const SPLIT: u32 = 0x800B_0CA6;
     pub const HUMANS: u32 = 0x800B_0E28;
@@ -239,7 +240,7 @@ impl RaceGlobals {
             race_flags: m.u16(RACE_FLAGS),
             challenge: m.i16(CHALLENGE),
             race_type: m.i16(RACE_TYPE),
-            race_over: m.u8(RACE_OVER),
+            demo: m.u8(DEMO),
             game_state: m.i32(GAME_STATE),
             split_screen: m.u8(SPLIT),
             humans: m.i16(HUMANS),

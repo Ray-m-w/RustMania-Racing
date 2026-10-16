@@ -73,7 +73,9 @@ fn frames(cap: &Capture) -> Option<Ends> {
     // (a mode-3 capture's clock plan must not leak into the next course)
     CLOCKS.with(|c| c.borrow_mut().clear());
     let key = |vb: u32| (cap.i32(vb, 0x800B_0C70).unwrap(), cap.i32(vb, 0x800B_0A94).unwrap());
-    let load = *cap.vbs.iter().find(|&&v| (key(v).0 == 480 || key(v).0 == 300) && matches!(cap.read(v, 0x800B_0D46, 2).unwrap(), [1, 0] | [2, 0] | [3, 0] | [7, 0] | [20, 0]))?;
+    // (phase 8: the attract demo's countdown starts at 0x3C)
+    let demo = |v: u32| cap.read(v, 0x800B_0BD2, 1).unwrap()[0] != 0;
+    let load = *cap.vbs.iter().find(|&&v| (key(v).0 == 480 || key(v).0 == 300 || (key(v).0 == 0x3C && demo(v))) && matches!(cap.read(v, 0x800B_0D46, 2).unwrap(), [1, 0] | [2, 0] | [3, 0] | [7, 0] | [20, 0]))?;
     let vbs: Vec<u32> = cap.vbs.iter().copied().filter(|&v| v >= load).collect();
     let mut ends: Vec<u32> = vbs.windows(2).filter(|w| key(w[0]) != key(w[1])).map(|w| w[0]).collect();
     // The stunt trial (mode 3): its VBlank samples fall either side of the
@@ -181,7 +183,9 @@ pub fn session_at_load(disc: &mut mr_disc::Disc, info: &CourseInfo, cap: &Captur
     cfg.doozer_turn = pre.u8(0x800B_0A10);
     cfg.course_flags = pre.u16(mr_sim::globals::course_flags_addr(&pre));
     cfg.characters = pre.u32(0x800E_02BC);
-    if cfg.race_flags & 0x120 == 0 {
+    // Phase 8: the attract demo (0x800B0BD2 at the load): every kart drawn.
+    cfg.demo = ml.u8(0x800B_0BD2) != 0;
+    if cfg.race_flags & 0x120 == 0 && !cfg.demo {
         cfg.character = ml.u8(KART_ARRAY + 0x4B2);
         cfg.vehicle = ml.u8(KART_ARRAY + 0x4B1);
     }
@@ -203,8 +207,10 @@ pub fn session_at_load(disc: &mut mr_disc::Disc, info: &CourseInfo, cap: &Captur
     // capture, from a seed some menu frames before the race load's: the
     // session draws them itself from that seed (track S), found from the
     // menu state (`--course-load`); MR_CLRAM copies them from RAM instead.
+    // (the attract demo loads the course and the race in one go: the
+    // default, the seeds just before the race load's)
     let use_model = std::env::var("MR_CLRAM").is_err();
-    if use_model {
+    if use_model && !cfg.demo {
         let probe = Session::with_config(disc, cfg.clone()).expect("session");
         let m0 = cap.mem_at(cap.vbs[0], None);
         if let Some(&j) = course_load_search(&probe.world, info, &m0, 1).first() {
@@ -297,6 +303,11 @@ pub fn session_at_load(disc: &mut mr_disc::Disc, info: &CourseInfo, cap: &Captur
         // (the orbit's side byte +0x6C, left by the menu camera; the
         // intro does not redraw it)
         s.camera.rand_b = c.rand_b;
+        // (the attract demo: the title camera's side byte +0x6B too; the
+        // trackside cameras do not redraw it)
+        if s.globals.demo != 0 {
+            s.camera.rand_a = c.rand_a;
+        }
     }
     if std::env::var("MR_NOPEEK").is_ok() {
         s.camera_peek = false;
@@ -578,7 +589,7 @@ fn free_run(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_fields:
             let mut d = Vec::new();
             for (n, same) in [
                 ("mode", g.mode == o.mode), ("race_clock", g.race_clock == o.race_clock), ("countdown", g.countdown == o.countdown),
-                ("race_flags", g.race_flags == o.race_flags), ("challenge", g.challenge == o.challenge), ("race_over", g.race_over == o.race_over),
+                ("race_flags", g.race_flags == o.race_flags), ("challenge", g.challenge == o.challenge), ("demo", g.demo == o.demo),
                 ("frame", g.frame == o.frame), ("end_mode", g.end_mode == o.end_mode), ("results_clock", g.results_clock == o.results_clock),
                 ("adv", g.adv == o.adv), ("pickups", g.items.pickups == o.items.pickups), ("special", (g.items.special, g.items.special_clock) == (o.items.special, o.items.special_clock)),
                 ("blink", g.items.blink == o.items.blink), ("lap_threshold", g.lap_threshold == o.lap_threshold),

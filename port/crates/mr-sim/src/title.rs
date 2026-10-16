@@ -43,6 +43,38 @@ pub const ORACLE_WATER: [u8; 0x1C] = [
 /// The BIOS rand() seed at that load (VB 369..405, analysis/s6/title/seed).
 pub const ORACLE_SEED: u32 = 0xF831_0C8E;
 
+/// Phase 8: the attract demo starts after this many idle VBlanks on the
+/// title / main menu (FUN_80074A94: game mode 0x10 and 0x800B0AF0 > 0x707;
+/// FUN_80073138 zeroes the counter on each menu input, FUN_8005C2EC adds dt).
+pub const DEMO_IDLE: i32 = 0x708;
+/// 0x800B0A1C..0x800B0A1E: the last three demo courses (the executable's
+/// initial bytes: none).
+pub const DEMO_RECENT_INIT: [u8; 3] = [0xFF; 3];
+/// The world / course table (9 worlds x 4 slots, -1 = none).
+pub const WORLD_COURSES: u32 = 0x800A_C1E4;
+
+/// FUN_80089CA8: the attract demo's course. Two random bytes per try (the
+/// pointer 0x800B0BCC, no wrap): world = b0 % 7, slot = b1 & 3; worlds 0..5
+/// skip slot 3 (the stunt courses), world 6 needs its slot open (save flag
+/// 1; `world6_open`); the course (0x800AC1E4[slot + 4 world]) must not be
+/// one of the last three demos, which it then joins [CODE 80089ca8]
+/// (oracle: 17 from 0x8001FC92 after 1, 15, 21; analysis/oracle/attract).
+pub fn demo_course(w: &World, rng: &mut u32, world6_open: [bool; 4], recent: &mut [u8; 3]) -> u8 {
+    loop {
+        let (b0, b1) = (w.rng_byte(*rng), w.rng_byte(rng.wrapping_add(1)));
+        *rng = rng.wrapping_add(2);
+        let (world, slot) = ((b0 % 7) as u32, (b1 & 3) as usize);
+        if (world < 6 && slot == 3) || (world == 6 && !world6_open[slot]) {
+            continue;
+        }
+        let c = w.exe.u8(WORLD_COURSES + slot as u32 + world * 4);
+        if c != 0xFF && !recent.contains(&c) {
+            *recent = [c, recent[0], recent[1]];
+            return c;
+        }
+    }
+}
+
 /// 0x800C3028[c] != -1: the characters whose models the boot loaded
 /// (0..24 on the oracle, title and race alike) [RAM].
 pub fn character_loaded(c: u8) -> bool {

@@ -565,14 +565,16 @@ fn direct_music(p: Res<crate::Player>, bus: Res<AudioBus>, mut dir: ResMut<Music
             dir.started = true;
             dir.finished = false;
             let t = dir.tables();
-            let intro = if dir.intro_played || dir.menu { None } else { t.intro };
+            // (the attract demo loads straight into the race: no intro clip,
+            // FUN_8008C4AC plays it in game mode 0 only)
+            let intro = if dir.intro_played || dir.menu || crate::demo::active() { None } else { t.intro };
             dir.intro_played |= !dir.menu;
             dir.queue.race_load(t.music, intro);
         }
         // The player's finish (FUN_80082708, human players only): the
         // character's clip + 3 for first place, + 2 otherwise.
         if let mr_sim::race::RacePhase::Finished { place } = s.phase() {
-            if !dir.finished {
+            if !dir.finished && s.globals.demo == 0 {
                 dir.finished = true;
                 let character = s.record()[0x4B2];
                 dir.clip(character, if place == 1 { 3 } else { 2 });

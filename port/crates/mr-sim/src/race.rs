@@ -350,6 +350,12 @@ pub fn result(slot: usize, k: &KartState) -> KartResult {
 /// `bosses`: a BOSS CHALLENGE's boss karts (game mode 7: their gauges at
 /// the bottom draw too).
 pub fn hud_draws(g: &mut RaceGlobals, w: &World, k: &KartState, bosses: &[KartState]) {
+    // Phase 8: the attract demo's HUD (FUN_80051698 cases 1 / 2 with
+    // 0x800B0BD2) is "DEMO" and "PRESS START" only: no draws.
+    if g.demo != 0 && matches!(g.mode, 1 | 2) {
+        g.hud_gauge_rgb = None;
+        return;
+    }
     if g.mode == 1 && g.countdown != 0 && g.countdown < g.countdown_len {
         let n = if (0..4).contains(&k.copy_button) { 7 } else { 6 };
         g.rng = g.rng.wrapping_add(n);
@@ -370,7 +376,7 @@ pub fn hud_draws(g: &mut RaceGlobals, w: &World, k: &KartState, bosses: &[KartSt
     // with a strip the progress bar): every 0x21 frames 0x800B068F steps to
     // the next of the 0x800B0EBC targets still out (state != 2), while the
     // targets are not all found (course flag 4).
-    let racing = g.race_over == 0 && g.countdown == 0 && !matches!(g.mode, 0 | 10 | 0x11 | 0x12) && g.game_state != 0x1E;
+    let racing = g.demo == 0 && g.countdown == 0 && !matches!(g.mode, 0 | 10 | 0x11 | 0x12) && g.game_state != 0x1E;
     let drawn = g.race_type != 3 || crate::stunt::strip_quads(w) != 0;
     let n = g.items.challenge[0] as i32;
     if g.challenge != 0 && racing && drawn && n > 0 && g.adv.course_flags & 4 == 0 && (g.frame - g.dt).div_euclid(0x21) < g.frame.div_euclid(0x21) {

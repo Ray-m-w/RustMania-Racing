@@ -34,6 +34,7 @@ mod lighting;
 mod kartshadow;
 mod vramtex;
 pub mod courses;
+mod demo;
 mod menus;
 mod save;
 mod league;
@@ -529,6 +530,7 @@ fn main() {
         .add_plugins(sfx::SfxPlugin)
         .add_plugins(menus::MenusPlugin)
         .add_plugins(title::TitlePlugin)
+        .add_plugins(demo::DemoPlugin)
         .add_systems(FixedUpdate, capture::tick.after(sim_tick).before(karts::feed_player))
         .add_systems(Last, write_outputs)
         .add_systems(PostUpdate, (fit_viewports, fit_bars).before(bevy::camera::CameraUpdateSystems))
@@ -870,7 +872,7 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
             }
             crash::note(tick, &run.session);
             // the save: lap records, vehicles won, the won bit (save.rs)
-            if run.route.is_none() && !menus::tool_run() && !title::on_title() && !idle {
+            if run.route.is_none() && !menus::tool_run() && !title::on_title() && !idle && !demo::active() {
                 let cfg = run.session.config();
                 let place = save::with(|st| st.tables.place(cfg.course));
                 let plain = cfg.race_flags == 0 || (cfg.course == 0x1F && cfg.race_flags & 8 != 0);

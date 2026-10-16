@@ -90,6 +90,11 @@ pub fn session_config(logic_hz: u8, character: u8, vehicle: u8) -> mr_sim::sessi
     let alt_controls = crate::settings::Settings::global().get("controller_config") == Some("B");
     let p2_alt_controls = crate::settings::Settings::global().get("controller_config_2") == Some("B");
     let mut cfg = mr_sim::session::SessionConfig { logic_hz, character, vehicle, alt_controls, p2_alt_controls, ..base };
+    // phase 8: the attract demo (demo.rs): six AI karts, no save
+    if crate::demo::active() {
+        cfg.demo = true;
+        return cfg;
+    }
     if !crate::menus::tool_run() {
         // the save (save.rs): the course's lap record and the laps
         // (0x800E038C); a league race: the league's karts, the grid drawn,

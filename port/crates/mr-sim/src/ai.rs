@@ -577,7 +577,7 @@ pub fn ai_buttons(
 /// kart. update.rs has `unreachable_in_scope!("AI catch-up scaling")` there:
 /// replace it with this call.
 pub fn catchup_scale(k: &mut KartState, g: &RaceGlobals, difficulty: u8, cup: i8) {
-    if g.split_screen != 0 || g.race_over != 0 || k.flags & 1 == 0 || k.flags & 0x20 != 0 {
+    if g.split_screen != 0 || g.demo != 0 || k.flags & 1 == 0 || k.flags & 0x20 != 0 {
         return;
     }
     if (cup as i32) < 7 && g.game_state != 0x1F {

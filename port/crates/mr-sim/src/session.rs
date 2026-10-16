@@ -154,6 +154,13 @@ pub struct SessionConfig {
     pub p2_character: u8,
     pub p2_vehicle: u8,
     pub p2_alt_controls: bool,
+    /// Phase 8 (docs/spec/frontend.md "Attract demo"): the attract demo
+    /// race (0x800B0BD2 = 1, FUN_8008C4AC with 0x800B0A82): every kart an
+    /// AI kart drawn as the opponents are (kart 0 too), 10 laps, the
+    /// countdown from 0x3C (no intro), the trackside cameras, no save
+    /// effects; it ends after 0x4650 race-clock units or at kart 0's finish
+    /// (`Session::demo_over`).
+    pub demo: bool,
 }
 
 /// The Doozer (character 24): ADVENTURE's parked kart to rescue.
@@ -210,6 +217,7 @@ impl SessionConfig {
             p2_character: 1,
             p2_vehicle: 0xFF,
             p2_alt_controls: false,
+            demo: false,
         }
     }
 
@@ -620,6 +628,9 @@ impl Session {
         // or on the title); CHICKEN CHASE = race flag 0x40, game mode 0x14.
         let two = cfg.players >= 2 && !title && !adventure && !boss;
         let chicken = two && cfg.race_flags & 0x40 != 0;
+        // Phase 8: the attract demo (a race or an arena: FUN_80089CA8 never
+        // picks a stunt course).
+        let demo = cfg.demo && !title && !adventure && !two && !boss;
         let stunt = world.info.mode == 3 && !adventure && !battle_race && !chicken;
         // The arenas' 1 PLAYER BATTLE (race type 2, mode 2; phase 4,
         // docs/spec/battle.md): 6 karts (5 above cup 6), grid draws
@@ -670,16 +681,19 @@ impl Session {
             // the title: 0x800B0C70 = 0 for course 0x1E).
             // Mode 3 (the stunt trial): 0x78 + 180 (0x8008DA2C).
             // ADVENTURE: no countdown (0x8008DA44: 0x800B0C70 = 0).
-            countdown: if title || adventure { 0 } else if stunt || battle || chicken { 0x78 + 180 } else { crate::race::COUNTDOWN_START },
+            // The attract demo: 0x3C (0x8008DA44), below 0x800B07F8: no
+            // intro camera.
+            countdown: if title || adventure { 0 } else if demo { 0x3C } else if stunt || battle || chicken { 0x78 + 180 } else { crate::race::COUNTDOWN_START },
             countdown_len: if stunt || battle || adventure || chicken { 0x78 } else { 300 },
             race_flags,
             challenge,
             race_type,
-            race_over: 0,
+            demo: demo as u8,
             game_state: cfg.event,
             split_screen: two as u8,
             humans,
-            laps: cfg.laps,
+            // 0x8008D9xx: 10 laps in the attract demo.
+            laps: if demo { 10 } else { cfg.laps },
             frame: 0,
             rng: cfg.rng_start,
             alt_controls: [cfg.alt_controls as u8, cfg.p2_alt_controls as u8],
@@ -743,6 +757,23 @@ impl Session {
             let t = d.templates[v as usize].ok_or_else(|| SessionError::Disc(format!("vehicle {v}: no model")))?;
             title_first = Some((c, v));
             world.driver = crate::render::DriverModel { part0_pivot: pivot };
+            crate::ai::init_opponent(&world, &t, setup, crate::ai::Opponent { slot: 0, character: c, vehicle: v, grid: grid0 }, pivot[1], &mut globals.rng, &mut rand)
+        } else if demo {
+            // The attract demo (FUN_8008C4AC @0x8008E49C with 0x800B0BD2):
+            // kart 0 is drawn and placed as the opponents are (an AI kart).
+            let tpl = crate::ai::vehicle_templates(&world.exe, &world.tables).map_err(|e| SessionError::Disc(e.0))?;
+            let (c, v) = {
+                let mut rand = || bios_rand(&mut rand_state);
+                crate::ai::pick_opponent(&world.exe, &[], &|_| true, &|_| true, &mut rand)
+            };
+            let vpath = crate::ai::model_path(&world.exe, crate::ai::addr::VEHICLE_PATHS, v, "MDL").ok_or_else(|| SessionError::Disc(format!("vehicle {v}: no model")))?;
+            let cpath = crate::ai::model_path(&world.exe, crate::ai::addr::CHARACTER_PATHS, c, "MDL").ok_or_else(|| SessionError::Disc(format!("character {c}: no model")))?;
+            let mut t = tpl[v as usize];
+            crate::ai::place_wheels(&mut t, &read_mdl(disc, &vpath)?);
+            let pivot = read_mdl(disc, &cpath)?.parts[0].record.pivot;
+            title_first = Some((c, v));
+            world.driver = crate::render::DriverModel { part0_pivot: pivot };
+            let mut rand = || bios_rand(&mut rand_state);
             crate::ai::init_opponent(&world, &t, setup, crate::ai::Opponent { slot: 0, character: c, vehicle: v, grid: grid0 }, pivot[1], &mut globals.rng, &mut rand)
         } else {
             let mut rand = || bios_rand(&mut rand_state);
@@ -950,12 +981,12 @@ impl Session {
             dt: if cfg.logic_hz == 60 { 1 } else { 2 },
             countdown: 0,
             countdown_len: if stunt || battle || chicken { 0x78 } else { 300 },
-            laps: cfg.laps,
+            laps: if demo { 10 } else { cfg.laps },
             finish_gate_a: 0,
             finish_gate_b: 0,
             game_state: 1,
             event: cfg.event,
-            alt_rule: 0,
+            alt_rule: demo as u8,
             overhead: cfg.cup,
             num_karts: n as i16,
             cutscene_sync: crate::stunt::strip(&world).is_some(),
@@ -1330,7 +1361,7 @@ impl Session {
             }
         }
         let adv_on = g.mode == 0xB && g.adv.tagged == -1;
-        if (g.mode == 1 || g.mode == 2 || g.mode == 3 || g.mode == 7 || g.mode == 0x14 || adv_on) && g.race_over == 0 {
+        if (g.mode == 1 || g.mode == 2 || g.mode == 3 || g.mode == 7 || g.mode == 0x14 || adv_on) && g.demo == 0 {
             let humans_done = ks.iter().filter(|x| (x.player_index as i32) < g.humans as i32 && x.finished != 0).count() as i32;
             if humans_done > 0 && humans_done == g.humans as i32 {
                 // 0x80079718 (phase 6b): a BATTLE LEAGUE battle with AI
@@ -1695,6 +1726,14 @@ impl Session {
 
     /// Where the race is for the player (intro, start game, racing,
     /// finished); see race::RacePhase for the field meanings.
+    /// Phase 8: the attract demo is over (FUN_8007916C @0x80079540: with
+    /// 0x800B0BD2 set, the race clock 0x800B0A94 past 0x4650 (1:00.03 at 300 a second), or
+    /// kart 0 finished): the game fades out (FUN_8007D174(0, 8)) and loads
+    /// the title (0x800B0AF4 = 0x1E).
+    pub fn demo_over(&self) -> bool {
+        self.globals.demo != 0 && (self.globals.race_clock > 0x4650 || self.kart.finished != 0)
+    }
+
     pub fn phase(&self) -> crate::race::RacePhase {
         crate::race::phase(&self.globals, &self.kart, &self.world)
     }

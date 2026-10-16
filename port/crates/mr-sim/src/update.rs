@@ -210,7 +210,7 @@ pub fn kart_update_full(k: &mut KartState, others: &mut Others, g: &mut RaceGlob
     }
 
     // 0x80065118: SELECT toggles the view; TRIANGLE fires an item.
-    if g.race_over == 0 && k.finished == 0 && human && g.race_type != 3 && g.mode != 0x12 && g.game_state != 0x1E {
+    if g.demo == 0 && k.finished == 0 && human && g.race_type != 3 && g.mode != 0x12 && g.game_state != 0x1E {
         if g.mode == 1 {
             if buttons & btn::SELECT as u32 == 0 {
                 k.pause_bits &= 0x7F;

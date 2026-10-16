@@ -1,0 +1,3 @@
+{"name": "attract_demo", "slot": 1, "end_vb": 3600,
+ "steps": [[0, ""], [20, "down"], [26, ""], [40, "down"], [46, ""], [60, "down"], [66, ""], [80, "down"], [86, ""], [100, "cross"], [106, ""], [3300, "start"], [3306, ""]],
+ "note": "phase 8: slot 1 (DOCK's course menu, loaded only) -> BACK TO MAIN MENU -> the title (VB ~406), idle 1800 VBlanks -> the attract demo race (load ~VB 2240); START at VB 3300"}

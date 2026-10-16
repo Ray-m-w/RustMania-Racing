@@ -495,7 +495,7 @@ pub struct CameraGlobals {
     pub game_state: i16,
     /// 0x800B0FAC: event type (3 on DOCK; 0x1D/0x1E/30 are special events).
     pub event: i32,
-    /// 0x800B0BD2 (u8): nonzero = alternate race camera rule.
+    /// 0x800B0BD2 (u8): nonzero = the attract demo (trackside cameras).
     pub alt_rule: u8,
     /// 0x800B0E38 (i8): > 6 forces the overhead camera (mode 12).
     pub overhead: i8,
@@ -847,9 +847,15 @@ fn select_mode(cam: &mut CameraState, inp: &CameraInput) -> i16 {
         18 => unreachable_in_scope!("camera mode 11 (game state 18)"),
         1 | 2 => {
             if g.alt_rule != 0 {
-                unreachable_in_scope!("alternate race camera rule (0x800B0BD2 != 0)");
-            }
-            if k.finished != 0 {
+                // 0x80070630 (phase 8): the attract demo (0x800B0BD2) shows
+                // the trackside cameras (mode 2) while the scripted
+                // sub-state is below 5 (6: mode 1 + case 3, not reached).
+                match cam.sub_state {
+                    s if s < 5 => 2,
+                    6 => unreachable_in_scope!("attract demo camera, sub-state 6"),
+                    _ => 0,
+                }
+            } else if k.finished != 0 {
                 finish_rule()
             } else {
                 0

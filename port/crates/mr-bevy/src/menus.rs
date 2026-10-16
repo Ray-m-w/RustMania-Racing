@@ -2279,7 +2279,7 @@ fn run(
     // START in a race: the pause menu (not on the results, not before GO's
     // race frames exist, never in tool runs)
     let racing = matches!(&p.driver, crate::Driver::Sim(run) if !matches!(run.session.phase(), mr_sim::race::RacePhase::Finished { .. }));
-    if front.page == Page::None && !crate::title::on_title() && racing && !tool_run() {
+    if front.page == Page::None && !crate::title::on_title() && racing && !tool_run() && !crate::demo::active() {
         // (phase 7: either player's START pauses a split-screen race)
         let b = latch.now | if crate::input::two_players() { latch.now2 & START } else { 0 };
         if b & START != 0 && front.prev & START == 0 {
@@ -2366,7 +2366,7 @@ pub fn relaunch(course: Option<&str>, character: u8, vehicle: u8, league: bool) 
     while i < a.len() {
         match a[i].as_str() {
             "--course" | "--character" | "--vehicle" | "--menu-keys" | "--menu-shots" => i += 2,
-            "--skip-title" | "--menu" | "--league" => i += 1,
+            "--skip-title" | "--menu" | "--league" | "--demo" => i += 1,
             _ => {
                 out.push(a[i].clone());
                 i += 1;

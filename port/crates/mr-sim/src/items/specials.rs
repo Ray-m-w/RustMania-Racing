@@ -261,7 +261,7 @@ pub fn character_special(k: &mut KartState, others: &mut crate::update::Others, 
         }
         v.wall_flag = 0;
         if k.finished == 0 && v.finished == 0 {
-            if (k.player_index as i32) < g.humans as i32 && k.flags & 1 == 0 && g.race_over == 0 {
+            if (k.player_index as i32) < g.humans as i32 && k.flags & 1 == 0 && g.demo == 0 {
                 // A collection bit per (special user, hit character's
                 // default vehicle) in the save data 0x800E02C0.
                 let cell = grid_cell_of_vehicle(w, v.vehicle);

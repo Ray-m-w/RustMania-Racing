@@ -2,9 +2,10 @@
 
 A reimplementation of Muppet RaceMania (PS1, SLUS-01237) in Rust, using the
 assets on the owner's disc and verified tick for tick against the psxrecomp
-build of the original (the oracle). Now: a full 3-lap race on any of the
-game's 18 race courses (Session 6; ../docs/spec/courses.md), Kermit in the
-RACER against five AI opponents (four on the overhead-camera courses),
+build of the original (the oracle). Now: the game's title and its one-player
+menus (Session 7), then a full 3-lap race on any of the game's 18 race
+courses (Session 6; ../docs/spec/courses.md) as any character in any
+vehicle against five AI opponents (four on the overhead-camera courses),
 countdown and start game to results. Plan and rules: ../docs/SESSION-2.md; results:
 ../docs/notes/SESSION-2-report.md.
 
@@ -15,28 +16,54 @@ countdown and start game to results. Plan and rules: ../docs/SESSION-2.md; resul
 or `cargo run --release -p mr-bevy` from this directory. The disc comes from
 the `disc = "..."` line of ../game.toml or `$env:MRM_DISC` (a .cue or .bin).
 Keyboard: arrows steer, X accelerate, S brake/reverse, Z jump, A
-(TRIANGLE) locks the camera on the nearest kart while held (Session 7).
+(TRIANGLE) locks the camera on the nearest kart while held (Session 7),
+Enter = START (pause).
 Gamepad: right trigger / south accelerate, left trigger / east brake, west jump.
 
 The game's title screen comes first (Session 6, track T; ../docs/spec/frontend.md):
 the frontend course run as the game runs it (the logo scene, three AI karts
 knocking the letters about, the orbiting camera, the title music, PRESS START).
-START (Enter / pad Start) opens the course pick-list; a pick starts that race.
-`--skip-title` (or `skip_title = true` in settings.txt) starts in the race; the
-tool flags below (--oracle-grid, --route, --replay, --shot, ...) always do.
+START (Enter / pad Start) opens the game's menus (Session 7, menus.rs;
+frontend.md "Menus"):
+- main menu: SELECT COURSE (the film-strip course select: UP / DOWN world,
+  LEFT / RIGHT course, CROSS loads it), OPTIONS (ADJUST SOUND: music and sound
+  volume 0..15; SET CONTROLLERS: configuration A / B; PORT SETTINGS: the view
+  and logic settings below as a list, LEFT / RIGHT changes, CROSS writes
+  settings.txt, applied on the next start);
+- the course menu (over the course): 1 PLAYER RACE -> character select (UP /
+  DOWN character, LEFT / RIGHT vehicle, CROSS races), GAME MENU -> CHANGE
+  COURSE (world and course lists), BACK TO MAIN MENU;
+- in a race START pauses: CONTINUE, RETIRE (to the course menu), RESTART,
+  ADJUST SOUND; START on the results goes back to the course menu.
+Menu keys: arrows move, X (CROSS) selects, A (TRIANGLE) goes back; pad: D-pad,
+south, north. Shown greyed and not selectable (later phases): MEET THE
+MUPPETS, GAME STATUS, TOURNAMENT, ADVENTURE, 2 PLAYER RACE, SECRETS, ADJUST
+SCREEN, MEMORY CARD, VIBRATION, MOVIE / MUSIC, stunt and battle courses.
+Another course (or the title) restarts the program on it (`--course NAME
+--skip-title --menu --character C --vehicle V`; the scene is built at
+start-up). Until saves exist `unlock_all = true` opens every character,
+vehicle and course (false: the oracle save's progress). The menus' settings
+rows: `music_volume` / `sound_volume` (0..15, 12 = the game's level),
+`controller_config` (A / B), `unlock_all`.
+`--skip-title` (or `skip_title = true` in settings.txt) starts in the race
+(`--menu` with it: in the course's menu); the tool flags below
+(--oracle-grid, --route, --replay, --shot, ...) always start in the race and
+never show menus.
 Title check flags: `--title-oracle` (the oracle run's title: its rand() seed and
 water state), `--title-shot F --title-shot-at N` (window capture of the title
 frozen at frame counter N, then exit), `--title-press-start N` (START at N).
+Menu check flags: `--menu-keys "VB:buttons,..."` (pad buttons held from menu
+VBlank VB, route names: cross, start, down+cross, empty = none) and
+`--menu-shots "VB:PATH,..."` (window captures, exit after the last).
 
 mr-bevy options: `--autopilot` (AI drives Kermit), `--oracle-grid` (solo
 session aligned to the oracle's grid savestate; `--leader` there = no catch-up), `--record-route F` / `--trace-out F` (oracle loop),
 `--route F` (scripted input), `--replay TRACE` (show an oracle trace),
 `--ghost TRACE` (oracle kart as a ghost, drift in the title bar),
 `--shot F --shot-at TICK` (screenshot and exit),
-`--course NAME` (or `course = NAME` in settings.txt: DOCK, BOG, NEW_YORK, ...
-or the course index; without it a pick-list of the race courses comes first,
-and START on the results brings it back; `--show-picklist` shows it in any
-run, `--no-picklist` never).
+`--course NAME` with `--skip-title` (or `course = NAME` in settings.txt: DOCK,
+BOG, NEW_YORK, ... or the course index), `--character N --vehicle N` (the
+exe's indices; default Kermit / RACER).
 
 View options (Session 5; `settings.txt` beside the exe, one `key = value`
 per line, or `--set key=value`, or `--key-with-dashes [value]`; the command

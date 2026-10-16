@@ -492,7 +492,7 @@ pub fn results_from_session(s: &mr_sim::session::Session) -> Option<hud::Results
     if s.kart.finished == 0 {
         return None;
     }
-    let laps = 3u8;
+    let laps = s.globals.laps.clamp(1, 99) as u8;
     let rows = s.results();
     let winner = rows.iter().find(|r| r.place == 1).map(|r| r.slot).unwrap_or(0);
     let mut leader: &[u8] = s.record();

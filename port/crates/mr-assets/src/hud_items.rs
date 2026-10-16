@@ -284,6 +284,26 @@ pub fn quad_f(t: &ItemTables, x: i32, y: i32, hw: i32, hh: i32, flags: u32, angl
     })
 }
 
+/// FUN_8004EEDC (a league's POINTS table): the karts' faces in table
+/// order from x0 every 0x40 px, hung from y - 1, the same icons and swing
+/// as `intro_faces` (FUN_8002fd04, flags 4, the character's icon 0x2F x 0x2F).
+pub fn table_faces(t: &ItemTables, x0: i32, y: i32, chars: &[u8], strip: i32) -> Vec<Prim> {
+    let mut out = Vec::new();
+    let mut x = x0;
+    let mut ph = (strip & 0x1F) << 7;
+    for &c in chars {
+        let mut a = t.sin(ph);
+        if a < 0 {
+            a += 0x7F;
+        }
+        let ang = (a >> 7) & 0xFFF;
+        out.extend(quad_f(t, x, y - 1, 0x10, 0x10, 4, ang, t.chr(c, 0x12), t.chr(c, 0x13), 0x2F, 0x2F, [0x80; 3], t.chr(c, 0x14), 0, 0x60).map(Prim::Ft4));
+        x += 0x40;
+        ph = (ph - 0x333) & 0xFFF;
+    }
+    out
+}
+
 /// FUN_80050F64 after "RACE n LAPS" (1 player, race flag 0x10 clear): the
 /// opponents' faces in a row, kart 1.. at x = 0x100 - (n - 2) * 0x20 + 0x40 * i,
 /// y 0x3C: FUN_8002fd04(x, 0x3C, 0x10, 0x10, flags 4 (hung from the bottom

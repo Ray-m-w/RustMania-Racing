@@ -85,7 +85,24 @@ pub fn session_config(logic_hz: u8, character: u8, vehicle: u8) -> mr_sim::sessi
         mr_sim::session::SessionConfig::course(info())
     };
     let alt_controls = crate::settings::Settings::global().get("controller_config") == Some("B");
-    mr_sim::session::SessionConfig { logic_hz, character, vehicle, alt_controls, ..base }
+    let mut cfg = mr_sim::session::SessionConfig { logic_hz, character, vehicle, alt_controls, ..base };
+    if !crate::menus::tool_run() {
+        // the save (save.rs): the course's lap record and the laps
+        // (0x800E038C); a league race: the league's karts, the grid drawn,
+        // the league's laps (0x800E0388 + league)
+        crate::save::with(|s| {
+            if let Some((w, t)) = s.tables.place(info().id) {
+                cfg.lap_record = s.block.record(w, t);
+            }
+            cfg.laps = s.block.laps(0).max(1) as i16;
+            if let Some(l) = crate::league::League::load().filter(|l| l.started) {
+                cfg.lineup = Some(l.lineup());
+                cfg.draw_grid = true;
+                cfg.laps = s.block.league_laps(l.league as usize).max(1) as i16;
+            }
+        });
+    }
+    cfg
 }
 
 /// The course menu / character select session: the player's kart alone on

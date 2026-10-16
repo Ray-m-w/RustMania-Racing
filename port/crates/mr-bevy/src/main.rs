@@ -35,6 +35,8 @@ mod kartshadow;
 mod vramtex;
 pub mod courses;
 mod menus;
+mod save;
+mod league;
 mod title;
 mod movers;
 mod scenepush;
@@ -360,6 +362,9 @@ impl SimRun {
             let cfg = if menu { courses::menu_config(pacing::logic_hz(), c, v) } else { courses::session_config(pacing::logic_hz(), c, v) };
             let mut s = mr_sim::session::Session::with_config(&mut disc, cfg).expect("start the mr-sim session");
             title::prepare(&mut s);
+            if !menus::tool_run() && !title::on_title() {
+                s.globals.items.hit_bits = save::vehicles_won();
+            }
             // --autopilot: the game's AI drives Kermit too (demo / soak test).
             s.autopilot = std::env::args().any(|a| a == "--autopilot");
             s
@@ -658,16 +663,23 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
             }
         }
         Driver::Sim(run) => {
-            // Results screen: START (pressed, not held) goes back to the
-            // course menu (menus.rs), as the game does after its results.
+            // Results screen: CROSS (the game's confirm, 0x800B0794; seen in
+            // the oracle's league run) or START, pressed not held, goes on to
+            // the course menu or a league's standings (menus.rs).
             if run.route.is_none()
                 && !menus::tool_run()
                 && front.page == menus::Page::None
                 && !title::on_title()
                 && matches!(run.session.phase(), mr_sim::race::RacePhase::Finished { .. })
-                && buttons & input::START != 0
-                && prev_buttons & input::START == 0
+                && buttons & (input::START | input::CROSS) != 0
+                && prev_buttons & (input::START | input::CROSS) == 0
             {
+                // a league race: its points first (FUN_8008C4AC entering
+                // game mode 0x11)
+                if let Some(l) = front.league.as_mut().filter(|l| l.started) {
+                    l.score(&run.session);
+                    l.store();
+                }
                 front.to_course_menu();
             }
             // The menus' session requests: a menu session for the chosen
@@ -690,6 +702,9 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
                     let autopilot = run.session.autopilot;
                     **run = SimRun::with_config(courses::session_config(pacing::logic_hz(), front.character, front.vehicle));
                     run.session.autopilot = autopilot;
+                    // the vehicles won so far (0x800E02C0: the specials'
+                    // "new vehicle" check)
+                    run.session.globals.items.hit_bits = save::vehicles_won();
                 }
             }
             // The title's course select: the camera on the film strips
@@ -728,6 +743,15 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
                 Err(e) => crash::fatal(&format!("simulation tick failed: {e:?}")),
             }
             crash::note(tick, &run.session);
+            // the save: lap records, vehicles won, the won bit (save.rs)
+            if run.route.is_none() && !menus::tool_run() && !title::on_title() && !idle {
+                let cfg = run.session.config();
+                let place = save::with(|st| st.tables.place(cfg.course));
+                let plain = cfg.race_flags == 0 || (cfg.course == 0x1F && cfg.race_flags & 8 != 0);
+                if save::race_tick(&run.session, place, plain) {
+                    save::persist();
+                }
+            }
             crash::test_trigger(tick);
             let s = &run.session;
             // Every kart's record to the renderer (karts.rs, shadows).
@@ -738,7 +762,7 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
             hud_g.countdown = s.countdown();
             hud_g.countdown_start = 300;
             hud_g.race_time = Some(s.race_clock());
-            hud_g.laps = 3;
+            hud_g.laps = s.globals.laps.clamp(1, 99) as u8;
             hud_g.results = hud::results_from_session(s);
             let r = s.record();
             let i32at = |o: usize| i32::from_le_bytes([r[o], r[o + 1], r[o + 2], r[o + 3]]);

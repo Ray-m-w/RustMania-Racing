@@ -138,7 +138,10 @@ pub fn setup(
 
     // Track scenery: every DAT object, world = origin + (M v) >> 12 (x4 for
     // the quarter-unit layer), exactly the game's integer transform.
-    let dat = Dat::parse(&disc.read(&course.file("DAT")).expect("read DAT")).expect("parse DAT");
+    let dat_bytes = disc.read(&course.file("DAT")).expect("read DAT");
+    let dat = Dat::parse(&dat_bytes).expect("parse DAT");
+    // phase 6: the challenge objects' points (chunk 0x0C), for their slots
+    let challenge_points = mr_sim::items::pickups::CoursePickups::from_dat(&dat, &dat_bytes).challenge.map(|l| l.points).unwrap_or_default();
     let sin = SinTable::from_exe(&exe).expect("sin table");
     // One entity per DAT object (TrackObject), so per-frame object selection
     // (the game's visibility stream / LOD) can show and hide them.
@@ -157,7 +160,7 @@ pub fn setup(
     for (i, o) in dat.objects.iter().enumerate() {
         // special-slot scenery the race code moves / hides (movers.rs):
         // built in mesh space, placed by its pose every frame
-        let mover = crate::movers::mover_slot(&dat, i).map(|s| crate::movers::mover(&dat, i, s));
+        let mover = crate::movers::mover_slot(&dat, i).map(|s| crate::movers::mover(&dat, i, s)).or_else(|| crate::movers::challenge_mover(&dat, i, &challenge_points));
         let mut polys = if mover.is_some() { crate::movers::local_polys(&dat, o, &sin, &dslots) } else { object_polys(&dat, o, &sin, &dslots) };
         if textured_only {
             polys.retain(|p| p.tex.is_some());
@@ -561,8 +564,10 @@ fn surface_samples(polys: &[PsxPoly], step: f32, out: &mut Vec<(Vec3, f32)>) {
 pub fn full_view_object(dat: &Dat, info: &LayerInfo, i: usize) -> bool {
     // the pickups' slots (effects.rs draws the items); the other special
     // slots are course scenery (movers.rs)
+    // (phase 6: the challenge objects' slots are movers, shown while
+    // FUN_8002DC14 scales them: ADVENTURE)
     if dat.special.iter().enumerate().any(|(s, o)| *o == Some(i) && crate::movers::pickup_slot(dat, s)) {
-        return false;
+        return true;
     }
     if i >= dat.layer0_count {
         return info.backdrop[i];

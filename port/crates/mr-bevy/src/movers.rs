@@ -158,6 +158,31 @@ impl SceneryFrame {
             }
         }
         let mut hidden = Vec::new();
+        // FUN_8002DC14 (phase 6): the challenge objects' slots 0x20.. (the
+        // targets, then the movie and extras; the Doozer goals have none),
+        // turned by 0x800B0CB0 / CB2 / CB4 (FUN_8003C5FC: sin(0x800AFEF6) /
+        // 64, 0x800AFEF8, sin(0x800AFEFA) / 64) and scaled by the object's
+        // +0x16 << 5; hidden while it is (scale 0: a race, a taken one).
+        let [ten, goals, extra] = g.items.challenge.map(|c| c as usize);
+        if ten != 0 && goals != 0 {
+            let t = &s.world.tables;
+            let ph = s.water.phase;
+            let w = |a: u16| (mr_sim::fixed::div_pow2(t.sin_raw(a as i32 & 0xFFF), 6) & 0xFFF) as f32;
+            let rot = [w(ph[3]), (ph[4] & 0xFFF) as f32, w(ph[5])];
+            for k in 0..ten + 1 + extra.saturating_sub(1) {
+                let idx = if k < ten { k } else { k + goals };
+                let slot = 0x20 + k as i32;
+                let sc = g.items.pickups.get(mr_sim::items::FIRST_CHALLENGE + idx).map_or(0, |p| p.scale as i32) << 5;
+                if sc == 0 {
+                    hidden.push(slot as u16);
+                } else {
+                    set(slot, &|p| {
+                        p.rot = rot;
+                        p.scale = [sc as f32; 3];
+                    });
+                }
+            }
+        }
         for &(slot, n) in &o.hidden_slots {
             for k in 0..n as i16 {
                 hidden.push((slot + k) as u16);
@@ -448,6 +473,20 @@ fn weather(
 pub fn pickup_slot(dat: &Dat, slot: usize) -> bool {
     let n = dat.chunks.iter().find(|c| c.id == 0x0C).map(|c| c.count as u16).filter(|n| (0xB..=0x10).contains(n)).unwrap_or(0) as usize;
     (0x20..0x20 + n).contains(&slot)
+}
+
+/// Phase 6: the mover of DAT object `i` when it sits in a challenge
+/// object's slot (0x20 + k, FUN_8007B448 / FUN_8002DF88): placed on the
+/// object's point (chunk 0x0C: the targets, then the movie / extras after
+/// the one Doozer goal), angles 0 (FUN_8002DC14 turns it by the global
+/// wobble), unscaled.
+pub fn challenge_mover(dat: &Dat, i: usize, points: &[[i32; 3]]) -> Option<Mover> {
+    let s = dat.special.iter().position(|s| *s == Some(i)).filter(|&s| pickup_slot(dat, s))?;
+    let k = s - 0x20;
+    let idx = if k < 10 { k } else { k + 1 };
+    let p = *points.get(idx)?;
+    let o = &dat.objects[i];
+    Some(Mover { slot: s as u16, layer: o.layer.world_scale(), origin: p, angles: [0; 3], scale: [0x1000; 3], hid: false })
 }
 
 /// The special slot of DAT object `i` that is moving scenery (not a

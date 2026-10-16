@@ -34,8 +34,9 @@ mr-bevy courses.rs (course choice, pick-list). Tags as elsewhere: [CODE addr],
 The race courses are the 18 of race type 0 / 1. VOLCANO, HOUSE and WHATEVER
 (COURSE_C, cup 8) are arenas: race type 2, no finish line (DAT chunk 3) and no
 course points (chunk 5); the game's VOLCANO course menu offers only battle and
-CHICKEN CHASE (track O). The six ARENA/* and five STUNT/* courses are other
-modes.
+CHICKEN CHASE (track O). The six ARENA/* courses are battle arenas; the six
+STUNT/* courses (FUN, REST, DINER, ROOFTOPS, MOUNTAIN, MLABS: cups 0..5 slot
+3, race type 3) run the stunt trial (docs/spec/stunt-trial.md).
 
 | course | id | dir | cup/slot | type | karts | music (track) | intro clip | flags | lap record | features beyond DOCK |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -69,8 +70,8 @@ on all 17 captured courses.)
 | 0x11 | 0x800D1C8C | turntables, 3 points (centre, inner, outer radius): turn a grounded kart on the ring by spin x dt; spin +-5 (x3 on courses 0x1A/0x1B) from rand() at course load | FUN_80084490, FUN_800632BC | objects.rs |
 | 0x18 | 0x800D1CA8 | lifts, 4 points: wait at P0.y, rise 0x39 a frame to P1.y, wait, return; the course's animated objects that name a lift move their TER groups by its change (vertex y, wall heights) | FUN_80063554, FUN_800859EC, FUN_80042374 | lifts.rs |
 | 0x0A / 0x0B | 0x800D1C70 / 74 | orbit camera look / eye paths (camera mode 1) | FUN_80070418 case 1 | camera.rs |
-| 0x08, 0x14, 0x17 | | stunt-course lists | FUN_80062E38, FUN_800628FC | `unreachable_in_scope!` |
-| 0x0D | 0x800D1C7C | paired triggers | FUN_80061F08 / 80061FC0 | `unreachable_in_scope!` (none on race courses) |
+| 0x04, 0x09, 0x0F / 0x10, 0x14, 0x08 / 0x17 | | the stunt courses' gates, banners, strip, pipes, mirror planes | FUN_80081DD8, FUN_80034CE0, FUN_8006F64C .., FUN_800628FC, FUN_80062E38 | stunt.rs (docs/spec/stunt-trial.md) |
+| 0x0D | 0x800D1C7C | paired triggers (two-way links; MOUNTAIN, DINER) | FUN_80061F08 / 80061FC0 | progress.rs `teleport` (none on race courses) |
 
 Breakable scenery (no chunk; FUN_80083B08's per-course switch, jump table
 0x80023318 course - 1): TER groups listed with their DAT slots; a projectile's

@@ -79,7 +79,7 @@ position, 0x800E039A difficulty, 0x800B0E38 cup slot. TER path: points
 
 ### FUN_800912F8(k) -> buttons [0x800912F8]
 ```
-if race_type == 3:                       # time-trial ghost
+if race_type == 3:                       # the stunt trial (stunt-trial.md)
     if k.finished: b0,b1 = rng(),rng(); b = b0 < 0x10 ? SQUARE : 0
                    if b1 == 0: k.4DF ^= 1;  b |= LEFT   # (4DF < 2 always)
     return b

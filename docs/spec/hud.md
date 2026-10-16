@@ -279,3 +279,11 @@ the frame counter and the pulse stepped per sim frame; replays use the
 sidecar record alone (player marker only, pulse phase from the tick).
 Side-by-side: `analysis/fx/shots/sbs_items_2330.png` (oracle VB 2330 vs a
 replay of lap1 at tick 1161), `analysis/fx/shots/sbs_fx.png` (effects).
+
+## The stunt trial's HUD (Session 7, phase 3)
+FINISH THE COURSE, the progress bar (FUN_80047F1C: the face, the banner
+marks, TILE primitives), the timer and the result FUN_8004E2A8:
+docs/spec/stunt-trial.md "HUD" (mr_assets::hud_items::stunt_hud; GP0 120 of
+121 primitives equal, tools/oracle/hudx_check.py analysis/oracle/stunt/fx).
+The results' PRESS START blinks with 0x800B0AF0 (VBlanks since mode 10) in
+races too (the same FUN_80051698 case).

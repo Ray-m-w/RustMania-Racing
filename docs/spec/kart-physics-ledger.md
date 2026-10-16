@@ -51,9 +51,11 @@ places it is not one-for-one:
 - update.rs now calls `ai::catchup_scale` (0x80065850) and `ai::reroll`
   (0x80068078) in place; the mr-ai harness's `ai_kart_tick` (flag bit 0
   cleared, both after the update) is kept for its teacher forcing only.
-- FUN_80090FAC (battle AI), FUN_80090670 (backward path walk) and the
-  time-trial ghost branch are ported from the code but never ran against
-  the oracle (no battle / reverse / ghost capture).
+- FUN_80090FAC (battle AI) and FUN_80090670 (backward path walk) are
+  ported from the code but never ran against the oracle (no battle /
+  reverse capture). The race type 3 branch of FUN_800912F8 (once called
+  the "time-trial ghost") is the stunt trial's out kart on random buttons:
+  exact in the oracle's stunt finish capture (phase 3, stunt-trial.md).
 - Opponent choice (`ai::pick_opponent`) uses the exe's racing flag; the
   RAM tables 0x800C3028 (character model loaded) and 0x800D1560 (vehicle
   model loaded) are taken as "all loaded" (true on DOCK: all 25 racers and
@@ -123,29 +125,40 @@ Ported in Session 7 (were stubs a player reached):
 | session.rs | the results switch frame runs the race simulation (was skipped) | every finish / time-up | tri/DOCK_FINISH, tri/DOCK_TIMEUP teacher forced exact through the switch |
 | session.rs | one of two humans finished: the game goes on (0x80079708) | (split screen) | code only |
 
+Ported in Session 7, phase 3 (the stunt trial, race type 3 / game mode 3;
+docs/spec/stunt-trial.md; reached from the course menus of the six stunt
+courses):
+| where | branch | evidence |
+|---|---|---|
+| update.rs | FUN_8006F64C: the strip quad +0x490 (was the "time-trial ghost" stub) | oracle MOUNTAIN, stunt/finish: free run / teacher forced exact |
+| progress.rs | lap timing for race type 3: FUN_80081DD8 gates, the trial clock, the finish and course record | stunt/finish: exact, record and won bit equal the save block |
+| progress.rs | FUN_800628FC pipes (chunk 0x14; the +0x4E7 path) | code only (no capture enters a pipe) |
+| progress.rs | the paired trigger list 0x800D1C7C (state 2) and the course-12 end offset | stunt/paired: free run / teacher forced exact |
+| progress.rs | FUN_80062E38 mirror planes (chunks 0x08 / 0x17; record fields) | code only (MOUNTAIN has none) |
+| race.rs | race progress of race type 3 (+0x388 along the strip) | MOUNTAIN / stunt/finish: exact |
+| camera.rs | modes 3 (the trial) and 9 (a stunt course's menu): FUN_8006FB2C / FUN_800702C4 (were "cut-scene sync") | mode 3 exact on all three captures; mode 9 code only |
+| init.rs / session.rs | the trial's set-up: grid index + 2, one kart, countdown 0x78 + 180, the special-move roll, +0x488 = -1, +0x490 / +0x4A9 | MOUNTAIN: race load exact |
+| session.rs | mode 3 goes to the results (mode 10) as mode 1; 0x800B0AF0 (`results_clock`) | stunt/finish: exact through mode 10 |
+
 Remaining stubs (all unreachable in the port today):
 | where | branch | why unreachable |
 |---|---|---|
 | update.rs:107 | BIOS rand() in `kart_update` (the one-kart analysis API) | the session uses `kart_update_at` with a rand source |
 | update.rs | nearest-camera search with 2+ humans (0x80064FB0) | one human |
-| update.rs | time-trial ghost FUN_8006F64C (race type 3) | no time trial |
 | camera.rs | look_at_search: challenge objects (0x800729CC); resolve_watch: targets 10..0x1D, 0x7F | challenge mode / mode 0x14 |
 | camera.rs | special event camera (0x800B0FAC = 0x1D / 0x1E outside the title's mode 0x10) | no such event; the title is always mode 0x10 |
 | camera.rs | pre-race orbit (game state 0 / 17), mode 11 (game state 0x12) | the port's modes are 1, 10, 0x10 |
 | camera.rs | alternate race camera rule (0x800B0BD2 != 0) | race over / pause flag never set |
-| camera.rs | cut-scene sync (modes 3 / 9) | 0x800D1C84 / 0x800D1C88 null |
 | camera.rs | camera with no karts; camera mode outside 0/1/2/10/12 | the mode selection cannot return them |
 | camera.rs | trail shorter than 16 VBlanks | 24-entry ring (camera::TRAIL_LEN) covers 16 VBlanks at dt 1 |
 | camera.rs | event 30 fixed angles outside modes 1 / 7 | event 30 = the title, always mode 1 |
 | camera.rs | orbit (mode 1) with only the eye path (chunk 0x0B, no 0x0A): looks at the kart, the game at a stale stack value [INFER] | no course: DISCO / the title have both |
-| progress.rs | object list FUN_800628FC (chunk 0x14), FUN_80062E38 (0x08 / 0x17) | stunt courses only; no race course has them |
-| progress.rs | item +0x4E7 active; FUN_800627E0 (+0x4EE) | never set |
-| progress.rs | paired trigger list 0x800D1C7C (+0x4EF = 2); trigger on course 12 | +0x4EF is only set to 1; course 12 is not a race course |
-| progress.rs | lap timing in modes 2/7, time trial; finish line with race flag 2; challenge win bits (race flag 0x10) | modes / flags not used |
+| progress.rs | FUN_800627E0 (+0x4EE) | never set |
+| progress.rs | lap timing in modes 2/7; finish line with race flag 2; challenge win bits (race flag 0x10) | modes / flags not used |
 | progress.rs | track direction in modes 2/7/0x14; FUN_80090670 path mode (+0x4DF != 0) for a human | +0x4DF of the player changes only under the battle / time-trial AI |
-| race.rs | race progress in time trial / race flag 1 | not used |
+| race.rs | race progress with race flag 1 | not used |
 | render.rs | race flag 0x40: aim at the boss | boss races not ported |
-| init.rs | grid placement outside a plain one-player race; grid index past the course's grid | one player; every race course's grid holds its karts (Session 6: all 18 load; mr-fuzz) |
+| init.rs | grid placement outside a plain one-player race or the stunt trial (race flags 1/2/4, challenge, flags 0x20/0x40); grid index past the course's grid | one player; every race / stunt course's grid holds its karts (all 18 + 6 load; mr-fuzz) |
 | items | challenge-mode boxes / tokens / objects (0x800B07E6), mode 20 projectile hits | challenge / mode 0x14 |
 | collide.rs | challenge tag on kart contact (0x800B07E6, 0x800B07FE) | challenge mode |
 

@@ -399,3 +399,9 @@ world axes, y down) and `E = cam.pos` (world units).
   horizontal projection of the running oracle; H, OFX and OFY above are the
   game's own values (gte_ring_dump showed Hs = H = 160 at the time of the check).
 - Two-player and the other camera modes are not ported.
+
+## Stunt courses: modes 3 and 9 (Session 7, phase 3)
+With both strip chunks (0x0F / 0x10) the camera is mode 3 in a race and
+mode 9 in a course menu: docs/spec/stunt-trial.md "Camera" (exact on the
+three MOUNTAIN captures). The roll goal is 0 outside modes 0, 10 and the
+orbit (0x80072640).

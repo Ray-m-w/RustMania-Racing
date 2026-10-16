@@ -492,6 +492,10 @@ pub struct CameraGlobals {
     /// (0x800B0B6C + 0x800B0B74) * 16, (0x800B0B78 + 0x800B0B7C) * 16,
     /// (0x800B0B80 + 0x800B0B88) * 16: the fallback eye goal.
     pub scene_center: [i32; 3],
+    /// 0x800B0E24 (i8): player 1's menu cursor row; the frontend's course
+    /// select (event 0x1E, game state 0xC: camera mode 5) looks at that
+    /// world's film strip.
+    pub menu_row: i8,
 }
 
 impl CameraGlobals {
@@ -511,6 +515,7 @@ impl CameraGlobals {
             overhead: 4,
             num_karts: 6,
             cutscene_sync: false,
+            menu_row: 0,
             scene_center: [0; 3],
         }
     }
@@ -535,6 +540,7 @@ impl CameraGlobals {
             overhead: rd(0x800B_0E38, 1)[0] as i8,
             num_karts: i16_at(0x800B_0DFE),
             cutscene_sync,
+            menu_row: 0,
             scene_center: [
                 i32_at(0x800B_0B6C).wrapping_add(i32_at(0x800B_0B74)).wrapping_mul(16),
                 i32_at(0x800B_0B78).wrapping_add(i32_at(0x800B_0B7C)).wrapping_mul(16),
@@ -740,6 +746,11 @@ fn select_mode(cam: &mut CameraState, inp: &CameraInput) -> i16 {
     if g.event == 0x1E && g.game_state == 0x10 {
         return 1;
     }
+    // 0x800705B8: the frontend's course select (game state 0xC) is mode 5
+    // (Session 7, menus).
+    if g.event == 0x1E && g.game_state == 0xC {
+        return 5;
+    }
     if g.event == 0x1D || g.event == 0x1E {
         unreachable_in_scope!("special event camera (0x800B0FAC = 0x1D/0x1E)");
     }
@@ -760,7 +771,9 @@ fn select_mode(cam: &mut CameraState, inp: &CameraInput) -> i16 {
         }
     };
     let mut mode: i16 = match g.game_state {
-        0 | 17 => unreachable_in_scope!("pre-race orbit camera (mode 1, game state 0/17)"),
+        // 0x80070614: the course menu and the character select (game
+        // state 0; Session 7) and state 17 orbit (mode 1).
+        0 | 17 => 1,
         18 => unreachable_in_scope!("camera mode 11 (game state 18)"),
         1 | 2 => {
             if g.alt_rule != 0 {
@@ -1035,6 +1048,18 @@ pub fn tick(cam: &mut CameraState, inp: &CameraInput, t: &CameraTables, env: &mu
             yaw_div = 8;
             orbit_paths = paths;
         }
+        5 => {
+            // Course select (0x80070E4C): eye at (0xA000, y, -0x28000)
+            // looking along +z at (0xA000, y, 0x20000), y = (row * 10000 -
+            // 25000) * 32 for the world's film strip; the common tail with
+            // its default weights (0x20); sp+0x48 = 8 [INFER: the angle
+            // divisors].
+            let y = (g.menu_row as i32 * 10000 - 25000) * 0x20;
+            goal = [0xA000, y, -0x28000];
+            aim_at = [0xA000, y, 0x20000];
+            pitch_div = 8;
+            yaw_div = 8;
+        }
         12 => {
             // Overhead (0x80070D94): 0x1400 (minus up to 0xA00 while the
             // countdown is above 300) TER units straight above the kart,
@@ -1106,10 +1131,14 @@ pub fn tick(cam: &mut CameraState, inp: &CameraInput, t: &CameraTables, env: &mu
 
     // 0x80072394: event 30 fixes the angles except in modes 1 and 7 (the
     // title's orbit turns as below: oracle title capture, exact).
-    if g.event == 30 && mode != 1 && mode != 7 {
-        unreachable_in_scope!("event 30 fixed camera angles");
-    }
-    if g.overhead > 6 {
+    // (0x80072394 sets pitch 0 (0x400 above cup 6), yaw 0, roll 0; the
+    // roll step 0x80072708 is skipped on event 30.)
+    let fixed = g.event == 30 && mode != 1 && mode != 7;
+    if fixed {
+        cam.pitch = if g.overhead > 6 { 0x400 } else { 0 };
+        cam.yaw = 0;
+        cam.roll = 0;
+    } else if g.overhead > 6 {
         // 0x800723E8: cups above 6: straight down, no yaw, no roll.
         cam.pitch = 0x400;
         cam.yaw = 0;
@@ -1168,7 +1197,8 @@ pub fn tick(cam: &mut CameraState, inp: &CameraInput, t: &CameraTables, env: &mu
             }
         }
     };
-    if changed {
+    if fixed {
+    } else if changed {
         cam.roll = roll_t as i16;
     } else {
         for _ in 0..reps(dt) {

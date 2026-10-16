@@ -59,6 +59,9 @@ pub struct SessionConfig {
     pub grid: i32,
     /// Character (+0x4B2): 0 = Kermit.
     pub character: u8,
+    /// Vehicle (+0x4B1): 0 = the RACER (the character select, mr-bevy
+    /// menus.rs; FUN_80072D8C -> FUN_800609F4(kart, c, v, 0, 0)).
+    pub vehicle: u8,
     /// 0x800B0DA6: laps.
     pub laps: i16,
     /// 0x800E0392: alternate button layout (brake SQUARE, jump CIRCLE).
@@ -125,6 +128,7 @@ impl SessionConfig {
             course: crate::course::DOCK,
             grid: 5,
             character: 0,
+            vehicle: 0,
             laps: 3,
             alt_controls: false,
             event: 3,
@@ -234,6 +238,10 @@ pub struct Session {
     pub camera_peek: bool,
     /// The BIOS rand() seed 0x80009010 (rand_seed() reads it).
     pub rand_state: u32,
+    /// Session 7 (menus): the game state and menu row the camera sees
+    /// instead of the race's (0xC on the title = the course select's
+    /// mode 5; `menu_tick` uses state 0 = the course menu's orbit).
+    pub camera_menu: Option<(i16, i8)>,
     cfg: SessionConfig,
 }
 
@@ -454,14 +462,28 @@ impl Session {
             let b = disc.read(p).map_err(|e| SessionError::Disc(format!("{p}: {e:?}")))?;
             Mdl::parse(&b).map_err(|e| SessionError::Disc(format!("{p}: {e:?}")))
         };
-        let racer = read_mdl(disc, "VEHIC_A/RACER.MDL")?;
-        if cfg.character != 0 {
-            return Err(SessionError::OutOfScope("only Kermit (character 0) is wired up".into()));
-        }
-        let kermit = read_mdl(disc, "CHARS_A/KERMIT.MDL")?;
         let exe = disc.read("SLUS_012.37").map_err(|e| SessionError::Disc(format!("{e:?}")))?;
         let camera_tables = CameraTables::from_exe(&exe).ok_or_else(|| SessionError::Disc("camera tables".into()))?;
-        let template = crate::vehicle::racer_template(&world.tables, &racer);
+        // The player's character and vehicle (Session 7, the character
+        // select): Kermit / RACER keep the verified RACER template; any
+        // other pair is built as the race loader builds every kart (the
+        // vehicle's template FUN_80087EFC + wheels at its model's pivots,
+        // the character model's first-part pivot).
+        let (template, driver_pivot) = if cfg.character == 0 && cfg.vehicle == 0 {
+            let racer = read_mdl(disc, "VEHIC_A/RACER.MDL")?;
+            let kermit = read_mdl(disc, "CHARS_A/KERMIT.MDL")?;
+            (crate::vehicle::racer_template(&world.tables, &racer), kermit.parts[0].record.pivot)
+        } else {
+            let tpl = crate::ai::vehicle_templates(&world.exe, &world.tables).map_err(|e| SessionError::Disc(e.0))?;
+            let v = cfg.vehicle;
+            let vpath = crate::ai::model_path(&world.exe, crate::ai::addr::VEHICLE_PATHS, v, "MDL").ok_or_else(|| SessionError::Disc(format!("vehicle {v}: no model")))?;
+            let c = cfg.character;
+            let cpath = crate::ai::model_path(&world.exe, crate::ai::addr::CHARACTER_PATHS, c, "MDL").ok_or_else(|| SessionError::Disc(format!("character {c}: no model")))?;
+            let mut t = *tpl.get(v as usize).ok_or_else(|| SessionError::Disc(format!("vehicle {v}: no template")))?;
+            crate::ai::place_wheels(&mut t, &read_mdl(disc, &vpath)?);
+            (t, read_mdl(disc, &cpath)?.parts[0].record.pivot)
+        };
+        world.driver = crate::render::DriverModel { part0_pivot: driver_pivot };
         // The title (title.rs): three AI karts in game mode 0x10.
         let title = cfg.course == crate::title::TITLE_COURSE;
         let title_data = if title { Some(Box::new(crate::title::TitleData::load(disc, &world).map_err(SessionError::Disc)?)) } else { None };
@@ -533,7 +555,7 @@ impl Session {
         } else {
             let mut rand = || bios_rand(&mut rand_state);
             init_kart(
-                &KartInit { world: &world, template: &template, setup, slot: 0, character: cfg.character, vehicle: 0, grid: grid0, flags: 0, character_pivot_y: kermit.parts[0].record.pivot[1] },
+                &KartInit { world: &world, template: &template, setup, slot: 0, character: cfg.character, vehicle: cfg.vehicle, grid: grid0, flags: 0, character_pivot_y: driver_pivot[1] },
                 &mut globals.rng,
                 &mut rand,
             )
@@ -613,6 +635,7 @@ impl Session {
             num_karts: n as i16,
             cutscene_sync: false,
             scene_center: [0; 3],
+            menu_row: 0,
         };
         if let Some(d) = title_data {
             let chars: Vec<u8> = std::iter::once(record[0x4B2]).chain(others.iter().map(|o| o.character)).collect();
@@ -640,6 +663,7 @@ impl Session {
             load_frame: true,
             rng_skip_items: None,
             camera_peek: false,
+            camera_menu: None,
 
             rand_state,
             cfg,
@@ -715,6 +739,29 @@ impl Session {
     pub fn tick(&mut self, buttons: u16) -> Result<(), SessionError> {
         let dt = if self.globals.hz60.on { 1 } else { 2 };
         self.tick_dt(buttons, dt)
+    }
+
+    /// A menu frame on a loaded course (Session 7: the course menu and the
+    /// character select, game state 0): the race does not run; the frame
+    /// counter, the water animation and the camera (mode 1, the orbit
+    /// along DAT chunks 0x0B / 0x0A, FUN_80070418 @0x80070614) do. `dt`
+    /// VBlanks.
+    pub fn menu_tick(&mut self, dt: i32) {
+        let g = &mut self.globals;
+        g.dt = dt;
+        g.frame = g.frame.wrapping_add(dt);
+        let w = &self.world;
+        let rng_world = |a: u32| w.rng_byte(a);
+        let _ = self.water.step(&w.tables, dt, &mut g.rng, &rng_world);
+        let ck = CameraKart::from_record(&self.record, Some(self.kart.trail));
+        let inp = CameraInput {
+            watched: camera::Watched::None,
+            kart: ck,
+            globals: CameraGlobals { dt, num_karts: 1, countdown: 0, game_state: self.camera_menu.map_or(0, |m| m.0), menu_row: self.camera_menu.map_or(0, |m| m.1), ..self.camera_globals.clone() },
+        };
+        let mut env = SessionCameraEnv { peek_rand: false, world: w, rand_state: &mut self.rand_state, rng: &mut g.rng };
+        camera::tick(&mut self.camera, &inp, &self.camera_tables, &mut env);
+        self.ticks += 1;
     }
 
     /// The whole changing state (see `Snapshot`).
@@ -1086,7 +1133,8 @@ impl Session {
                 countdown: g.countdown,
                 countdown_len: g.countdown_len as i16,
                 laps: g.laps,
-                game_state: g.mode,
+                game_state: self.camera_menu.map_or(g.mode, |m| m.0),
+                menu_row: self.camera_menu.map_or(0, |m| m.1),
                 ..self.camera_globals.clone()
             },
         };
@@ -1336,6 +1384,7 @@ impl Session {
             load_frame: false,
             rng_skip_items: None,
             camera_peek: false,
+            camera_menu: None,
             rand_state: m.u32(0x8000_9010),
             cfg,
         };

@@ -1071,7 +1071,12 @@ impl Session {
         // 7. Camera: intro (countdown >= 300), chase, and the trackside
         //    cameras once the player has finished (camera.rs).
         let ck = CameraKart::from_record(&self.record, Some(k.trail));
+        let watched = {
+            let (rec0, others) = (&self.record, &self.others);
+            camera::resolve_watch(ck.watch_target, |n| if n == 0 { Some(rec0.as_slice()) } else { others.get(n - 1).map(|o| o.record.as_slice()) }, &w.course.look_points)
+        };
         let inp = CameraInput {
+            watched,
             kart: ck,
             globals: CameraGlobals {
                 dt: g.dt,

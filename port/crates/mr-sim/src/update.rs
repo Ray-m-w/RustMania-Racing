@@ -208,14 +208,9 @@ pub fn kart_update_full(k: &mut KartState, others: &mut Others, g: &mut RaceGlob
                 k.item_fire = 0;
                 k.look_target = 0xFF;
             } else if k.item_fire == 0 {
-                // FUN_800728C0: lock the camera onto the nearest kart.
-                if g.mode == 0x14 {
-                    unreachable_in_scope!("TRIANGLE in mode 0x14");
-                }
-                k.look_target = k.nearest_kart as u8;
-                if !(g.mode == 2 || g.mode == 7 || (g.mode == 1 && k.nearest_kart != -1)) {
-                    unreachable_in_scope!("TRIANGLE look-at search (FUN_800728C0, no nearest kart)");
-                }
+                // FUN_800728C0: lock the camera onto the nearest kart, or
+                // the nearest look point when no kart is near.
+                crate::camera::look_at_search(k, g, &w.course.look_points);
                 k.item_fire = 1;
             }
         }

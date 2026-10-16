@@ -601,6 +601,109 @@ pub trait CameraEnv {
 pub struct CameraInput {
     pub kart: CameraKart,
     pub globals: CameraGlobals,
+    /// What the kart's +0x4FE watch target (TRIANGLE, [`look_at_search`])
+    /// is, resolved by the caller with [`resolve_watch`]. Read in mode 0
+    /// while the kart has not finished.
+    pub watched: Watched,
+}
+
+/// The object a kart's watch target +0x4FE names (FUN_80070418
+/// @0x8007091C..0x800709A4): the chase camera looks at it in place of the
+/// kart's own look-at point.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Watched {
+    /// -1: nothing (the kart's own look-at point).
+    #[default]
+    None,
+    /// 0..9: kart record 0x800C30A8 + 0x504 * n: its position, camera mount
+    /// and body matrix (the look-at point is computed from them exactly as
+    /// for the camera's own kart).
+    Kart { pos: [i32; 3], mount: [i16; 4], matrix: [[i16; 3]; 3] },
+    /// 0x1E..: look point n - 0x1E of DAT chunk 7 (*0x800D1C64 + 4 + 12 * i),
+    /// DAT units; the camera looks at it << 5. (10..0x1D, the challenge
+    /// objects 0x800D1C78, and 0x7F, the mode 0x14 point 0x800CB658, are out
+    /// of scope: [`resolve_watch`] stops on them.)
+    Point([i32; 3]),
+}
+
+/// Resolve a watch target (+0x4FE) for the camera: `kart(n)` returns kart
+/// record n (as the race frame left it), `look_points` the course's DAT
+/// chunk 7.
+pub fn resolve_watch<'a>(target: i8, kart: impl Fn(usize) -> Option<&'a [u8]>, look_points: &[[i32; 3]]) -> Watched {
+    match target {
+        -1 => Watched::None,
+        0x7F => unreachable_in_scope!("watch target 0x7F (mode 0x14 point 0x800CB658)"),
+        t if t < 10 => {
+            let rec = kart(t as usize).unwrap_or_else(|| unreachable_in_scope!(format!("watch target kart {t} not in the race")));
+            let k = CameraKart::from_record(rec, None);
+            Watched::Kart { pos: k.pos, mount: k.mount, matrix: k.matrix }
+        }
+        t if t < 0x1E => unreachable_in_scope!(format!("watch target {t}: challenge object (0x800D1C78)")),
+        t => Watched::Point(*look_points.get(t as usize - 0x1E).unwrap_or_else(|| unreachable_in_scope!(format!("watch target {t} past the look points")))),
+    }
+}
+
+/// FUN_80081170(x, y, z, list, 1, 0, 0) on DAT chunk 7 (the look points):
+/// the index of the nearest point over the whole list, compared at >> 5 of
+/// the arguments and of the points (squared distance as an unsigned 32-bit
+/// sum, first strict minimum; -1 when the list is empty). The function also
+/// leaves sqrt(best) << 5 in 0x800C3068 and 0 in 0x800B0EB8; nothing reads
+/// either before it is written again (FUN_800418D8 resets the nearest-kart
+/// table 0x800C3068 at the start of every frame's contact pass, FUN_8007BBF0
+/// reads it only after its own FUN_80081170 call), so the port drops them.
+pub fn nearest_point_all(pts: &[[i32; 3]], x: i32, y: i32, z: i32) -> Option<usize> {
+    let (x, y, z) = (x >> 5, y >> 5, z >> 5);
+    let mut best = u32::MAX;
+    let mut idx = None;
+    for (i, p) in pts.iter().enumerate() {
+        let dx = (p[0] >> 5).wrapping_sub(x);
+        let dy = (p[1] >> 5).wrapping_sub(y);
+        let dz = (p[2] >> 5).wrapping_sub(z);
+        let d = dx.wrapping_mul(dx).wrapping_add(dy.wrapping_mul(dy)).wrapping_add(dz.wrapping_mul(dz)) as u32;
+        if d < best {
+            best = d;
+            idx = Some(i);
+        }
+    }
+    idx
+}
+
+/// FUN_800728C0(kart): TRIANGLE's camera lock (called from the kart update
+/// FUN_80064B5C @0x800651F0 on the press). Sets the watch target +0x4FE:
+/// - mode 0x14: 0x7F (the fixed point 0x800CB658);
+/// - else the nearest kart +0x4DC (FUN_80040018's contact pass); in mode 1
+///   with a kart near, and always in modes 2 and 7, that is all;
+/// - challenge mode (0x800B07E6 != 0): the nearest live challenge object
+///   (0x800D1C78, target 10 + i) [not ported: challenge mode];
+/// - otherwise, when the course has a look-point list (DAT chunk 7,
+///   0x800D1C64) of fewer than 96 points, the look point nearest to the
+///   driver position (+0x330 / +0x338 / +0x340 >> 5, FUN_80081170 mode 1):
+///   target 0x1E + i. With no list, or 96 or more points, it stays -1.
+pub fn look_at_search(k: &mut crate::kart::KartState, g: &crate::globals::RaceGlobals, look_points: &[[i32; 3]]) {
+    // 0x800728D0
+    if g.mode == 0x14 {
+        k.look_target = 0x7F;
+        return;
+    }
+    // 0x800728E8: +0x4FE = +0x4DC.
+    k.look_target = k.nearest_kart as u8;
+    if (g.mode == 1 && k.nearest_kart != -1) || g.mode == 2 || g.mode == 7 {
+        return;
+    }
+    // 0x8007292C..0x800729B4: the distance to the nearest kart (t0), only
+    // compared by the challenge-object loop.
+    // 0x800729B8: challenge objects.
+    if g.challenge != 0 {
+        unreachable_in_scope!("TRIANGLE look-at: challenge objects (FUN_800728C0 @0x800729CC)");
+    }
+    // 0x80072B94: the look points (no chunk 7: the pointer is null; an
+    // empty list finds nothing either).
+    if look_points.len() >= 0x60 {
+        return;
+    }
+    if let Some(i) = nearest_point_all(look_points, k.drv_x >> 5, k.ref_y >> 5, k.drv_z >> 5) {
+        k.look_target = (i as u8).wrapping_add(0x1E);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -721,23 +824,37 @@ pub fn tick(cam: &mut CameraState, inp: &CameraInput, t: &CameraTables, env: &mu
     if g.num_karts == 0 {
         unreachable_in_scope!("camera with no karts");
     }
-    if mode == 0 && k.finished == 0 && k.watch_target != -1 {
-        unreachable_in_scope!("camera watching another object (kart+0x4FE != -1)");
-    }
     let lift = k.mount[1].wrapping_sub(k.mount[3]); // (s16)(+0x184 - +0x188)
-    let rotate = |local: [i32; 3]| -> [i32; 3] {
+    let rotate_by = |matrix: &[[i16; 3]; 3], local: [i32; 3]| -> [i32; 3] {
         let mut o = [0i32; 3];
         for r in 0..3 {
             let mut s: i32 = 0;
             for c in 0..3 {
-                s = s.wrapping_add(local[c].wrapping_mul(k.matrix[r][c] as i32));
+                s = s.wrapping_add(local[c].wrapping_mul(matrix[r][c] as i32));
             }
             o[r] = s >> 7;
         }
         o
     };
-    let mount = rotate([-(k.mount[0] as i32), lift as i32, -(k.mount[2] as i32)]);
-    let look = [0, 1, 2].map(|i| k.pos[i].wrapping_add(mount[i]));
+    let rotate = |local: [i32; 3]| rotate_by(&k.matrix, local);
+    let look_of = |pos: &[i32; 3], mount: &[i16; 4], matrix: &[[i16; 3]; 3]| -> [i32; 3] {
+        let l = mount[1].wrapping_sub(mount[3]);
+        let m = rotate_by(matrix, [-(mount[0] as i32), l as i32, -(mount[2] as i32)]);
+        [0, 1, 2].map(|i| pos[i].wrapping_add(m[i]))
+    };
+    // 0x80070904: in the chase camera a watch target (+0x4FE, TRIANGLE)
+    // replaces the look-at point: another kart's own look-at point (its
+    // mount and matrix, 0x80070960), or a point << 5 (0x80070984). The eye
+    // still follows the camera's own kart.
+    let look = if mode == 0 && k.finished == 0 && k.watch_target != -1 {
+        match &inp.watched {
+            Watched::Kart { pos, mount, matrix } => look_of(pos, mount, matrix),
+            Watched::Point(p) => [p[0] << 5, p[1] << 5, p[2] << 5],
+            Watched::None => panic!("camera: watch target {} not resolved by the caller (camera::resolve_watch)", k.watch_target),
+        }
+    } else {
+        look_of(&k.pos, &k.mount, &k.matrix)
+    };
     // What the aim looks at: sp+0x70 (`look`) for modes 0, 2, 10; the
     // mode's own point for the orbit.
     let mut aim_at = look;

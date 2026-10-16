@@ -22,7 +22,32 @@ use mr_sim::kart::{KartState, FIELD_OFFSETS, KART_ARRAY, RECORD_SIZE};
 use mr_sim::oracle::{self, Capture};
 use mr_sim::session::{Session, SessionConfig};
 
-const MOTION: [&str; 14] = ["x", "y", "z", "pitch", "heading", "roll", "vx", "vy", "vz", "fwd_speed", "side_speed", "lap", "buttons", "race_pos"];
+const MOTION: [&str; 16] = ["x", "y", "z", "pitch", "heading", "roll", "vx", "vy", "vz", "fwd_speed", "side_speed", "lap", "buttons", "race_pos", "look_target", "item_fire"];
+
+/// The camera fields that differ between the port's camera and the game's
+/// (camera 0, 0x800C4F40) at a frame end.
+fn camera_diff(s: &Session, m: &mr_sim::mem::Mem) -> Vec<&'static str> {
+    let o = mr_sim::camera::CameraState::from_bytes(m.slice(0x800C_4F40, mr_sim::camera::CAMERA_SIZE));
+    let c = &s.camera;
+    let mut d = Vec::new();
+    for (name, same) in [
+        ("cam.mode", c.mode == o.mode),
+        ("cam.pos", c.pos == o.pos),
+        ("cam.pitch", c.pitch == o.pitch),
+        ("cam.yaw", c.yaw == o.yaw),
+        ("cam.roll", c.roll == o.roll),
+        ("cam.weight", c.weight == o.weight),
+        ("cam.matrix", c.matrix == o.matrix),
+        ("cam.forward", c.forward == o.forward),
+        ("cam.sub", (c.sub_state, c.sub_timer) == (o.sub_state, o.sub_timer)),
+        ("cam.rand", (c.rand_a, c.rand_b) == (o.rand_a, o.rand_b)),
+    ] {
+        if !same {
+            d.push(name);
+        }
+    }
+    d
+}
 
 struct Ends {
     /// The first VBlank of the race load (countdown 480, mode 1).
@@ -165,6 +190,7 @@ fn main() {
     let mut show_fields = false;
     let mut dir_mode: Option<String> = None;
     let mut course_load_mode = false;
+    let mut seq_mode = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -172,6 +198,7 @@ fn main() {
             "--fields" => show_fields = true,
             "--dir" => dir_mode = it.next().cloned(),
             "--course-load" => course_load_mode = true,
+            "--seq" => seq_mode = true,
             _ => names.push(a.to_ascii_uppercase()),
         }
     }
@@ -197,8 +224,12 @@ fn main() {
         let name = names.first().expect("--dir DIR COURSE");
         let info = CourseInfo::find(&exe, name).expect("course");
         let cap = Capture::open(root.join(&d)).expect("capture");
-        let key = |vb: u32| (cap.i32(vb, 0x800B_0C70).unwrap(), cap.i32(vb, 0x800B_0A94).unwrap());
-        let vbs: Vec<u32> = cap.vbs.iter().copied().filter(|&v| cap.read(v, 0x800B_0D46, 2).unwrap() == [1, 0]).collect();
+        // Frames: the (countdown, clock, frame counter 0x800B0D90) steps of
+        // the race (mode 1) and of the results after the finish (mode 10:
+        // the race clock stops, the frame counter runs on).
+        let key = |vb: u32| (cap.i32(vb, 0x800B_0C70).unwrap(), cap.i32(vb, 0x800B_0A94).unwrap(), cap.i32(vb, 0x800B_0D90).unwrap());
+        let mode = |v: u32| cap.read(v, 0x800B_0D46, 2).unwrap().to_vec();
+        let vbs: Vec<u32> = cap.vbs.iter().copied().filter(|&v| mode(v) == [1, 0] || mode(v) == [10, 0]).collect();
         let ends: Vec<u32> = vbs.windows(2).filter(|w| key(w[0]) != key(w[1])).map(|w| w[0]).collect();
         let n = ends.len().min(nframes);
         println!("## {d} ({name}): {} frames from VB {}", ends.len(), ends[0]);
@@ -208,9 +239,19 @@ fn main() {
             let m = cap.mem_at(ends[0], None);
             cfg.faces = Some(m.u32(0x800B_0FA4));
             let mut s = Session::with_config(disc, cfg).expect("session");
+            // A capture with the kart count poked down (0x800B0DFE, e.g.
+            // tools/oracle/routes/tri_solo_*.json): the race frame runs
+            // that many karts.
+            let nk = (m.i16(0x800B_0DFE) + m.i16(0x800B_0C98)).max(1) as usize;
+            s.others.truncate(nk - 1);
             s.load_mem(&m);
             s
         };
+        if seq_mode {
+            let mut s = mk(&mut disc);
+            seq_run(&mut s, &cap);
+            return;
+        }
         let mut s = mk(&mut disc);
         free_run(&mut s, &cap, &ends[1..], n - 1, show_fields);
         let mut s = mk(&mut disc);
@@ -274,11 +315,18 @@ fn free_run(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_fields:
     let mut err = None;
     let mut rng_first = None;
     let mut hidden_first: Option<usize> = None;
+    let mut cam_first: Option<(usize, Vec<&str>)> = None;
     for (j, &vb) in ends.iter().enumerate().take(n) {
         let m = cap.mem_at(vb, None);
         if let Err(e) = s.tick_dt(m.u16(0x800B_0CE8), m.i32(0x800B_0AEC)) {
             err = Some((j, e.to_string()));
             break;
+        }
+        if cam_first.is_none() && cap.read(vb, 0x800C_4F40, mr_sim::camera::CAMERA_SIZE).is_some() {
+            let d = camera_diff(s, &m);
+            if !d.is_empty() {
+                cam_first = Some((j, d));
+            }
         }
         if rng_first.is_none() && (s.globals.rng, s.rand_seed()) != (m.u32(0x800B_0BCC), m.u32(0x8000_9010)) {
             rng_first = Some(j);
@@ -400,7 +448,7 @@ fn free_run(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_fields:
                 first[slot] = Some((j, bad));
             }
         }
-        if first.iter().all(|x| x.is_some()) {
+        if first.iter().all(|x| x.is_some()) && cam_first.is_some() {
             break;
         }
     }
@@ -408,7 +456,67 @@ fn free_run(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_fields:
         None => format!("k{i} exact"),
         Some((j, b)) => format!("k{i} @{j} {b:?}"),
     });
-    println!("   free run over {n} frames: {}; random state first differs at {:?}{}", fr.collect::<Vec<_>>().join(", "), rng_first, err.map(|e| format!("; ERROR at {}: {}", e.0, e.1)).unwrap_or_default());
+    let cam = match cam_first {
+        None => "camera exact".to_string(),
+        Some((j, d)) => format!("camera @{j} {d:?}"),
+    };
+    println!("   free run over {n} frames: {}; {cam}; random state first differs at {:?}{}", fr.collect::<Vec<_>>().join(", "), rng_first, err.map(|e| format!("; ERROR at {}: {}", e.0, e.1)).unwrap_or_default());
+}
+
+/// `--seq`: a free run of kart 0 and the camera against the sequence of the
+/// game's kart updates (the VBlanks where kart 0's race time +0x358 changes),
+/// fed each update's own buttons (+0x44E) and dt. For captures whose race
+/// frame is too light to keep the clock step and the kart update in
+/// separate VBlank snapshots (a race frame with one kart: the snapshots land
+/// mid-frame, so the (countdown, clock) frame ends of the other modes are
+/// not frame ends). Starts from the state at the first update (loaded by
+/// the caller from the first (countdown, clock) end).
+fn seq_run(s: &mut Session, cap: &Capture) {
+    let rt = |vb: u32| cap.i32(vb, KART_ARRAY + 0x358).unwrap();
+    let mut start = s.kart().race_time;
+    let mut ups: Vec<u32> = cap.vbs.windows(2).filter(|w| rt(w[0]) != rt(w[1]) && rt(w[1]) > start).map(|w| w[1]).collect();
+    if start == 0 {
+        // From a countdown state: the race time first moves at GO; start
+        // from the game's state at its first update.
+        let m = cap.mem_at(ups[0], None);
+        s.load_mem(&m);
+        start = rt(ups[0]);
+        ups.remove(0);
+        println!("   seq: from the first kart update after GO (VB {}, race time {start})", ups[0]);
+    }
+    let mut kfirst: Option<(usize, Vec<&str>)> = None;
+    let mut cfirst: Option<(usize, Vec<&str>)> = None;
+    let mut watched = std::collections::BTreeMap::<i8, usize>::new();
+    let mut n = 0;
+    for (j, &vb) in ups.iter().enumerate() {
+        let m = cap.mem_at(vb, None);
+        let buttons = m.u16(KART_ARRAY + 0x44E);
+        if let Err(e) = s.tick_dt(buttons, m.i32(0x800B_0AEC)) {
+            println!("   seq: ERROR at update {j}: {e}");
+            break;
+        }
+        n += 1;
+        let r = s.record().to_vec();
+        let o = m.slice(KART_ARRAY, RECORD_SIZE);
+        *watched.entry(o[0x4FE] as i8).or_default() += 1;
+        if kfirst.is_none() {
+            let bad: Vec<&str> = FIELD_OFFSETS.iter().filter(|&&(nm, off, sz)| MOTION.contains(&nm) && nm != "race_pos" && r[off..off + sz] != o[off..off + sz]).map(|e| e.0).collect();
+            if !bad.is_empty() {
+                kfirst = Some((j, bad));
+            }
+        }
+        if cfirst.is_none() {
+            // The camera runs after the kart loop: this VBlank or the next.
+            let d0 = camera_diff(s, &m);
+            let d = if d0.is_empty() { d0 } else { camera_diff(s, &cap.mem_at(vb + 1, None)) };
+            if !d.is_empty() {
+                cfirst = Some((j, d));
+            }
+        }
+    }
+    println!("   seq free run over {n} kart updates: kart 0 {}; camera {}; game's watch targets (+0x4FE: updates) {watched:?}",
+        kfirst.map(|(j, b)| format!("@{j} {b:?}")).unwrap_or_else(|| "exact".into()),
+        cfirst.map(|(j, b)| format!("@{j} {b:?}")).unwrap_or_else(|| "exact".into()));
 }
 
 /// Teacher forced: every frame from the oracle's previous frame.
@@ -417,6 +525,7 @@ fn teacher_forced(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_f
     let mut rng_bad = 0;
     let mut first_rng = None;
     let mut tf_err = None;
+    let mut cam_bad: std::collections::BTreeMap<&str, (usize, usize)> = Default::default();
     for j in 1..n {
         let mprev = cap.mem_at(ends[j - 1], None);
         // The lifts are not in the course captures: keep the session's own
@@ -457,6 +566,11 @@ fn teacher_forced(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_f
             tf_err = Some((j, e.to_string()));
             break;
         }
+        if cap.read(ends[j], 0x800C_4F40, mr_sim::camera::CAMERA_SIZE).is_some() {
+            for d in camera_diff(s, &m) {
+                cam_bad.entry(d).or_insert((0, j)).0 += 1;
+            }
+        }
         if (s.globals.rng, s.rand_seed()) != (m.u32(0x800B_0BCC), m.u32(0x8000_9010)) {
             rng_bad += 1;
             first_rng.get_or_insert(j);
@@ -483,10 +597,12 @@ fn teacher_forced(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_f
         }
     }
     let motion_bad: Vec<String> = counts.iter().filter(|(k, _)| MOTION.contains(&k.1)).map(|(k, v)| format!("k{} {} x{} (first {})", k.0, k.1, v.0, v.1)).collect();
+    let cam: Vec<String> = cam_bad.iter().map(|(k, v)| format!("{k} x{} (first {})", v.0, v.1)).collect();
     println!(
-        "   teacher forced over {} frames: motion fields {}; random state differs on {rng_bad} frames (first {first_rng:?}){}",
+        "   teacher forced over {} frames: motion fields {}; camera {}; random state differs on {rng_bad} frames (first {first_rng:?}){}",
         n - 1,
         if motion_bad.is_empty() { "exact".to_string() } else { motion_bad.join(", ") },
+        if cam.is_empty() { "exact".to_string() } else { cam.join(", ") },
         tf_err.map(|e| format!("; ERROR at {}: {}", e.0, e.1)).unwrap_or_default()
     );
     if show_fields {

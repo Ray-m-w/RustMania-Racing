@@ -56,6 +56,7 @@ pub const KNOWN: &[Opt] = &[
     Opt { key: "music_volume", default: "12", allowed: "", help: "ADJUST SOUND's music volume, the game's steps 0..15 (12 = the game's default level)" },
     Opt { key: "sound_volume", default: "12", allowed: "", help: "ADJUST SOUND's sound effects volume, 0..15 (12 = the game's default)" },
     Opt { key: "controller_config", default: "A", allowed: "A|B", help: "SET CONTROLLERS: A = square jumps, circle brakes; B = the game's alternate layout (square brakes, circle jumps)" },
+    Opt { key: "controller_config_2", default: "A", allowed: "A|B", help: "SET CONTROLLERS, controller 2 (two players): as controller_config" },
     Opt { key: "unlock_all", default: "false", allowed: "true|false", help: "show every character, vehicle, course and league open (the game's everything code on a copy of the save; save.bin itself is not changed); false = the progress in save.bin" },
 ];
 

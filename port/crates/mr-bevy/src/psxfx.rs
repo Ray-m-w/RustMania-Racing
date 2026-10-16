@@ -145,7 +145,12 @@ impl Default for FxPrim {
 pub const VIEW_MAIN: u8 = 0;
 pub const VIEW_FAR: u8 = 1;
 pub const VIEW_HUD: u8 = 2;
-const VIEWS: usize = 3;
+/// Phase 7: player 2's view and far pass (split screen): they draw the
+/// primitives queued for `VIEW_MAIN` / `VIEW_FAR`, sorted from their own
+/// eye. Camera-facing billboards keep player 1's orientation (deferred).
+pub const VIEW_MAIN2: u8 = 3;
+pub const VIEW_FAR2: u8 = 4;
+const VIEWS: usize = 5;
 
 /// What the sources queue this frame (cleared by `build_frame`).
 #[derive(Resource, Default)]
@@ -339,10 +344,14 @@ impl Plugin for PsxFxPlugin {
 #[allow(clippy::type_complexity)]
 fn mark_camera(
     mut commands: Commands,
-    mut q: Query<(Entity, &mut Camera3d, Has<crate::ChaseCamera>, Has<crate::scene::FarCamera>, Has<crate::hud::HudCamera>), Without<PsxFxView>>,
+    mut q: Query<(Entity, &mut Camera3d, Has<crate::ChaseCamera>, Has<crate::scene::FarCamera>, Has<crate::hud::HudCamera>, Has<crate::ChaseCamera2>, Has<crate::scene::FarCamera2>), Without<PsxFxView>>,
 ) {
-    for (e, mut c3, chase, far, hud) in q.iter_mut() {
-        let id = if chase {
+    for (e, mut c3, chase, far, hud, chase2, far2) in q.iter_mut() {
+        let id = if chase2 {
+            VIEW_MAIN2
+        } else if far2 {
+            VIEW_FAR2
+        } else if chase {
             VIEW_MAIN
         } else if far {
             VIEW_FAR
@@ -425,7 +434,7 @@ fn build_frame(
         let mut order: Vec<(i8, f32, usize)> = list
             .iter()
             .enumerate()
-            .filter(|(_, p)| p.view as usize == vi)
+            .filter(|(_, p)| p.view as usize == if vi == VIEW_MAIN2 as usize { VIEW_MAIN as usize } else if vi == VIEW_FAR2 as usize { VIEW_FAR as usize } else { vi })
             .filter(|(_, p)| !p.cull_back || (p.v[1].pos - p.v[0].pos).cross(p.v[2].pos - p.v[0].pos).dot(eye - p.v[0].pos) >= 0.0)
             .map(|(i, p)| (p.bucket, (p.center - eye).dot(fwd) - p.depth_pull, i))
             .collect();

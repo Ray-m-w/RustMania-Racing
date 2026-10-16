@@ -16,6 +16,16 @@ use bevy::camera::visibility::RenderLayers;
 /// Render layer of the far pass (sky + DAT layer 1), drawn by a camera that
 /// renders before the main one; the main camera then clears depth only.
 pub const FAR_LAYER: usize = 1;
+/// The sky dome (player 1's far pass) and player 2's copy (phase 7).
+pub const SKY_LAYER: usize = 6;
+pub const SKY2_LAYER: usize = 7;
+
+/// Phase 7: player 2's sky copy and far-pass camera.
+#[derive(Component)]
+pub struct Sky2;
+
+#[derive(Component)]
+pub struct FarCamera2;
 
 /// Marker for the far-pass camera (child of the chase camera).
 #[derive(Component)]
@@ -34,7 +44,7 @@ pub fn setup_far_pass(commands: &mut Commands, main: Entity, cam: &mut Camera, p
             proj.clone(),
             bevy::core_pipeline::tonemapping::Tonemapping::None,
             Transform::default(),
-            RenderLayers::layer(FAR_LAYER),
+            RenderLayers::from_layers(&[FAR_LAYER, SKY_LAYER]),
             // same sample count as the main camera: they share the target
             msaa,
             FarCamera,
@@ -296,11 +306,18 @@ pub fn setup(
             commands.insert_resource(crate::lighting::SkyHorizon(Color::linear_rgb(a.x, a.y, a.z)));
         }
         let sky = |p: [i32; 3]| Vec3::new(p[0] as f32, -(p[1] as f32), -(p[2] as f32)) / 1000.0;
+        let built = psxmesh::build(&polys, &mut tex, &mut images, &mut meshes, &mut mats, sky);
         commands.spawn((Transform::default(), Visibility::default(), crate::Sky)).with_children(|c| {
             // The sky sits in one ordering-table slot behind everything: draw
             // it with the far pass.
-            for (mesh, mat) in psxmesh::build(&polys, &mut tex, &mut images, &mut meshes, &mut mats, sky) {
-                c.spawn((Mesh3d(mesh), MeshMaterial3d(mat), RenderLayers::layer(FAR_LAYER)));
+            for (mesh, mat) in built.iter().cloned() {
+                c.spawn((Mesh3d(mesh), MeshMaterial3d(mat), RenderLayers::layer(SKY_LAYER)));
+            }
+        });
+        // Phase 7: player 2's copy, centred on its eye (split screen).
+        commands.spawn((Transform::default(), Visibility::default(), crate::Sky, Sky2)).with_children(|c| {
+            for (mesh, mat) in built {
+                c.spawn((Mesh3d(mesh), MeshMaterial3d(mat), RenderLayers::layer(SKY2_LAYER)));
             }
         });
     }

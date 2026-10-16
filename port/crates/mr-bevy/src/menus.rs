@@ -521,6 +521,20 @@ pub struct Front {
     /// 0x800B07F3: BATTLE AS BOSS's boss (LEFT / RIGHT; FUN_8008ACE4
     /// clears it at the course load).
     pub boss_pick: u8,
+    /// Phase 7: the coming race's human players (0x800B07CA: 2 = split
+    /// screen), player 2's character / vehicle (0x800B0B28[1] /
+    /// 0x800B0C18[1]); `picking` 1 while player 2 chooses (the port picks in
+    /// turn on one character select; the game shows both at once).
+    pub players: u8,
+    pub p2_character: u8,
+    pub p2_vehicle: u8,
+    pub picking: u8,
+    /// Player 1's pick while player 2 chooses.
+    p1_pick: (u8, u8),
+    /// Player 2's pad this frame (SET CONTROLLERS' second column, the
+    /// character select in player 2's turn).
+    pub pad2: u16,
+    prev2: u16,
 }
 
 /// One COURSE SECRETS row: its text ("?" while its secret is not found),
@@ -537,7 +551,10 @@ pub enum SecretAction {
     CharSelect(Secret),
     /// The race at once (BATTLE AS BOSS, DOOZER BATTLE: 0x800B0F10 = 2).
     Race(Secret),
-    /// Two-player modes (phase 7), PLAY MOVIE (phase 9): shown, greyed.
+    /// Phase 7: a two-player mode (split screen): the character select
+    /// for both players, then the race.
+    TwoPlayers(Secret),
+    /// PLAY MOVIE (phase 9): shown, greyed.
     NotPorted,
 }
 
@@ -575,7 +592,8 @@ impl Front {
         let row = |open: bool, text: String, action: SecretAction| SecretRow { text: if open { text } else { t.st(si::QUESTION).to_string() }, open, action };
         let sec = |race_flags: u16| Secret { race_flags, boss: false };
         let movie = row(f & 0x80 != 0, txt(sp::PLAY_MOVIE), SecretAction::NotPorted);
-        let chicken = row(f & 4 != 0, txt(sp::CHICKEN_CHASE), SecretAction::NotPorted);
+        // phase 7: CHICKEN CHASE (race flag 0x40, two players)
+        let chicken = row(f & 4 != 0, txt(sp::CHICKEN_CHASE), SecretAction::TwoPlayers(sec(0x40)));
         match self.race_type() {
             2 if self.course == 0x1B => [
                 row(f & 8 != 0, one(t.st(sp::DOGFIGHT)), SecretAction::CharSelect(sec(0x80))),
@@ -596,7 +614,7 @@ impl Front {
             3 => [
                 row(f & 8 != 0, one(t.st(sp::REVERSE)), SecretAction::CharSelect(sec(4))),
                 // (BATTLE on a stunt course is two-player: 0x800B07CB = 2)
-                row(f & 0x10 != 0, txt(sp::BATTLE), SecretAction::NotPorted),
+                row(f & 0x10 != 0, txt(sp::BATTLE), SecretAction::TwoPlayers(sec(1))),
                 chicken,
                 movie,
             ],
@@ -667,6 +685,13 @@ impl Default for Front {
             doozer_turn: 0,
             secret: None,
             boss_pick: 0,
+            players: 1,
+            p2_character: 1,
+            p2_vehicle: tables().default_vehicle.get(1).copied().unwrap_or(0),
+            picking: 0,
+            p1_pick: (character, vehicle),
+            pad2: 0,
+            prev2: u16::MAX,
         };
         if crate::title::on_title() { f } else { f.on_course(info.id, info.lap_record) }
     }
@@ -704,6 +729,15 @@ impl Front {
         let r = t.char_list.iter().position(|&c| c == self.character).unwrap_or(0) as i8;
         let c = t.vehicle_list.iter().position(|&v| v == self.vehicle).unwrap_or(0) as i8;
         (r, c)
+    }
+
+    /// Phase 7: the character select for `players` (2: player 1, then
+    /// player 2).
+    fn start_select(&mut self, players: u8) {
+        self.players = players;
+        self.picking = 0;
+        self.open(Page::CharSelect);
+        self.request = Request::Menu { keep_camera: true };
     }
 
     /// The title's START (title.rs).
@@ -972,6 +1006,17 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
                 let (size, colour, rgb) = if k as i32 == sel { (0, 0, t.pulse(f)) } else { (2, 1, [0x80; 3]) };
                 sp_out.extend(t.hud.text_rgb(s.as_bytes(), x, *y, 0, Size::from_arg(size), colour, *abr, rgb));
             }
+            // phase 7: controller 2 (x 0x180; its pad's LEFT / RIGHT)
+            let alt2 = crate::settings::Settings::global().get("controller_config_2") == Some("B");
+            let alt2 = fr.port.as_ref().map(|s| s.get("controller_config_2") == Some("B")).unwrap_or(alt2);
+            let x = 0x180;
+            sp_out.extend(t.hud.text(format!("{} 2", txt(sp::CONTROLLER)).as_bytes(), x, 0x4B, 0, Size::from_arg(2), 4, 0x60));
+            let sq = format!("s {}", txt(if alt2 { sp::BRAKE } else { sp::JUMP }));
+            sp_out.extend(t.hud.text_rgb(sq.as_bytes(), x, 0x6F, 0, Size::from_arg(0), 0, 0x60, [0xDC, 0x60, 0xBC]));
+            let ci = format!("{} o", txt(if alt2 { sp::JUMP } else { sp::BRAKE }));
+            sp_out.extend(t.hud.text_rgb(ci.as_bytes(), x, 0x81, 0, Size::from_arg(0), 0, 0x60, [0xDC, 0x50, 0x28]));
+            let s2 = format!("{} - {}", txt(sp::CONFIGURATION), t.st(if alt2 { si::B } else { si::A }));
+            sp_out.extend(t.hud.text_rgb(s2.as_bytes(), x, 0x9D, 0, Size::from_arg(2), 1, 0x60, [0x80; 3]));
             sp_out.extend(select_button(t, 0x100, 0xD2, 0, true));
             sp_out.extend(back_button(t, 0x100, 0x1E, 0, true));
         }
@@ -1046,24 +1091,24 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
                     let one = |a: u32| format!("{} - {}", txt(a), txt(sp::ONE_PLAYER));
                     vec![
                         Item::new(format!("{} - {} {}", txt(sp::ONE_PLAYER_RACE), laps, lap_s)),
-                        Item::new(format!("{} - {} {}", txt(sp::TWO_PLAYER_RACE), laps, lap_s)).grey(true),
+                        Item::new(format!("{} - {} {}", txt(sp::TWO_PLAYER_RACE), p.0.laps(1).max(1), txt(if p.0.laps(1) == 1 { sp::LAP } else { sp::LAPS }))),
                         Item::new(one(sp::REVERSE_RACE)),
                         Item::new(one(sp::BATTLE)),
                         Item::new(one(sp::BATTLE_RACE)),
-                        Item::new(txt(sp::CHICKEN_CHASE)).grey(true),
+                        Item::new(txt(sp::CHICKEN_CHASE)),
                         Item::new(txt(sp::BACK_TO_CREDITS)).tint([0xFF, 0x1F, 0x1F]),
                     ]
                 }
                 Page::CourseMenu if fr.here.is_some_and(|h| h.0 == 8) => vec![
                     Item::new(txt(sp::ONE_PLAYER_BATTLE)),
-                    Item::new(txt(sp::TWO_PLAYER_BATTLE)).grey(true),
-                    Item::new(txt(sp::CHICKEN_CHASE)).grey(true),
+                    Item::new(txt(sp::TWO_PLAYER_BATTLE)),
+                    Item::new(txt(sp::CHICKEN_CHASE)),
                     Item::new(txt(sp::BACK_TO_CREDITS)).tint([0xFF, 0x1F, 0x1F]),
                 ],
                 Page::CourseMenu if fr.race_type() == 3 => vec![
                     // FUN_80051698 case 0, race type 3: the stunt trial
                     Item::new(txt(sp::ONE_PLAYER_STUNT_TRIAL)),
-                    Item::new(txt(sp::TWO_PLAYER_STUNT_RACE)).grey(true),
+                    Item::new(txt(sp::TWO_PLAYER_STUNT_RACE)),
                     Item::new(format!("{} {}", here, txt(sp::SECRETS))).grey(!fr.secrets_offered()),
                     Item::new(txt(sp::GAME_MENU)).tint([0x1F, 0xFF, 0x1F]),
                     Item::new(txt(sp::BACK_TO_MAIN_MENU)).tint([0xFF, 0x1F, 0x1F]),
@@ -1071,7 +1116,7 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
                 Page::CourseMenu if fr.race_type() == 2 => vec![
                     // FUN_80051698 case 0, race type 2: the arena (phase 4)
                     Item::new(txt(sp::ONE_PLAYER_BATTLE)),
-                    Item::new(txt(sp::TWO_PLAYER_BATTLE)).grey(true),
+                    Item::new(txt(sp::TWO_PLAYER_BATTLE)),
                     Item::new(format!("{} {}", here, txt(sp::SECRETS))).grey(!fr.secrets_offered()),
                     Item::new(txt(sp::GAME_MENU)).tint([0x1F, 0xFF, 0x1F]),
                     Item::new(txt(sp::BACK_TO_MAIN_MENU)).tint([0xFF, 0x1F, 0x1F]),
@@ -1081,7 +1126,7 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
                     let lap_s = txt(if laps == 1 { sp::LAP } else { sp::LAPS });
                     vec![
                         Item::new(format!("{} - {} {}", txt(sp::ONE_PLAYER_RACE), laps, lap_s)),
-                        Item::new(format!("{} - {} {}", txt(sp::TWO_PLAYER_RACE), laps, lap_s)).grey(true),
+                        Item::new(format!("{} - {} {}", txt(sp::TWO_PLAYER_RACE), p.0.laps(1).max(1), txt(if p.0.laps(1) == 1 { sp::LAP } else { sp::LAPS }))),
                         Item::new(format!("{} {}", here, txt(sp::SECRETS))).grey(!fr.secrets_offered()),
                         Item::new(txt(sp::GAME_MENU)).tint([0x1F, 0xFF, 0x1F]),
                         Item::new(txt(sp::BACK_TO_MAIN_MENU)).tint([0xFF, 0x1F, 0x1F]),
@@ -1122,6 +1167,11 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
         Page::CharSelect => {
             // 0x800B07CB = 1 (FUN_80051698 @0x80051C5C)
             let x = 0x100;
+            // phase 7: whose pick (the port picks in turn)
+            if fr.players == 2 {
+                let who = format!("{} {}", txt(sp::CONTROLLER), fr.picking + 1);
+                sp_out.extend(t.hud.text(who.as_bytes(), x, 0x2D, 1, Size::from_arg(2), 5, 0x60));
+            }
             sp_out.extend(back_button(t, x, 0x1E, 0, false));
             sp_out.extend(select_button(t, x, 0xD2, 0, false));
             let c = t.char_list.get(fr.row as usize).copied().unwrap_or(0);
@@ -1607,6 +1657,17 @@ impl Front {
                 }
             }
             Page::Controllers => {
+                // phase 7: controller 2's configuration with pad 2's LEFT /
+                // RIGHT (FUN_80073B0C's second column)
+                let p2 = self.pad2 & !self.prev2 & (LEFT | RIGHT) != 0;
+                self.prev2 = self.pad2;
+                if p2 {
+                    if let Some(st) = self.port.as_mut() {
+                        let alt = st.get("controller_config_2") == Some("B");
+                        let _ = st.set("controller_config_2", if alt { "A" } else { "B" });
+                        fx.sfx.push(NAV_SFX);
+                    }
+                }
                 if self.row == 0 && (left || right) {
                     if let Some(st) = self.port.as_mut() {
                         let alt = st.get("controller_config") == Some("B");
@@ -1779,14 +1840,16 @@ impl Front {
             Page::CourseMenu => {
                 // FUN_80074A94 0x800B0EA2 = 0: LEFT / RIGHT on the race rows
                 // change the laps (1..10) once the course is won
+                // (row 1, 2 PLAYER RACE: its own laps 0x800E038D)
                 let d = right as i32 - left as i32;
                 if d != 0 && self.row < 2 && self.race_type() < 2 && self.here.is_some_and(|(w, c)| self.progress.0.course_won(w, c)) {
-                    let old = self.progress.0.laps(0);
+                    let lp = self.row.max(0) as usize;
+                    let old = self.progress.0.laps(lp);
                     let n = (old as i32 + d).clamp(1, 10) as u8;
                     if n != old {
                         fx.sfx.push(NAV_SFX);
-                        self.progress.0.set_laps(0, n);
-                        crate::save::with(|s| s.block.set_laps(0, n));
+                        self.progress.0.set_laps(lp, n);
+                        crate::save::with(|s| s.block.set_laps(lp, n));
                         crate::save::persist();
                     }
                 }
@@ -1802,8 +1865,22 @@ impl Front {
                         4 if w7 => Some(8),
                         _ => None,
                     };
-                    if self.row == 0 || flags.is_some() {
+                    // phase 7: world 7's 2 PLAYER RACE (row 1) and CHICKEN
+                    // CHASE (row 5); cup 8's 2 PLAYER BATTLE (row 1) and
+                    // CHICKEN CHASE (row 2)
+                    let two = match self.row {
+                        1 => Some(None),
+                        5 if w7 => Some(Some(0x40)),
+                        2 if !w7 => Some(Some(0x40)),
+                        _ => None,
+                    };
+                    if let Some(f) = two {
                         confirm(&mut fx);
+                        self.secret = f.map(|f| Secret { race_flags: f, boss: false });
+                        self.start_select(2);
+                    } else if self.row == 0 || flags.is_some() {
+                        confirm(&mut fx);
+                        self.players = 1;
                         self.secret = flags.map(|f| Secret { race_flags: f, boss: false });
                         self.open(Page::CharSelect);
                         self.request = Request::Menu { keep_camera: true };
@@ -1815,8 +1892,15 @@ impl Front {
                     match self.row {
                         0 => {
                             confirm(&mut fx);
+                            self.players = 1;
                             self.open(Page::CharSelect);
                             self.request = Request::Menu { keep_camera: true };
+                        }
+                        // phase 7: 2 PLAYER RACE / BATTLE / STUNT RACE
+                        1 => {
+                            confirm(&mut fx);
+                            self.secret = None;
+                            self.start_select(2);
                         }
                         2 if self.secrets_offered() => {
                             confirm(&mut fx);
@@ -1879,8 +1963,14 @@ impl Front {
                 } else if cross {
                     let r = &rows[self.row.clamp(0, 3) as usize];
                     match (r.open, r.action) {
+                        (true, SecretAction::TwoPlayers(m)) => {
+                            confirm(&mut fx);
+                            self.secret = Some(m);
+                            self.start_select(2);
+                        }
                         (true, SecretAction::CharSelect(m)) => {
                             confirm(&mut fx);
+                            self.players = 1;
                             self.secret = Some(m);
                             self.open(Page::CharSelect);
                             self.request = Request::Menu { keep_camera: true };
@@ -1983,8 +2073,17 @@ impl Front {
                     fx.sfx.push(NAV_SFX);
                     self.request = Request::Menu { keep_camera: true };
                 }
-                if back {
+                if back && self.picking == 1 {
+                    // phase 7: back to player 1's pick
                     confirm(&mut fx);
+                    self.picking = 0;
+                    (self.character, self.vehicle) = self.p1_pick;
+                    let (r, c) = self.char_cursor();
+                    (self.row, self.col) = (r, c);
+                    self.request = Request::Menu { keep_camera: true };
+                } else if back {
+                    confirm(&mut fx);
+                    self.picking = 0;
                     if self.league.as_ref().is_some_and(|l| !l.started) {
                         // leaving the league's character select ends it
                         self.league = None;
@@ -1994,6 +2093,23 @@ impl Front {
                     let from_secrets = self.secret.take().is_some();
                     self.open(if from_secrets && self.secrets_offered() { Page::Secrets } else { Page::CourseMenu });
                     self.request = Request::Menu { keep_camera: true };
+                } else if cross && self.progress.char_open(self.character) && self.progress.vehicle_open(self.character, self.vehicle) && self.players == 2 && self.picking == 0 {
+                    // phase 7: player 1 has chosen; player 2's turn
+                    confirm(&mut fx);
+                    self.p1_pick = (self.character, self.vehicle);
+                    self.picking = 1;
+                    (self.character, self.vehicle) = (self.p2_character, self.p2_vehicle);
+                    let (r, c) = self.char_cursor();
+                    (self.row, self.col) = (r, c);
+                    self.request = Request::Menu { keep_camera: true };
+                } else if cross && self.progress.char_open(self.character) && self.progress.vehicle_open(self.character, self.vehicle) && self.picking == 1 {
+                    // both have chosen: the race
+                    confirm(&mut fx);
+                    (self.p2_character, self.p2_vehicle) = (self.character, self.vehicle);
+                    (self.character, self.vehicle) = self.p1_pick;
+                    self.picking = 0;
+                    self.page = Page::None;
+                    self.request = Request::Race;
                 } else if cross && self.progress.char_open(self.character) && self.progress.vehicle_open(self.character, self.vehicle) {
                     // FUN_80073C58: the character (and its vehicle) collected
                     confirm(&mut fx);
@@ -2164,7 +2280,8 @@ fn run(
     // race frames exist, never in tool runs)
     let racing = matches!(&p.driver, crate::Driver::Sim(run) if !matches!(run.session.phase(), mr_sim::race::RacePhase::Finished { .. }));
     if front.page == Page::None && !crate::title::on_title() && racing && !tool_run() {
-        let b = latch.now;
+        // (phase 7: either player's START pauses a split-screen race)
+        let b = latch.now | if crate::input::two_players() { latch.now2 & START } else { 0 };
         if b & START != 0 && front.prev & START == 0 {
             front.open(Page::Pause);
             sfx.play(CONFIRM_SFX);
@@ -2181,7 +2298,9 @@ fn run(
         return;
     }
     let t = tables();
-    let fx = front.input(latch.now, t);
+    front.pad2 = latch.now2;
+    let b = if front.page == Page::CharSelect && front.picking == 1 { latch.now | latch.now2 } else { latch.now };
+    let fx = front.input(b, t);
     for s in &fx.sfx {
         sfx.play(*s);
     }

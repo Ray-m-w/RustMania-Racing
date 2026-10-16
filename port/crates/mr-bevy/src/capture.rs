@@ -137,6 +137,7 @@ pub fn tick(cap: Option<ResMut<CaptureReplay>>, mut feed: ResMut<KartFeed>, mut 
             heading: i16at(&k, 0xE),
             m,
             cam: Some(([i32at(&c, 0x28), i32at(&c, 0x2C), i32at(&c, 0x30)], cm)),
+            cam2: None,
         };
         p.prev_kart = p.kart.take();
         p.kart = Some(k);

@@ -504,13 +504,24 @@ pub fn parts(ht: &HudTables, t: &ItemTables, s: &ItemHud) -> Parts {
 /// FUN_80049440 (1 player): SPECIAL MOVE, the direction arrow and the
 /// message banner.
 pub fn status(ht: &HudTables, t: &ItemTables, s: &ItemHud) -> Vec<Prim> {
+    status_split(ht, t, s, None)
+}
+
+/// FUN_80049440 for split-screen player `split` (phase 7: SPECIAL MOVE at
+/// y 0x3C / 0xB4, the arrow at 0x1C / 0x94 (scale 8, WRONG WAY small), the
+/// message at 0x58 / 0xD0 in the medium font); None = 1 player.
+pub fn status_split(ht: &HudTables, t: &ItemTables, s: &ItemHud, split: Option<usize>) -> Vec<Prim> {
     let mut out = Vec::new();
     let text = |out: &mut Vec<Prim>, st: &str, x: i32, y: i32, size: Size, colour: u8| {
         out.extend(ht.text(st.as_bytes(), x, y, 0, size, colour, 0x60).into_iter().map(Prim::Sprt));
     };
     let player = s.k8(kart::PLAYER);
     if s.special.0 != -1 {
-        let y = 0x78;
+        let y = match split {
+            None => 0x78,
+            Some(0) => 0x3C,
+            Some(_) => 0xB4,
+        };
         if player == s.special.2 as i32 {
             let f6 = s.special.1 as i32;
             if f6 < 0x5A && s16(f6 % 0x1E) < 0xF {
@@ -531,13 +542,24 @@ pub fn status(ht: &HudTables, t: &ItemTables, s: &ItemHud) -> Vec<Prim> {
         }
     }
     if s.kart[kart::ICON_4F9] & 0x7F == 0 {
-        out.extend(arrow(ht, t, s, 0x3C, s.k16(kart::ARROW)));
+        let y = match split {
+            None => 0x3C,
+            Some(0) => 0x1C,
+            Some(_) => 0x94,
+        };
+        out.extend(arrow_split(ht, t, s, y, s.k16(kart::ARROW), split.is_some()));
     }
     let msg = s.k8(kart::MESSAGE);
     if msg == -1 {
         return out;
     }
-    let y = if s.mode == 2 { 0xD2 } else { 0xB4 };
+    let y = match split {
+        None if s.mode == 2 => 0xD2,
+        None => 0xB4,
+        Some(0) => 0x58,
+        Some(_) => 0xD0,
+    };
+    let msg_size = if split.is_some() { Size::Medium } else { Size::Large };
     let val = s.k16(kart::MSG_VALUE);
     let signed = |t: &ItemTables| if val < 0 { t.fmt_neg.replace("%i", &val.to_string()) } else { t.fmt_pos.replace("%i", &val.to_string()) };
     let by_sign = if val > 0 { 5 } else { 7 };
@@ -562,7 +584,7 @@ pub fn status(ht: &HudTables, t: &ItemTables, s: &ItemHud) -> Vec<Prim> {
         }
         _ => (t.messages.get(msg as usize).cloned().unwrap_or_default(), 5),
     };
-    text(&mut out, &txt, 0x100, y, Size::Large, colour);
+    text(&mut out, &txt, 0x100, y, msg_size, colour);
     out
 }
 
@@ -570,6 +592,11 @@ pub fn status(ht: &HudTables, t: &ItemTables, s: &ItemHud) -> Vec<Prim> {
 /// +0x503 > 0xE, then the 3D outline arrow pointing along `angle`, projected
 /// with the player's camera matrix and drawn as 7 white LineF2.
 pub fn arrow(ht: &HudTables, t: &ItemTables, s: &ItemHud, y: i32, angle: i32) -> Vec<Prim> {
+    arrow_split(ht, t, s, y, angle, false)
+}
+
+/// FUN_80032a40 with split screen (`two`: scale 8, "WRONG WAY" small).
+pub fn arrow_split(ht: &HudTables, t: &ItemTables, s: &ItemHud, y: i32, angle: i32, two: bool) -> Vec<Prim> {
     let mut out = Vec::new();
     if !matches!(s.mode, 1 | 2 | 7 | 0x14) {
         return out;
@@ -577,13 +604,13 @@ pub fn arrow(ht: &HudTables, t: &ItemTables, s: &ItemHud, y: i32, angle: i32) ->
     let sn = t.sin(angle);
     let cs = t.cos(angle);
     if s.k8(kart::WRONG_WAY) > 0xE {
-        out.extend(ht.text(t.wrong_way.as_bytes(), 0x100, y, 0, Size::Medium, 7, 0x60).into_iter().map(Prim::Sprt));
+        out.extend(ht.text(t.wrong_way.as_bytes(), 0x100, y, 0, if two { Size::Small } else { Size::Medium }, 7, 0x60).into_iter().map(Prim::Sprt));
     }
     let m = s.cam;
     let mut px = [0i32; 8];
     let mut py = [0i32; 8];
     if s.e38 < 7 {
-        let k = 0xC;
+        let k = if two { 8 } else { 0xC };
         for i in 0..8 {
             let x = t.arrow_x[i] as i32;
             let z = t.arrow_z[i] as i32;
@@ -606,7 +633,7 @@ pub fn arrow(ht: &HudTables, t: &ItemTables, s: &ItemHud, y: i32, angle: i32) ->
             py[i] = s16(sra_tz(py[i] * k, 5));
         }
     } else {
-        let k = 0xF;
+        let k = if two { 10 } else { 0xF };
         for i in 0..7 {
             let x = t.arrow_x[i] as i32;
             let z = t.arrow_z[i] as i32;
@@ -703,8 +730,12 @@ fn weapon_quad(t: &ItemTables, s: &ItemHud, x: i32, y: i32, kind: i8, scale: i32
 /// 0 when the meter is full), the item ring quad, the thermometer (two
 /// SPRT at 0x230 - slide) and its fill from +0x48A (0..0x1A4 -> 0..0x22 px).
 pub fn meter(t: &ItemTables, s: &ItemHud) -> Vec<Prim> {
+    meter_at(t, s, 0x30)
+}
+
+/// FUN_8004a310 at y base `y0` (split screen: 0xC0 for player 2).
+pub fn meter_at(t: &ItemTables, s: &ItemHud, y0: i32) -> Vec<Prim> {
     let mut out = Vec::new();
-    let y0 = 0x30;
     let pl = (s.kart[kart::PLAYER] & 1) as usize;
     let slide = le::u16(&s.kart, kart::METER_SLIDE) as i32;
     let x = s16(slide + 0x1D0);
@@ -1213,5 +1244,151 @@ pub fn race_hud(ht: &HudTables, t: &ItemTables, st: &crate::hud::HudState, s: &I
     out.extend(p.meter);
     out.extend(minimap(t, s));
     out.extend(timer);
+    out
+}
+
+/// Phase 7: the split-screen HUD (0x800B0CA6 = 1), both players, in the
+/// order FUN_80051698 adds it: FUN_8004F688 per human (player 1 in the top
+/// half 0x800D7388 = (0, 0)..(0x1FF, 0x77), centre (0x100, 0x3C); player 2
+/// in the bottom half 0x800D7398 = (0, 0x78)..(0x1FF, 0xEF), centre (0x100,
+/// 0xB4)), then FUN_80050F64's pre-race texts at y 0x78 and "PRESS START"
+/// (FUN_80050DB8, y 0x78). Ported per FUN_8004F688's split branches: the
+/// +0x4F9 icon, the start game's buttons, the place (x 0x30, 0x18 inside
+/// the half's edge at the split), "LAP n/m" (x 0x68), the weapon slots, the
+/// damage gauge (battles / race flag 8), CHICKEN CHASE's count and its
+/// WINNER / LOSER result, and the result panels around the half's centre.
+/// Not ported for split screen (deferred, docs/spec/hud.md): FUN_80049440
+/// (SPECIAL MOVE, the direction arrow, banners), the turbo meter
+/// FUN_8004A310, the chicken icon FUN_8002FD04, the minimap. `chicken`:
+/// 0x800B0EBD in mode 0x14.
+pub fn two_hud(ht: &HudTables, t: &ItemTables, st: [&crate::hud::HudState; 2], s: [&ItemHud; 2], chicken: u8, press_start: Option<i32>) -> Vec<Prim> {
+    let mut out = Vec::new();
+    let sprites = |v: Vec<crate::hud::Sprite>| v.into_iter().map(Prim::Sprt);
+    let st0 = st[0];
+    let c70 = st0.countdown;
+    for p in 0..2 {
+        let (st, s) = (st[p], s[p]);
+        let (y0, y1, cx, cy) = if p == 0 { (0, 0x77, 0x100, 0x3C) } else { (0x78, 0xEF, 0x100, 0xB4) };
+        // +0x4F9 icon (FUN_8004F688 head)
+        if s.kart[kart::ICON_4F9] & 0x7F != 0 {
+            let y = if c70 == 0 { if p == 0 { 0x1C } else { 0x94 } } else if p == 0 { 0x62 } else { 0x8E };
+            out.push(Prim::Sprt(sprt(0xED, y - 0xC, 0x80, 0x40, 0x25, 0x18, [0x80; 3], 0x15, 6, 0x60)));
+        }
+        if c70 >= st.countdown_start {
+            continue;
+        }
+        if st.mode == 1 && c70 != 0 {
+            if let Some(m) = st.minigame {
+                out.extend(sprites(ht.minigame_at(&m, cy)));
+            }
+        }
+        if c70 > 0 {
+            continue;
+        }
+        // the place: 0x18 inside the half's edge at the split
+        let py = if p == 0 { y1 - 0x18 } else { y0 + 0x18 };
+        let wy = if p == 0 { y0 + 0x2D } else { y1 - 0x2D };
+        let place = |out: &mut Vec<Prim>, abr: u8| {
+            let n = st.position.clamp(1, 6);
+            out.extend(sprites(ht.text(&[b'0' + n], 0x30, py, 0, Size::Large, 7, abr)));
+            let dx = ht.suffix_dx[(n - 1) as usize] as i32;
+            out.extend(sprites(ht.text(ht.suffixes[(n - 1) as usize].as_bytes(), 0x30 + dx, py - 5, 0, Size::Small, 4, abr)));
+        };
+        let finished = st.finished || st.mode == 10;
+        let status = |out: &mut Vec<Prim>| out.extend(status_split(ht, t, s, Some(p)));
+        let meter2 = |out: &mut Vec<Prim>| out.extend(meter_at(t, s, if p == 0 { 0x30 } else { 0xC0 }));
+        match st.mode {
+            _ if finished && s.race_flags & 0x40 != 0 => {
+                // CHICKEN CHASE's result (case 0x14 / case 10)
+                let n = s.kart[0x4AC];
+                if st.race_time < 180_000 {
+                    let won = n == chicken;
+                    let line = ht.fmt_result.replacen("%s", if won { &ht.winner } else { &ht.loser }, 1).replacen("%i", &n.to_string(), 1);
+                    out.extend(sprites(ht.text(line.as_bytes(), 0x100, cy, 0, Size::Large, if won { 5 } else { 7 }, 0x60)));
+                } else {
+                    out.extend(sprites(ht.text(ht.out_of_time.as_bytes(), cx, cy, 0, Size::Large, 7, 0x60)));
+                }
+            }
+            _ if finished => {
+                if let Some(b) = &st.battle {
+                    out.extend(sprites(ht.battle_results_at(b, cx, cy, true)));
+                } else if let Some(sh) = &st.stunt {
+                    out.extend(sprites(ht.stunt_results_at(sh, cx, cy, true)));
+                } else if let Some(r) = &st.results {
+                    out.extend(sprites(ht.results_at(st, r, cx, cy, true)));
+                }
+            }
+            1 => {
+                status(&mut out);
+                let abr = if st.lap == 0 && st.position_flag != 0 { 0 } else { 0x60 };
+                place(&mut out, abr);
+                out.extend(weapons(t, s, wy));
+                let ly = if p == 0 { wy - 0xE } else { wy + 0xE };
+                out.extend(sprites(ht.text(ht.lap.as_bytes(), 0x68, ly, 4, Size::Small, 5, 0x60)));
+                let l = format!("{}/{}", st.lap as u32 + 1, st.laps);
+                out.extend(sprites(ht.text(l.as_bytes(), 0x68, ly - 1, 1, Size::Medium, 4, 0x60)));
+                if s.race_flags & 8 != 0 {
+                    out.extend(damage_gauge(s, 0x68, py));
+                }
+                meter2(&mut out);
+            }
+            2 | 7 => {
+                status(&mut out);
+                out.extend(weapons(t, s, wy));
+                meter2(&mut out);
+                out.extend(damage_gauge(s, 0x30, py));
+            }
+            3 => {
+                status(&mut out);
+                let abr = if s.kart[0x4C6] != 0 { 0x60 } else { 0 };
+                place(&mut out, abr);
+                meter2(&mut out);
+                out.extend(weapons(t, s, wy));
+            }
+            0x14 => {
+                status(&mut out);
+                out.extend(weapons(t, s, wy));
+                meter2(&mut out);
+                let y = if p == 0 { 0x60 } else { 0x8F };
+                let n = s.kart[0x4AC];
+                out.extend(sprites(ht.text(ht.fmt_count.replacen("%i", &n.to_string(), 1).as_bytes(), 0x50, y, 2, Size::Large, if n == 0 { 7 } else { 5 }, 0x60)));
+            }
+            _ => {}
+        }
+    }
+    // FUN_80050F64 (split screen: y 0x78)
+    if c70 != 0 {
+        if c70 < st0.countdown_start {
+            if st0.mode == 1 && c70 > 0x86 {
+                out.extend(sprites(ht.text(ht.copy_the_buttons.as_bytes(), 0x100, 0x78, 0, Size::Large, 7, 0x60)));
+            }
+            if c70 <= 0x77 && c70 % 0x1E >= 0xF {
+                out.extend(sprites(ht.text(ht.ready.as_bytes(), 0x100, 0x78, 0, Size::Large, 6, 0x60)));
+            }
+        } else if !((s[0].kart.len() > 0 && (s[0].e38 > 6 || st0.stunt.is_some())) && c70 < st0.countdown_start + 0xF) {
+            let line = match st0.mode {
+                1 if st0.laps == 1 => Some(ht.race_1_lap.clone()),
+                1 => Some(ht.race_n_laps.replace("%i", &st0.laps.to_string())),
+                2 => Some(ht.two_player_battle.clone()),
+                3 => Some(ht.finish_the_course.clone()),
+                0x14 => Some(ht.catch_chickens.replace("%i", &chicken.to_string())),
+                _ => None,
+            };
+            if let Some(l) = line {
+                out.extend(sprites(ht.text(l.as_bytes(), 0x100, 0x78, 0, Size::Large, 5, 0x60)));
+            }
+        }
+    }
+    // FUN_80050B2C: the race clock at the split (y 0x78; x 0x1C0 on a
+    // stunt course)
+    if c70 == 0 && matches!(st0.mode, 1 | 2 | 3 | 0x14) {
+        let x = if st0.stunt.is_some() { 0x1C0 } else { 0x100 };
+        out.extend(sprites(ht.text(crate::hud::timer_text(st0.race_time).as_bytes(), x, 0x78, 0, Size::Medium, 4, 0x60)));
+    }
+    if let Some(f) = press_start {
+        if f.rem_euclid(0x3C) < 0x2D {
+            out.extend(sprites(ht.text(ht.press_start.as_bytes(), 0x100, 0x78, 0, Size::Medium, 4, 0x60)));
+        }
+    }
     out
 }

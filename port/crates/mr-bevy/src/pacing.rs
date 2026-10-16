@@ -58,6 +58,10 @@ pub fn low_latency() -> bool {
 pub struct PadLatch {
     /// This frame's sample.
     pub now: u16,
+    /// Phase 7: player 2's pad this frame (split screen), and its presses
+    /// since the last tick (low latency).
+    pub now2: u16,
+    pressed2: u16,
     /// Buttons that went down since the last tick took its buttons.
     pressed: u16,
     /// Counts changes of the sample (press / release events).
@@ -76,6 +80,13 @@ impl PadLatch {
         let b = self.peek();
         self.pressed = 0;
         self.tick_gen = [self.tick_gen[1], self.gen];
+        b
+    }
+
+    /// Player 2's buttons for the tick that runs now (as `take_for_tick`).
+    pub fn take2_for_tick(&mut self) -> u16 {
+        let b = if self.low_latency { self.now2 | self.pressed2 } else { self.now2 };
+        self.pressed2 = 0;
         b
     }
 
@@ -102,8 +113,13 @@ pub struct Lookahead {
 }
 
 /// PreUpdate, after Bevy's input systems: sample the pad.
-pub fn sample(keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, mut latch: ResMut<PadLatch>, mut log: Option<ResMut<LatencyLog>>) {
-    let mut m = input::sample(&keys, &pads);
+pub fn sample(keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, pads2: Query<(Entity, &Gamepad)>, mut latch: ResMut<PadLatch>, mut log: Option<ResMut<LatencyLog>>) {
+    // phase 7: player 2's pad always (the menus read it in player 2's
+    // turn); split screen: the pads split between the players
+    let (a, b) = input::sample_two(&keys, &pads2);
+    latch.pressed2 |= b & !latch.now2;
+    latch.now2 = b;
+    let mut m = if input::two_players() { a } else { input::sample(&keys, &pads) };
     if let Some(l) = log.as_mut() {
         m |= l.inject();
     }
@@ -134,7 +150,15 @@ pub fn session_pose(s: &mr_sim::session::Session) -> Pose {
     for (i, v) in cm.iter_mut().enumerate() {
         *v = c.matrix[i / 3][i % 3] as i32;
     }
-    Pose { x: i32at(0), y: i32at(4), z: i32at(8), heading: i16::from_le_bytes([r[0xE], r[0xF]]) as i32, m, cam: Some((c.pos, cm)) }
+    // phase 7: player 2's camera (split screen)
+    let cam2 = s.camera2.as_ref().map(|c| {
+        let mut cm = [0i32; 9];
+        for (i, v) in cm.iter_mut().enumerate() {
+            *v = c.matrix[i / 3][i % 3] as i32;
+        }
+        (c.pos, cm)
+    });
+    Pose { x: i32at(0), y: i32at(4), z: i32at(8), heading: i16::from_le_bytes([r[0xE], r[0xF]]) as i32, m, cam: Some((c.pos, cm)), cam2 }
 }
 
 fn frames(s: &mr_sim::session::Session) -> Vec<KartFrame> {

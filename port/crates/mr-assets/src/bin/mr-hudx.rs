@@ -96,9 +96,14 @@ pub const KART0: u32 = 0x800C_30A8;
 
 /// The minimal HUD state and the item HUD state at a captured VBlank.
 pub fn states(c: &Cap, vb: u32) -> (HudState, ItemHud, [(u16, u16); 32]) {
+    states_of(c, vb, 0)
+}
+
+/// `states` for human `slot` (phase 7: 1 = player 2, camera 0x800C4FB0).
+pub fn states_of(c: &Cap, vb: u32, slot: u32) -> (HudState, ItemHud, [(u16, u16); 32]) {
     let i32at = |a: u32| le::i32(&c.read(vb, a, 4), 0);
     let i16at = |a: u32| le::i16(&c.read(vb, a, 2), 0);
-    let rec = c.read(vb, KART0, 0x504);
+    let rec = c.read(vb, KART0 + 0x504 * slot, 0x504);
     // The RAM row at VBlank t holds the state frame t was built from, except
     // what FUN_8005c2ec advances after the draw at the end of the frame: the
     // frame counter, the race clock and the HUD pulse. Take those from the
@@ -125,7 +130,7 @@ pub fn states(c: &Cap, vb: u32) -> (HudState, ItemHud, [(u16, u16); 32]) {
             MapKart { x: le::i32(&r, 0), z: le::i32(&r, 8), heading: le::i16(&r, 0xE), flags: r[0x496], character: r[0x4B2], damage: le::i16(&r, 0x440) }
         })
         .collect();
-    let cm = c.read(vb, 0x800C_4F40, 0x12);
+    let cm = c.read(vb, 0x800C_4F40 + 0x70 * slot, 0x12);
     let mut cam = [[0i16; 3]; 3];
     for (k, v) in cam.iter_mut().flatten().enumerate() {
         *v = le::i16(&cm, 2 * k);
@@ -144,7 +149,7 @@ pub fn states(c: &Cap, vb: u32) -> (HudState, ItemHud, [(u16, u16); 32]) {
         kart: rec,
         karts,
         players: i16at(0x800B_0E28).max(0) as usize,
-        race_flags: 0,
+        race_flags: if slot > 0 || i16at(0x800B_0E28) > 1 { le::u16(&c.read(vb, 0x800B_07E2, 2), 0) } else { 0 },
         gauge_rgb: None,
     };
     // The stunt trial (race type 3): its HUD state (the course record from
@@ -259,7 +264,18 @@ fn main() {
         let vb: u32 = v.parse().expect("vb");
         let (st, it, slots) = states(&cap, vb);
         println!("# vb {vb}");
-        for p in hud_items::race_hud(&ht, &t, &st, &it) {
+        // phase 7: split screen (0x800B0CA6): both players' HUD
+        let two = cap.read(vb, 0x800B_0CA6, 1)[0] != 0;
+        let prims = if two {
+            let (st2, it2, _) = states_of(&cap, vb, 1);
+            let f88 = cap.read(vb, 0x800B_0F88, 1)[0] != 0 || cap.read(vb, 0x800B_0EBE, 1)[0] != 0;
+            let press = (st.mode == 10 && f88).then(|| le::i32(&cap.read(vb, 0x800B_0AF0, 4), 0));
+            let chicken = if cap.has(0x800B_0EBD, 1) { cap.read(vb, 0x800B_0EBD, 1)[0] } else { 10 };
+            hud_items::two_hud(&ht, &t, [&st, &st2], [&it, &it2], chicken, press)
+        } else {
+            hud_items::race_hud(&ht, &t, &st, &it)
+        };
+        for p in prims {
             match p {
                 Prim::Sprt(s) => {
                     let (tp, cl) = s.attrs(&slots);

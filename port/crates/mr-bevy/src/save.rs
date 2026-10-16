@@ -119,6 +119,7 @@ pub fn persist() {
         let sv = st.i64("sound_volume", 12).clamp(0, 15) as u8;
         s.block.set_volumes(mv, sv);
         s.block.set_alt_controls(0, st.get("controller_config") == Some("B"));
+        s.block.set_alt_controls(1, st.get("controller_config_2") == Some("B"));
         if s.written.as_ref() == Some(&s.block) {
             return;
         }

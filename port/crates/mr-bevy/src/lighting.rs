@@ -32,7 +32,7 @@ pub fn plugin(app: &mut App) {
 fn apply(
     settings: Res<Settings>,
     sky: Option<Res<SkyHorizon>>,
-    cams: Query<Entity, (With<crate::ChaseCamera>, Without<DistanceFog>)>,
+    cams: Query<Entity, (Or<(With<crate::ChaseCamera>, With<crate::ChaseCamera2>)>, Without<DistanceFog>)>,
     mut commands: Commands,
 ) {
     if settings.lighting() != Lighting::Enhanced {

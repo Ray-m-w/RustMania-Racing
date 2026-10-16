@@ -18,12 +18,18 @@ steered live toward CHICKEN CHASE's chicken (0x800CB658; heading kart
 +0xE, 4096 a turn, forward (sin, cos)), CROSS held, LEFT / RIGHT by the
 sign of the angle; a plain closed loop over TCP, so the pad words are
 whatever it sent (the capture holds them).
+
+--hud VB,VB,...: a HUD check run instead (HUD_REGIONS, the runtime's
+VBlank counter per row as fx_capture.py, and the GP0 packets of the frames
+drawn around each VBlank in gpu/<VB>.json) for tools/oracle/hudx_check.py.
 """
 import math
 import json
 import os
 import sys
 import time
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "psxrecomp", "tools"))
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -36,6 +42,13 @@ from oracle import Oracle, mask  # noqa: E402
 import capture_course  # noqa: E402
 
 REGIONS = capture_course.COURSE_REGIONS + [(0x800CB658, 0x28), (0x800B0EBC, 4)]
+HUD_REGIONS = [
+    (0x800C3000, 0xA8 + 2 * 0x504),  # kart index table + both players' records
+    (0x800C4F40, 0x120),             # cameras
+    (0x800B0700, 0x900),             # game globals
+    (0x800DFF00, 0x180),             # texture slot table
+    (0x800CB658, 0x28),              # the chicken
+]
 
 
 def main():
@@ -45,6 +58,11 @@ def main():
     end_vb = int(route["end_vb"])
     slot = route.get("slot", gc.SCRATCH)
     pad2 = sorted([tuple(p) for p in route.get("pad2", [])])
+    hud = sorted(int(x) for x in sys.argv[sys.argv.index("--hud") + 1].split(",")) if "--hud" in sys.argv else []
+    regions = HUD_REGIONS if hud else REGIONS
+    vbts = {}
+    if hud:
+        os.makedirs(os.path.join(outdir, "gpu"), exist_ok=True)
     with OracleLock():
         o, b = Oracle(), Bridge()
         warm_up(o, b, 2)
@@ -52,7 +70,7 @@ def main():
             name, kind = route["state"].rsplit("_", 1)
             gc.install(name, kind.split(".")[0], gc.SCRATCH)
             slot = gc.SCRATCH
-        b.set_regions(REGIONS)
+        b.set_regions(regions)
         b.arm_route([(s[0], active_high(s[1]), 0x80, 0x80, 0x80, 0x80) for s in route["steps"]], end_vb=end_vb)
         # pad 2 plugged in, nothing pressed, before the restore
         o.q("set_input", port=2, buttons=0xFFFF)
@@ -92,6 +110,26 @@ def main():
                     seq0 = sq + 1
                     if g == gen and vbr not in rows:
                         rows[vbr] = data
+                        vbts[vbr] = vbt
+                while hud and rows and max(rows) >= hud[0] + 4:
+                    t = hud.pop(0)
+                    base = vbts.get(t)
+                    if base is None:
+                        continue
+                    import psx_gpu_frame as gf
+                    from fx_capture import compact
+                    dumps = {}
+                    with gf.DebugConn(port=4370) as c:
+                        for f in range(base - 1, base + 3):
+                            try:
+                                d = gf.capture(c, frame=f)
+                            except gf.DebugError as e:
+                                print("frame", f, e)
+                                continue
+                            if len(d["prims"]) > 50:
+                                dumps[f] = compact(d["prims"])
+                    json.dump({"vbr": t, "vbt": base, "frames": dumps}, open(os.path.join(outdir, "gpu", "%d.json" % t), "w"))
+                    print("vb", t, "frames", {k: len(v) for k, v in dumps.items()}, flush=True)
                 if rows and max(rows) >= end_vb + 30:
                     break
                 time.sleep(0.002)
@@ -102,7 +140,7 @@ def main():
     with open(os.path.join(outdir, "frames.bin"), "wb") as f:
         for k in keys:
             f.write(rows[k])
-    meta = {"route": route, "regions": [[a, n] for a, n in REGIONS], "vb": keys, "restore_gen": gen,
+    meta = {"route": route, "regions": [[a, n] for a, n in regions], "vb": keys, "vbt": [vbts.get(k, 0) for k in keys], "restore_gen": gen,
             "first_vb": keys[0], "last_vb": keys[-1], "pad2_sent": sent,
             "missing": [v for v in range(keys[0], keys[-1] + 1) if v not in rows]}
     with open(os.path.join(outdir, "meta.json"), "w") as f:

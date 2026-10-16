@@ -72,6 +72,8 @@ pub struct Pose {
     /// The game's camera this tick: eye (kart units) and 4.12 view matrix
     /// (rows right, down, forward), when known (oracle replay or mr-sim).
     pub cam: Option<([i32; 3], [i32; 9])>,
+    /// Phase 7: player 2's camera (split screen), as `cam`.
+    pub cam2: Option<([i32; 3], [i32; 9])>,
 }
 
 impl Pose {
@@ -105,7 +107,7 @@ impl Pose {
             }
             ([c("cam_x"), c("cam_y"), c("cam_z")], cm)
         }).filter(|(_, cm)| *cm != [0; 9]);
-        Pose { x: c("x"), y: c("y"), z: c("z"), heading: c("heading"), m, cam }
+        Pose { x: c("x"), y: c("y"), z: c("z"), heading: c("heading"), m, cam, cam2: None }
     }
 }
 
@@ -137,6 +139,18 @@ pub struct PlayerKart;
 
 #[derive(Component)]
 pub struct ChaseCamera;
+
+/// Phase 7: player 2's view (split screen, the bottom half): its chase
+/// camera (`ChaseCamera2`) and that camera's far-pass child (`View2`).
+#[derive(Component)]
+pub struct ChaseCamera2;
+
+#[derive(Component)]
+pub struct View2;
+
+/// Phase 7: split screen on (a two-player session; sim_tick sets it).
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Split(pub bool);
 
 #[derive(Component)]
 pub struct Sky;
@@ -226,11 +240,18 @@ fn select_objects(
     }
 }
 
-/// The sky dome is centred on the eye (the game draws it with zero translation).
-fn follow_sky(cam: Query<&Transform, With<ChaseCamera>>, mut sky: Query<&mut Transform, (With<Sky>, Without<ChaseCamera>)>) {
+/// The sky dome is centred on the eye (the game draws it with zero
+/// translation); phase 7: player 2's copy on its eye.
+#[allow(clippy::type_complexity)]
+fn follow_sky(
+    cam: Query<&Transform, With<ChaseCamera>>,
+    cam2: Query<&Transform, (With<ChaseCamera2>, Without<ChaseCamera>)>,
+    mut sky: Query<(&mut Transform, Has<scene::Sky2>), (With<Sky>, Without<ChaseCamera>, Without<ChaseCamera2>)>,
+) {
     let Ok(c) = cam.single() else { return };
-    for mut s in sky.iter_mut() {
-        s.translation = c.translation;
+    let c2 = cam2.single().ok();
+    for (mut s, second) in sky.iter_mut() {
+        s.translation = if second { c2.unwrap_or(c).translation } else { c.translation };
     }
 }
 
@@ -361,7 +382,17 @@ impl SimRun {
             let c = arg("--character").unwrap_or(0);
             let v = arg("--vehicle").unwrap_or(if c == 0 { 0 } else { menus::tables().default_vehicle.get(c as usize).copied().unwrap_or(0) });
             let menu = std::env::args().any(|a| a == "--menu") && !title::on_title() && !menus::tool_run();
-            let cfg = if menu { courses::menu_config(pacing::logic_hz(), c, v) } else { courses::session_config(pacing::logic_hz(), c, v) };
+            let mut cfg = if menu { courses::menu_config(pacing::logic_hz(), c, v) } else { courses::session_config(pacing::logic_hz(), c, v) };
+            // phase 7 (tests, shots): `--players 2` a split-screen race from
+            // the start, `--race-flags N` (0x40: CHICKEN CHASE)
+            if !menu && arg("--players") == Some(2) {
+                cfg.players = 2;
+                cfg.opponents = 0;
+                cfg.lineup = None;
+                if let Some(f) = settings::arg_value("--race-flags").and_then(|v| v.parse::<u16>().ok()) {
+                    cfg.race_flags = f;
+                }
+            }
             let mut s = mr_sim::session::Session::with_config(&mut disc, cfg).expect("start the mr-sim session");
             title::prepare(&mut s);
             if !menus::tool_run() && !title::on_title() {
@@ -479,6 +510,7 @@ fn main() {
         // Stored 15-bit like any fill: (0, 2, 11) -> (0, 16, 90) on screen.
         .insert_resource(ClearColor(psxfx::psx_fill(courses::clear_rgb())))
         .insert_resource(Player { driver, pose: Pose::default(), prev: Pose::default(), tick: 0, buttons: 0, kart: None, prev_kart: None })
+        .init_resource::<Split>()
         .insert_resource(ghost::Ghost::new(ghost))
         .add_systems(Startup, (scene::setup, setup_camera))
         .add_systems(FixedUpdate, (sim_tick, ghost::tick.after(sim_tick)))
@@ -524,6 +556,33 @@ fn setup_camera(mut c: Commands, settings: Res<settings::Settings>, mut meshes: 
         Transform::from_xyz(0.0, 3.0, 8.0),
         ChaseCamera,
     ));
+    // Phase 7: player 2's view (split screen), off until a two-player
+    // session: its chase camera (order 3) over its own far pass (order 2:
+    // the sky copy on SKY2_LAYER and DAT layer 1); neither clears (the
+    // first far pass clears the whole target).
+    c.spawn((
+        Camera3d::default(),
+        Camera { order: 3, clear_color: ClearColorConfig::None, is_active: false, ..default() },
+        Projection::Perspective(PerspectiveProjection { fov: 2.0 * (60.0f32 / 160.0).atan(), near: 0.05, far: 2000.0, ..default() }),
+        Tonemapping::None,
+        settings.msaa(),
+        Transform::from_xyz(0.0, 3.0, 8.0),
+        ChaseCamera2,
+        View2,
+    ))
+    .with_children(|ch| {
+        ch.spawn((
+            Camera3d::default(),
+            Camera { order: 2, clear_color: ClearColorConfig::None, is_active: false, ..default() },
+            Projection::Perspective(PerspectiveProjection { fov: 2.0 * (60.0f32 / 160.0).atan(), near: 0.05, far: 2000.0, ..default() }),
+            Tonemapping::None,
+            settings.msaa(),
+            Transform::default(),
+            bevy::camera::visibility::RenderLayers::from_layers(&[scene::FAR_LAYER, scene::SKY2_LAYER]),
+            View2,
+            scene::FarCamera2,
+        ));
+    });
     // Pillarbox / letterbox bars (aspect = 4:3 on a wide window): black, as
     // the 3D cameras' clear (the game's colour) fills the whole target.
     c.spawn((
@@ -551,6 +610,13 @@ fn setup_camera(mut c: Commands, settings: Res<settings::Settings>, mut meshes: 
     c.insert_resource(GlobalAmbientLight { brightness: 1500.0, ..default() });
 }
 
+/// The game's view matrix (rows right, down, forward, 4.12) as a Bevy camera
+/// rotation (camera.md).
+fn cam_rot(m: [i32; 9]) -> Quat {
+    let f = |i: usize| m[i] as f32 / 4096.0;
+    Quat::from_mat3(&Mat3::from_cols(Vec3::new(f(0), -f(1), -f(2)), Vec3::new(-f(3), f(4), f(5)), Vec3::new(-f(6), f(7), f(8)))).normalize()
+}
+
 /// The 3D view's rectangle in the window (physical pixels): the whole window
 /// when it is 4:3 or wider and `aspect = native`; otherwise the largest
 /// centred 4:3 rectangle (pillarbox / letterbox).
@@ -567,10 +633,12 @@ pub fn view_rect(win: UVec2, aspect: settings::Aspect) -> (UVec2, UVec2) {
 /// Keep every camera (3D, far pass, HUD) on `view_rect`; the projections
 /// follow the viewport's aspect (vertical FOV fixed: wider windows see more
 /// to the sides, as in the game's 90-degree horizontal view at 4:3).
+#[allow(clippy::type_complexity)]
 fn fit_viewports(
     settings: Res<settings::Settings>,
+    split: Res<Split>,
     win: Query<&Window, With<bevy::window::PrimaryWindow>>,
-    mut cams: Query<&mut Camera, Or<(With<ChaseCamera>, With<scene::FarCamera>, With<hud::HudCamera>)>>,
+    mut cams: Query<(&mut Camera, &mut Projection, Has<View2>, Has<hud::HudCamera>), Or<(With<ChaseCamera>, With<scene::FarCamera>, With<hud::HudCamera>, With<View2>)>>,
 ) {
     let Ok(w) = win.single() else { return };
     let size = w.physical_size();
@@ -578,12 +646,30 @@ fn fit_viewports(
         return;
     }
     let (pos, sz) = view_rect(size, settings.aspect());
-    let want = if pos == UVec2::ZERO && sz == size {
+    let whole = if pos == UVec2::ZERO && sz == size {
         None
     } else {
         Some(bevy::camera::Viewport { physical_position: pos, physical_size: sz, ..default() })
     };
-    for mut c in cams.iter_mut() {
+    // Phase 7: split screen (FUN_80078F38 / FUN_80029F40): player 1 in the
+    // top half (OFY 60, lines 0..119), player 2 in the bottom half (OFY
+    // 180, lines 120..239) of the view rectangle; H = 160 over a 120-line
+    // half: vertical FOV 2 * atan(60 / 160). The HUD keeps the whole view.
+    let top = sz.y / 2;
+    let half = |second: bool| Some(bevy::camera::Viewport { physical_position: UVec2::new(pos.x, pos.y + if second { top } else { 0 }), physical_size: UVec2::new(sz.x, if second { sz.y - top } else { top }), ..default() });
+    let fov = 2.0 * (if split.0 { 60.0f32 } else { 120.0 } / 160.0).atan();
+    for (mut c, mut proj, second, hud) in cams.iter_mut() {
+        let want = if hud || !split.0 { whole.clone() } else { half(second) };
+        if second && c.is_active != split.0 {
+            c.is_active = split.0;
+        }
+        if !hud {
+            if let Projection::Perspective(pp) = &mut *proj {
+                if (pp.fov - fov).abs() > 1e-6 {
+                    pp.fov = fov;
+                }
+            }
+        }
         let same = match (&c.viewport, &want) {
             (None, None) => true,
             (Some(a), Some(b)) => a.physical_position == b.physical_position && a.physical_size == b.physical_size,
@@ -647,10 +733,13 @@ fn fit_bars(
     }
 }
 
-fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_g: ResMut<hud::HudGlobals>, mut feed: ResMut<karts::KartFeed>, mut front: ResMut<menus::Front>) {
+#[allow(clippy::too_many_arguments)]
+fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_g: ResMut<hud::HudGlobals>, mut feed: ResMut<karts::KartFeed>, mut front: ResMut<menus::Front>, mut split: ResMut<Split>) {
     // The pad as sampled this frame (pacing.rs; with low_latency also the
     // presses since the last tick).
     let buttons = latch.take_for_tick();
+    // phase 7: player 2's pad (split screen)
+    let buttons2 = latch.take2_for_tick();
     p.prev = p.pose;
     let tick = p.tick;
     let mut pose = p.pose;
@@ -673,6 +762,8 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
                 && front.page == menus::Page::None
                 && !title::on_title()
                 && matches!(run.session.phase(), mr_sim::race::RacePhase::Finished { .. })
+                // (two players: once both are out, the results, mode 10)
+                && (run.session.globals.humans < 2 || run.session.globals.mode == 10)
                 && buttons & (input::START | input::CROSS) != 0
                 && prev_buttons & (input::START | input::CROSS) == 0
             {
@@ -721,6 +812,19 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
                     } else {
                         courses::session_config(hz, front.character, front.vehicle)
                     };
+                    // phase 7: two players (split screen): player 2's pick,
+                    // the 2-player laps (0x800E038D)
+                    let mut cfg = cfg;
+                    if front.players == 2 {
+                        cfg.players = 2;
+                        cfg.p2_character = front.p2_character;
+                        cfg.p2_vehicle = front.p2_vehicle;
+                        cfg.opponents = 0;
+                        cfg.lineup = None;
+                        if cfg.race_flags & 0x40 == 0 && !menus::tool_run() {
+                            cfg.laps = save::with(|s| s.block.laps(1)).max(1) as i16;
+                        }
+                    }
                     **run = SimRun::with_config(cfg);
                     run.session.autopilot = autopilot;
                     // the vehicles won so far (0x800E02C0: the specials'
@@ -752,6 +856,7 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
                 r.iter().take_while(|(v, _)| *v <= vb).last().map(|(_, m)| *m).unwrap_or(0)
             });
             let b = if idle { 0 } else { scripted.unwrap_or(buttons) };
+            run.session.pad2 = if idle { 0 } else { buttons2 };
             match run.session.tick(b) {
                 Ok(()) => {
                     if !idle {
@@ -811,27 +916,16 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
                 hud_g.results = (s.globals.mode == 10).then(|| mr_assets::hud::Results { press_start: true, frame: s.globals.results_clock, ..Default::default() });
             }
             let r = s.record();
-            let i32at = |o: usize| i32::from_le_bytes([r[o], r[o + 1], r[o + 2], r[o + 3]]);
-            let mut m = [0i32; 9];
-            for (i, v) in m.iter_mut().enumerate() {
-                *v = i16::from_le_bytes([r[0x18C + 2 * i], r[0x18D + 2 * i]]) as i32;
-            }
-            let c = &s.camera;
-            let mut cm = [0i32; 9];
-            for (i, v) in cm.iter_mut().enumerate() {
-                *v = c.matrix[i / 3][i % 3] as i32;
-            }
-            pose = Pose {
-                x: i32at(0),
-                y: i32at(4),
-                z: i32at(8),
-                heading: i16::from_le_bytes([r[0xE], r[0xF]]) as i32,
-                m,
-                cam: Some((c.pos, cm)),
-            };
+            pose = pacing::session_pose(s);
             kart = Some(r.to_vec());
             }
         }
+    }
+    // phase 7: split screen while a two-player race runs (not in the menus)
+    let two = matches!(&p.driver, Driver::Sim(run) if run.session.camera2.is_some()) && !front.page.course_menu() && front.page == menus::Page::None;
+    input::set_two_players(two);
+    if split.0 != two {
+        split.0 = two;
     }
     p.prev_kart = p.kart.take();
     p.kart = kart;
@@ -854,7 +948,22 @@ fn place_player(p: Res<Player>, time: Res<Time<Fixed>>, mut q: Query<&mut Transf
 /// The game's camera (docs/spec/camera.md): eye + view matrix from the
 /// replayed trace or mr-sim, rotation = cols (m00,-m01,-m02), (-m10,m11,m12),
 /// (-m20,m21,m22). Without one, a simple chase stand-in.
-fn follow_camera(p: Res<Player>, time: Res<Time<Fixed>>, mut q: Query<&mut Transform, (With<ChaseCamera>, Without<PlayerKart>)>, k: Query<&Transform, With<PlayerKart>>) {
+#[allow(clippy::type_complexity)]
+fn follow_camera(
+    p: Res<Player>,
+    time: Res<Time<Fixed>>,
+    mut q: Query<&mut Transform, (With<ChaseCamera>, Without<PlayerKart>)>,
+    mut q2: Query<&mut Transform, (With<ChaseCamera2>, Without<ChaseCamera>, Without<PlayerKart>)>,
+    k: Query<&Transform, With<PlayerKart>>,
+) {
+    // Phase 7: player 2's camera (split screen)
+    if let (Some((e0, m0)), Some((e1, m1))) = (p.prev.cam2.or(p.pose.cam2), p.pose.cam2) {
+        let a = time.overstep_fraction();
+        for mut cam in q2.iter_mut() {
+            cam.translation = to_bevy(e0[0], e0[1], e0[2]).lerp(to_bevy(e1[0], e1[1], e1[2]), a);
+            cam.rotation = cam_rot(m0).slerp(cam_rot(m1), a);
+        }
+    }
     if let (Some((e0, m0)), Some((e1, m1))) = (p.prev.cam.or(p.pose.cam), p.pose.cam) {
         let a = time.overstep_fraction();
         let rot = |m: [i32; 9]| {

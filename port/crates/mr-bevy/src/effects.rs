@@ -326,6 +326,33 @@ pub fn items_from_mem(t: &FxTables, m: &Mem, cam: FxCamera, frame: i32, out: &mu
     }
 }
 
+/// Phase 7: CHICKEN CHASE's chicken (FUN_8007E21C, game mode 0x14): within
+/// 20000 view units of the eye on x and z, FUN_80030AD8(chicken >> 5,
+/// sin(heading), cos(heading), -1): one of the view frames of 0x800A8848 by
+/// its heading (0x800CB678) seen from the camera yaw, the camera's roll,
+/// slot 0x14 CLUT + 7, 0xC0 x 0xC0 (ratan2(sin, cos) taken as the heading).
+fn chicken(t: &FxTables, s: &mr_sim::session::Session, cam: FxCamera, out: &mut Vec<Billboard>) {
+    if s.globals.mode != 0x14 && !(s.globals.mode == 10 && s.globals.race_flags & 0x40 != 0) {
+        return;
+    }
+    let c = &s.globals.chicken;
+    let p = [c.pos[0] >> 5, c.pos[1] >> 5, c.pos[2] >> 5];
+    let near = |a: i32, e: i32| ((a - (e >> 5)) as u32).wrapping_add(20000) < 0x9C41;
+    if !(near(p[0], cam.eye[0]) && near(p[2], cam.eye[2])) {
+        return;
+    }
+    let mut d = ((c.heading as i32 & 0xFFF) - cam.yaw) as i16 as i32;
+    if d > 0x800 {
+        d -= 0x1000;
+    } else if d < -0x800 {
+        d += 0x1000;
+    }
+    let k = (((d + 0x92) as i16 as i32 & 0xFFF) / 0x125) as usize;
+    let Some(f) = t.anim.get(k) else { return };
+    let (tp, cl) = t.slot_attr(0x14, 7, 0x60);
+    out.push(Billboard { pos: c.pos, hw: 0xC0, hh: 0xC0, angle: cam.roll & 0xFFF, anchor: 0, flat: false, u: f[0] as u8, v: f[1] as u8, uw: f[2] as i32, vh: 0x1F, tpage: tp, clut: cl, rgb: [0x80; 3], semi: false, abr: 3, bias: 0 });
+}
+
 /// Per-kart effects from a kart record (0x504 bytes), as FUN_8007E21C's
 /// kart loop and FUN_80037B80 draw them:
 /// - +0x4D6 (special move): two additive sparkles spinning both ways at the
@@ -774,6 +801,7 @@ pub(crate) fn session_source(
     out.eye = cam.eye;
     items_from_mem(&t, m, cam, src.frame, &mut out.billboards);
     doozer_goals(&t, s, cam, src.frame, &mut out.billboards);
+    chicken(&t, s, cam, &mut out.billboards);
     let mut h = 0u8;
     for (slot, rec) in &src.recs {
         let w = &s.world;

@@ -97,6 +97,9 @@ pub struct RaceGlobals {
     pub adv: Adventure,
     /// Phase 7: CHICKEN CHASE's chicken (game mode 0x14; chicken.rs).
     pub chicken: crate::chicken::Chicken,
+    /// 0x800B0C20: the first finisher's time in a stunt race (-1 none;
+    /// race load sets -1).
+    pub first_finish: i32,
 }
 
 /// ADVENTURE state (game mode 0xB, 0x800B07E6 != 0) and the save bits the
@@ -276,6 +279,7 @@ impl RaceGlobals {
                 marker: m.i8(0x800B_068F),
             },
             chicken: crate::chicken::Chicken::read(m),
+            first_finish: m.i32(0x800B_0C20),
             lap_record: m.i32(0x800E_0190u32.wrapping_add((8 * m.i8(0x800B_0E32) as i32 + 0x20 * m.i8(0x800B_0E38) as i32) as u32)),
         }
     }

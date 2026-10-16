@@ -2,7 +2,21 @@
 //! The mapping mirrors what the game sees on this save: CROSS accelerates,
 //! SQUARE/CIRCLE/TRIANGLE as on the pad, D-pad steers (docs/spec/kart-state.md).
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use bevy::prelude::*;
+
+/// Phase 7: a two-player session runs (split screen): the pads split
+/// between the players (`sample_two`). Set by the session driver.
+static TWO: AtomicBool = AtomicBool::new(false);
+
+pub fn set_two_players(on: bool) {
+    TWO.store(on, Ordering::Relaxed);
+}
+
+pub fn two_players() -> bool {
+    TWO.load(Ordering::Relaxed)
+}
 
 /// Bit 0 (unused by the race: kept for the complete pad map).
 #[allow(dead_code)]
@@ -28,6 +42,59 @@ pub const SQUARE: u16 = 1 << 15;
 /// right trigger = cross, left trigger = circle, shoulders = L1/R1, stick
 /// clicks L3/R3 = L2/R2, left stick folds into the D-pad.
 pub fn sample(keys: &ButtonInput<KeyCode>, pads: &Query<&Gamepad>) -> u16 {
+    let mut m = keyboard_p1(keys);
+    for g in pads.iter() {
+        m |= gamepad(g);
+    }
+    m
+}
+
+/// Phase 7: (player 1, player 2) pads. Gamepads in connection order: the
+/// first is player 1's, the second player 2's (more are ignored). The
+/// keyboard: player 1's keys as `sample`; player 2's (the fallback when
+/// there is one gamepad or none): J / L steer, I / K up / down, N cross
+/// (accelerate), M square, B circle, H triangle, Backspace start, U / O
+/// L1 / R1, Y / P L2 / R2.
+pub fn sample_two(keys: &ButtonInput<KeyCode>, pads: &Query<(Entity, &Gamepad)>) -> (u16, u16) {
+    let mut v: Vec<(Entity, &Gamepad)> = pads.iter().collect();
+    v.sort_by_key(|(e, _)| *e);
+    let mut a = keyboard_p1(keys);
+    let mut b = keyboard_p2(keys);
+    if let Some((_, g)) = v.first() {
+        a |= gamepad(g);
+    }
+    if let Some((_, g)) = v.get(1) {
+        b |= gamepad(g);
+    }
+    (a, b)
+}
+
+fn keyboard_p2(keys: &ButtonInput<KeyCode>) -> u16 {
+    let k = |c: KeyCode| keys.pressed(c);
+    let mut m = 0u16;
+    for (c, b) in [
+        (KeyCode::KeyJ, LEFT),
+        (KeyCode::KeyL, RIGHT),
+        (KeyCode::KeyI, UP),
+        (KeyCode::KeyK, DOWN),
+        (KeyCode::KeyN, CROSS),
+        (KeyCode::KeyM, SQUARE),
+        (KeyCode::KeyB, CIRCLE),
+        (KeyCode::KeyH, TRIANGLE),
+        (KeyCode::Backspace, START),
+        (KeyCode::KeyU, L1),
+        (KeyCode::KeyO, R1),
+        (KeyCode::KeyY, L2),
+        (KeyCode::KeyP, R2),
+    ] {
+        if k(c) {
+            m |= b;
+        }
+    }
+    m
+}
+
+fn keyboard_p1(keys: &ButtonInput<KeyCode>) -> u16 {
     let mut m = 0u16;
     let k = |c: KeyCode| keys.pressed(c);
     if k(KeyCode::ArrowLeft) { m |= LEFT; }
@@ -43,7 +110,12 @@ pub fn sample(keys: &ButtonInput<KeyCode>, pads: &Query<&Gamepad>) -> u16 {
     if k(KeyCode::KeyW) { m |= R1; }
     if k(KeyCode::KeyE) { m |= L2; }
     if k(KeyCode::KeyR) { m |= R2; }
-    for g in pads.iter() {
+    m
+}
+
+fn gamepad(g: &Gamepad) -> u16 {
+    let mut m = 0u16;
+    {
         let p = |b: GamepadButton| g.pressed(b);
         if p(GamepadButton::South) || p(GamepadButton::RightTrigger2) { m |= CROSS; }
         if p(GamepadButton::West) { m |= SQUARE; }

@@ -213,6 +213,13 @@ pub struct HudTables {
     pub beat_boss: Vec<(u8, String)>,
     pub winner: String,
     pub loser: String,
+    /// Phase 7 (split screen): "2 PLAYER BATTLE" (FUN_80050F64 case 1),
+    /// "CATCH %i CHICKENS" (case 0x13), CHICKEN CHASE's "%s - %i" result
+    /// and "%i" count (FUN_8004F688 case 0x14).
+    pub two_player_battle: String,
+    pub catch_chickens: String,
+    pub fmt_result: String,
+    pub fmt_count: String,
 }
 
 impl HudTables {
@@ -261,6 +268,10 @@ impl HudTables {
                 .collect::<Option<Vec<_>>>()?,
             winner: exe_ptr_str(exe, 0x800B_0248)?,
             loser: exe_ptr_str(exe, 0x800B_0254)?,
+            two_player_battle: exe_ptr_str(exe, 0x800B_0364)?,
+            catch_chickens: exe_ptr_str(exe, 0x800B_0464)?,
+            fmt_result: exe_str(exe, 0x800B_06E4)?,
+            fmt_count: exe_str(exe, 0x800B_06E0)?,
         })
     }
 
@@ -762,7 +773,13 @@ impl HudTables {
     /// FUN_8004cea0 (1 player; viewport centre (0x100, 0x78)) and the
     /// "PRESS START" prompt (FUN_80051698 / FUN_80050db8), in add order.
     pub fn results(&self, st: &HudState, r: &Results) -> Vec<Sprite> {
-        let (cx, cy) = (0x100, 0x78);
+        self.results_at(st, r, 0x100, 0x78, false)
+    }
+
+    /// FUN_8004cea0 around a viewport centre (phase 7: split screen, the
+    /// player's half 0x800D7388 / 0x800D7398 + 8 / + 10; `two`: no rival
+    /// line and no "PRESS START", which FUN_80050DB8 draws once at y 0x78).
+    pub fn results_at(&self, st: &HudState, r: &Results, cx: i32, cy: i32, two: bool) -> Vec<Sprite> {
         let mut out = Vec::new();
         // best lap
         if r.best_lap == 0 {
@@ -799,6 +816,9 @@ impl HudTables {
         out.extend(self.text(&[b'0' + p], cx, y, 0, Size::Large, 7, 0x60));
         let dx = self.suffix_dx[(p - 1) as usize] as i32;
         out.extend(self.text(self.suffixes[(p - 1) as usize].as_bytes(), cx + dx, y - 5, 0, Size::Small, 4, 0x60));
+        if two {
+            return out;
+        }
         // FUN_8004CEA0 tail: "YOU BEAT x" / "x BEAT YOU" in rival races
         if let Some(c) = r.rival {
             if r.rival_blink.rem_euclid(0x3C) < 0x2D {
@@ -819,9 +839,27 @@ impl HudTables {
     /// course record and the flash counter's bit 4 is clear), "TIME", the
     /// gap to the first from 2nd place down, "COURSE FINISHED".
     pub fn stunt_results(&self, s: &StuntHud) -> Vec<Sprite> {
-        let (cx, cy) = (0x100, 0x78);
+        self.stunt_results_at(s, 0x100, 0x78, false)
+    }
+
+    /// FUN_8004E2A8 around a viewport centre; split screen (`two`): "OUT OF
+    /// TIME" at the centre (Medium), no "COURSE FINISHED", the place
+    /// (+0x4CA, digit and suffix) 0x18 above the centre.
+    pub fn stunt_results_at(&self, s: &StuntHud, cx: i32, cy: i32, two: bool) -> Vec<Sprite> {
         let mut out = Vec::new();
+        let place = |out: &mut Vec<Sprite>| {
+            let p = s.shown_place.clamp(1, 6);
+            let y = cy - 0x18;
+            out.extend(self.text(&[b'0' + p], cx, y, 0, Size::Large, 7, 0x60));
+            let dx = self.suffix_dx[(p - 1) as usize] as i32;
+            out.extend(self.text(self.suffixes[(p - 1) as usize].as_bytes(), cx + dx, y - 5, 0, Size::Small, 4, 0x60));
+        };
         if s.time == 180_000 {
+            if two {
+                out.extend(self.text(self.out_of_time.as_bytes(), cx, cy, 0, Size::Medium, 7, 0x60));
+                place(&mut out);
+                return out;
+            }
             out.extend(self.text(self.out_of_time.as_bytes(), cx, 0x1E, 0, Size::Large, 7, 0x60));
             return out;
         }
@@ -833,6 +871,10 @@ impl HudTables {
         if s.place > 1 {
             out.extend(self.text(time_text_cs(s.time - s.first_time, true).as_bytes(), cx + half + 8, cy, 2, Size::Small, 7, 0x60));
         }
+        if two {
+            place(&mut out);
+            return out;
+        }
         out.extend(self.text(self.course_finished.as_bytes(), cx, 0x1E, 0, Size::Large, 5, 0x60));
         out
     }
@@ -843,7 +885,12 @@ impl HudTables {
     /// (orange while it is the course record with race flags 0 and the
     /// flash bit clear) and "TIME", or "OUT OF TIME".
     pub fn battle_results(&self, b: &BattleHud) -> Vec<Sprite> {
-        let (cx, cy) = (0x100, 0x78);
+        self.battle_results_at(b, 0x100, 0x78, false)
+    }
+
+    /// FUN_8004DAE0 around a viewport centre; split screen (`two`): the
+    /// time only for the winner (+0x4BE == 1).
+    pub fn battle_results_at(&self, b: &BattleHud, cx: i32, cy: i32, two: bool) -> Vec<Sprite> {
         let mut out = Vec::new();
         let k = b.counter % 0xB4;
         let (v, label) = if k < 0x3C {
@@ -861,7 +908,9 @@ impl HudTables {
         out.extend(self.text(&[b'0' + p], cx, y, 0, Size::Large, 7, 0x60));
         let dx = self.suffix_dx[(p - 1) as usize] as i32;
         out.extend(self.text(self.suffixes[(p - 1) as usize].as_bytes(), cx + dx, y - 5, 0, Size::Small, 4, 0x60));
-        if b.time < 180_000 {
+        if b.time < 180_000 && two && b.place != 1 {
+            // (2 PLAYER BATTLE: the loser's time is not shown)
+        } else if b.time < 180_000 {
             let col = if b.race_flags == 0 && b.place == 1 && b.time == b.record && (b.counter & 0x1F) < 0x10 { 7 } else { 4 };
             let y = cy + 0x11;
             let (s, w) = self.text_w(time_text_cs(b.time, false).as_bytes(), cx, y, 0, Size::Medium, col, 0x60);
@@ -876,7 +925,12 @@ impl HudTables {
     /// FUN_8004e8e8 (1 player): the four button icons (32x24 cells of slot 5)
     /// around the count. The sparkles (FUN_8002fd04) are not drawn.
     pub fn minigame(&self, m: &Minigame) -> Vec<Sprite> {
-        let yc = 0x3C;
+        self.minigame_at(m, 0x3C)
+    }
+
+    /// FUN_8004e8e8 at centre line `yc` (split screen: 0x3C player 1, 0xB4
+    /// player 2).
+    pub fn minigame_at(&self, m: &Minigame, yc: i32) -> Vec<Sprite> {
         let cells: [(i32, i32, u8, u8); 4] = [(0xD0, yc - 0xC, 0, 0), (0xF0, yc - 0x21, 0x20, 0), (0x110, yc - 0xC, 0, 0x18), (0xF0, yc + 9, 0x20, 0x18)];
         let mut out = Vec::new();
         for (k, (x, y, u, v)) in cells.iter().enumerate() {

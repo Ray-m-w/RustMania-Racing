@@ -86,6 +86,23 @@ pub struct ItemHudInput {
     pub manual: bool,
 }
 
+/// Phase 7: the split-screen HUD's inputs (both players), filled by
+/// `two_from_player` from a two-player session; None otherwise.
+#[derive(Resource, Clone, Default)]
+pub struct TwoHudInput {
+    pub state: Option<TwoHud>,
+}
+
+#[derive(Clone)]
+pub struct TwoHud {
+    pub st: [HudState; 2],
+    pub items: [ItemHud; 2],
+    /// 0x800B0EBD (CHICKEN CHASE's catches to win).
+    pub chicken: u8,
+    /// "PRESS START" (mode 10): the results clock it blinks with.
+    pub press: Option<i32>,
+}
+
 /// A full-screen layer drawn instead of the race HUD while set (the course
 /// pick-list, courses.rs).
 #[derive(Resource, Clone, Debug, Default)]
@@ -126,8 +143,9 @@ impl Plugin for HudPlugin {
             .init_resource::<HudInput>()
             .init_resource::<ItemHudInput>()
             .init_resource::<HudOverlay>()
+            .init_resource::<TwoHudInput>()
             .add_systems(Startup, setup.after(crate::scene::setup))
-            .add_systems(Update, (state_from_player, items_from_player, fit_hud, draw.after(state_from_player).after(items_from_player).after(fit_hud)));
+            .add_systems(Update, (state_from_player, items_from_player, two_from_player.after(state_from_player).after(items_from_player), fit_hud, draw.after(two_from_player).after(fit_hud)));
     }
 }
 
@@ -403,6 +421,52 @@ fn items_from_player(
     });
 }
 
+/// Phase 7: both players' HUD inputs from a two-player session (player 2:
+/// kart 1's record and camera 2's matrix).
+fn two_from_player(p: Res<crate::Player>, g: Res<HudGlobals>, items: Res<ItemHudInput>, mut two: ResMut<TwoHudInput>) {
+    let crate::Driver::Sim(run) = &p.driver else {
+        two.state = None;
+        return;
+    };
+    let s = &run.session;
+    let (Some(cam2), Some(it0)) = (s.camera2.as_ref(), items.state.as_ref()) else {
+        two.state = None;
+        return;
+    };
+    if s.globals.humans < 2 || s.others.is_empty() {
+        two.state = None;
+        return;
+    }
+    let mk = |slot: usize| -> HudState {
+        let rec = kart_of(s, slot).1;
+        let mut st = HudState { countdown: g.countdown, countdown_start: g.countdown_start, mode: g.mode, laps: g.laps, race_time: s.race_clock(), ..HudState::default() }.with_kart(rec);
+        if g.countdown != 0 {
+            st.minigame = Some(hud::Minigame {
+                button: rec[hud::kart::MINIGAME_BUTTON],
+                count: i16::from_le_bytes([rec[hud::kart::MINIGAME_COUNT], rec[hud::kart::MINIGAME_COUNT + 1]]),
+                flicker: g.flicker,
+            });
+        }
+        st.results = results_for(s, slot);
+        st.stunt = stunt_for(s, slot);
+        st.battle = battle_for(s, slot);
+        st
+    };
+    let mut it1 = it0.clone();
+    it1.kart = s.others[0].record.clone();
+    for (r, row) in cam2.matrix.iter().enumerate() {
+        for (c, v) in row.iter().enumerate() {
+            it1.cam[r][c] = *v as i16;
+        }
+    }
+    two.state = Some(TwoHud {
+        st: [mk(0), mk(1)],
+        items: [it0.clone(), it1],
+        chicken: s.globals.chicken.target,
+        press: (s.globals.mode == 10).then_some(s.globals.results_clock),
+    });
+}
+
 /// `--replay-capture` of an fx capture: the item HUD from the captured RAM
 /// (every kart, the camera, the globals; frame counter and pulse as the
 /// frame drew them is approximated by the row itself).
@@ -502,19 +566,35 @@ fn special_globals(s: &mr_sim::session::Session) -> (i16, i16, i8) {
 /// - `press_start`: from the finish on [INFER: DAT_800B0F88 was set
 ///   throughout the oracle's results screen].
 pub fn results_from_session(s: &mr_sim::session::Session) -> Option<hud::Results> {
-    if s.kart.finished == 0 {
+    results_for(s, 0)
+}
+
+/// Kart `slot`'s state and record (0 = player 1; phase 7: 1 = player 2).
+fn kart_of(s: &mr_sim::session::Session, slot: usize) -> (&mr_sim::KartState, &[u8]) {
+    if slot == 0 {
+        (&s.kart, s.record())
+    } else {
+        let o = &s.others[slot - 1];
+        (&o.kart, &o.record)
+    }
+}
+
+/// `results_from_session` for human `slot` (phase 7: split screen).
+pub fn results_for(s: &mr_sim::session::Session, slot: usize) -> Option<hud::Results> {
+    let (k, rec) = kart_of(s, slot);
+    if k.finished == 0 {
         return None;
     }
     let laps = s.globals.laps.clamp(1, 99) as u8;
     let rows = s.results();
     let winner = rows.iter().find(|r| r.place == 1).map(|r| r.slot).unwrap_or(0);
-    let mut leader: &[u8] = s.record();
-    for (slot, _, _, rec) in s.kart_records() {
-        if slot == winner {
-            leader = rec;
+    let mut leader: &[u8] = rec;
+    for (sl, _, _, r) in s.kart_records() {
+        if sl == winner {
+            leader = r;
         }
     }
-    let mut r = hud::Results::from_records(s.record(), leader, laps);
+    let mut r = hud::Results::from_records(rec, leader, laps);
     let fastest = rows.iter().map(|k| k.best_lap).filter(|&b| b > 0).min().unwrap_or(0);
     // (no flash in a REVERSE RACE, race flag 2: FUN_8004CEA0)
     r.best_lap_record = r.best_lap > 0 && r.best_lap <= fastest && s.globals.race_flags & 2 == 0;
@@ -578,10 +658,16 @@ pub fn adventure_from_session(s: &mr_sim::session::Session) -> Option<hud::Adven
 /// (the session's, lowered by this run's finish as the game's save block).
 /// 0x800B0C20 (the first finisher's time) is the player's own (one kart).
 pub fn stunt_from_session(s: &mr_sim::session::Session) -> Option<hud::StuntHud> {
-    if s.globals.race_type != 3 || s.globals.challenge != 0 {
+    stunt_for(s, 0)
+}
+
+/// `stunt_from_session` for human `slot`; with two players the gap is to
+/// the first finisher (0x800B0C20).
+pub fn stunt_for(s: &mr_sim::session::Session, slot: usize) -> Option<hud::StuntHud> {
+    if s.globals.race_type != 3 || s.globals.challenge != 0 || s.globals.race_flags & 0x40 != 0 {
         return None;
     }
-    let k = &s.kart;
+    let k = kart_of(s, slot).0;
     let m = mr_sim::stunt::banner_marks(&s.world);
     Some(hud::StuntHud {
         progress: k.strip as i32 * 0x80 + k.strip_along as i32,
@@ -596,7 +682,7 @@ pub fn stunt_from_session(s: &mr_sim::session::Session) -> Option<hud::StuntHud>
         place: k.race_pos,
         shown_place: k.shown_pos,
         record: s.globals.lap_record,
-        first_time: k.race_time,
+        first_time: if s.globals.humans > 1 && s.globals.first_finish >= 0 { s.globals.first_finish } else { k.race_time },
     })
 }
 
@@ -605,11 +691,16 @@ pub fn stunt_from_session(s: &mr_sim::session::Session) -> Option<hud::StuntHud>
 /// +0x38C, place, clock and the course record (the session's, lowered by
 /// this win as the game's save block).
 pub fn battle_from_session(s: &mr_sim::session::Session) -> Option<hud::BattleHud> {
+    battle_for(s, 0)
+}
+
+/// `battle_from_session` for human `slot` (not in CHICKEN CHASE).
+pub fn battle_for(s: &mr_sim::session::Session, slot: usize) -> Option<hud::BattleHud> {
     // (phase 6b: BATTLE on a race course, race flag 1, game mode 2)
-    if (s.globals.race_type != 2 && s.globals.race_flags & 1 == 0) || s.globals.challenge != 0 || crate::title::on_title() {
+    if (s.globals.race_type != 2 && s.globals.race_flags & 1 == 0) || s.globals.challenge != 0 || crate::title::on_title() || s.globals.mode == 0x14 || s.globals.race_flags & 0x40 != 0 {
         return None;
     }
-    let k = &s.kart;
+    let k = kart_of(s, slot).0;
     // A BOSS CHALLENGE (game mode 7): the bosses past 0x800B0DFE
     let nb = if s.config().boss_challenge { s.globals.adv.bosses.clamp(0, 3) as usize } else { 0 };
     let first = s.others.len() + 1 - nb;
@@ -706,6 +797,7 @@ fn draw(
     input: Res<HudInput>,
     items: Res<ItemHudInput>,
     overlay: Res<HudOverlay>,
+    two: Res<TwoHudInput>,
     res: Option<ResMut<HudRes>>,
     tex: Option<ResMut<VramTextures>>,
     mut images: ResMut<Assets<Image>>,
@@ -717,6 +809,14 @@ fn draw(
     let (Some(mut res), Some(mut tex)) = (res, tex) else { return };
     let prims: Vec<Prim> = match (overlay.prims.as_ref(), input.state, items.state.as_ref()) {
         (Some(o), _, _) => o.clone(),
+        (None, _, _) if two.state.is_some() => {
+            let t = two.state.as_ref().unwrap();
+            let v = hud_items::two_hud(&res.tables, &res.items, [&t.st[0], &t.st[1]], [&t.items[0], &t.items[1]], t.chicken, t.press);
+            if std::env::var("MRM_HUD_DEBUG").is_ok() {
+                eprintln!("two_hud mode {} cd {} fin {} {} prims {}", t.st[0].mode, t.st[0].countdown, t.st[0].finished, t.st[1].finished, v.len());
+            }
+            v
+        }
         (None, Some(st), Some(it)) => hud_items::race_hud(&res.tables, &res.items, &st, it),
         (None, Some(st), None) => res.tables.layout(&st).into_iter().map(Prim::Sprt).collect(),
         _ => Vec::new(),

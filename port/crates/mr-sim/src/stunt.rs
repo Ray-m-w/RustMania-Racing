@@ -170,7 +170,11 @@ pub fn gates(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
         let bits = if k.race_pos == 1 { if b < 0 { 4 } else { 2 } } else if b < 0 { 0x20 } else { 0x10 };
         k.event_bits |= bits;
     }
-    // 0x800B0C20 (the first finisher's time) is not modelled (results).
+    // 0x800B0C20: the first finisher's time (the 2 PLAYER STUNT RACE's
+    // result shows the gap to it; phase 7).
+    if g.first_finish == -1 {
+        g.first_finish = k.race_time;
+    }
     let quads = strip_quads(w);
     if quads != 0 {
         k.progress = (strip(w).map_or(0, |(a, _)| a.len() as i32) + (g.humans as i32 - g.end_mode as i32) + 1) * 0x80;

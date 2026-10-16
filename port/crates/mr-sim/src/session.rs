@@ -718,6 +718,7 @@ impl Session {
                 marker: 0,
             },
             chicken: crate::chicken::Chicken { target: if race_type == 3 { 5 } else { 10 }, ..Default::default() },
+            first_finish: -1,
         };
         // FUN_8008C4AC: the first human's grid slot (*rng++ % karts), the
         // other karts on the following slots; with no opponents the

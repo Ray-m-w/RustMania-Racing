@@ -21,7 +21,7 @@ pin = "v1.0.14 (published 2026-08-17T13:00:20Z), asset cmake-clang-v1-windows-x6
 sha256 = "28da9742385e7ff875b3d9311e8ed89dbdc84f27b6ecba2bc0d0acc11f6d2b4d"
 published_hash = "sha256:28da9742385e7ff875b3d9311e8ed89dbdc84f27b6ecba2bc0d0acc11f6d2b4d (GitHub release asset digest, read from the releases API before download)"
 date = "2026-10-11"
-note = "fetched because the pinned framework does not compile under MSVC (see docs/notes/SESSION-1-tools.md); MATCH"
+note = "fetched because the pinned framework does not compile under MSVC (see docs/history/notes/SESSION-1-tools.md); MATCH"
 
 [[artifact]]
 name = "SDL3 3.4.10 source (fetched by psxrecomp runtime configure)"

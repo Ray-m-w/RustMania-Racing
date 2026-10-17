@@ -222,7 +222,7 @@ n_* with the same routes.
   geometry, probe corners, radius, counts, handling, camera mount,
   identity bytes equal for all five.
 
-## Tolerance and comparison (docs/notes/SESSION-3-ai.md for the numbers)
+## Tolerance and comparison (docs/history/notes/SESSION-3-ai.md for the numbers)
 Behaviour, not ticks (owner, 2026-10-12). From 6 items-off oracle races
 (18 laps per kart): per kart mean lap time within max(3 %, 2 standard
 errors) of the oracle's, all karts pooled within 1.5 %, |lateral| / width
@@ -232,7 +232,7 @@ means -0.6..+0.8 %, pooled +0.09 %, line within 0.04, positions within
 0.22 places: PASS.
 
 ## Integration (Session)
-docs/notes/SESSION-3-ai.md section 4: race-load order (templates, grid,
+docs/history/notes/SESSION-3-ai.md section 4: race-load order (templates, grid,
 `pick_opponent` + `init_opponent` per slot, `race_load_roll`), the per-tick
 order (all-pairs contacts, round-robin `path_position`, `ai_buttons` ->
 `items_off` -> `kart_update(.., -1)`), and the two update.rs hooks
@@ -250,4 +250,4 @@ a race where the player is last no AI kart is "behind" and the specials
 come only from R1 pressed in water with a full meter. The item code runs
 the same for every kart; teacher-forced race frames are exact for all six
 karts (items.md, Verification). Item-use statistics against oracle races:
-docs/notes/2026-10-12.md "Session 4, A items sim".
+docs/history/notes/2026-10-12.md "Session 4, A items sim".

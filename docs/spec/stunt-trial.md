@@ -1,6 +1,6 @@
 # The stunt trial (race type 3): the game's time trial
 
-Phase 3 of docs/PLAN-COMPLETE.md asked for "time trial mode, ghosts
+Phase 3 of docs/history/PLAN-COMPLETE.md asked for "time trial mode, ghosts
 (FUN_8006F64C), records". The game has no separate time trial and no
 ghost: its only timed solo mode is the **1 PLAYER STUNT TRIAL** on the six
 stunt courses, which is race type 3 (game mode 3). FUN_8006F64C is not a

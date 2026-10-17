@@ -1,6 +1,6 @@
 # Brief: port the player kart's handling to Rust (Session 2, STEP 4)
 
-Project G:\GameDev\Muppets Claude Racemania. Read CLAUDE.md, docs/SESSION-2.md
+Project G:\GameDev\Muppets Claude Racemania. Read CLAUDE.md, docs/history/SESSION-2.md
 (STEP 4 and Rules), docs/spec/kart-state.md, docs/spec/formats/AGENT-BRIEF.md
 (inputs section: decomp, generated C, oracle protocol) first.
 

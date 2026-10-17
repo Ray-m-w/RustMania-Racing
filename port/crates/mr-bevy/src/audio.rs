@@ -80,7 +80,7 @@ struct Shared {
     dump: Option<Mutex<Vec<[i16; 2]>>>,
 }
 
-/// The mixer bus (resource; clone = cheap handle). See docs/notes/SESSION-4-coord.md.
+/// The mixer bus (resource; clone = cheap handle). See docs/history/notes/SESSION-4-coord.md.
 #[derive(Resource, Clone)]
 pub struct AudioBus {
     sh: Arc<Shared>,

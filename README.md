@@ -1,79 +1,158 @@
-# Muppet RaceMania Recompiled
+<div align="center">
 
-A native Windows build of **Muppet RaceMania** (PlayStation, USA, SLUS-01237),
-made with the [PSXRecomp](https://github.com/RetroPortingToolKit/psxrecomp)
-static recompiler. The original PlayStation program is machine-translated to C
-and compiled to native x64 code. It is not an emulator running the game.
+# Muppet RaceMania, in Rust
 
-This repository holds the project: configuration, seeds, mod packages, build
-scripts and notes. **It contains no game data and no generated game code.**
-You build the game from your own disc.
+**A from-scratch PC reimplementation of the 2000 PlayStation kart racer,
+written in Rust with the Bevy engine, checked tick for tick against the original.**
 
-## What you get
+<img src="docs/images/title.jpg" alt="The Muppet RaceMania title screen running in the port" width="860">
 
-- The whole game, native: the main program is recompiled ahead of time, and the
-  code the game loads from disc at runtime (the movie player and memory-card
-  screens) is compiled to native modules on first sight and cached.
-- **High resolution**: renders at your monitor's resolution with
-  supersampling (dynamic, so it never drops below display resolution), FXAA,
-  perspective-correct textures and mipmapped/anisotropic texture filtering.
-- **Widescreen**: a genuinely wider view (more track either side), with the HUD
-  kept at its original proportions and pinned to the screen edges. Menus,
-  movies and loading screens stay 4:3. Fit to Window, 16:9, 21:9 or 32:9.
-- **Controllers**: any SDL-supported gamepad (Xbox, PlayStation, Switch Pro, ...)
-  works out of the box and can be rebound in the launcher. The game sees a
-  DualShock: the left stick steers and vibration works (turn it on in the
-  game's Options > Set Controllers). **Right trigger accelerates, left trigger
-  brakes.** Keyboard: arrows steer, A = Triangle (accelerate), S = Circle
-  (brake), Z = Square (jump), X = Cross, Enter = Start; rebindable.
-- **Fast Loading** (on by default, 4x), **Skip Intro Movies** (off by default),
-  **Smooth Motion** frame blending (off by default; the game renders at 30 fps).
-- Memory-card saves (`saves/` beside the game), save states, fullscreen (F11 or
-  Alt+Enter), all from the launcher.
+</div>
 
-All of these live in the launcher's **Mods** and **Settings** pages.
+Every course, mode, menu, movie and sound of *Muppet RaceMania* (PS1, USA) runs
+natively on Windows: a modern, widescreen, 60 Hz game that still plays like the
+original. The code is all new; the game's art, music and data are read at run
+time from **your own disc**. Nothing from the game is in this repository.
 
-## Playing (portable build)
+<table>
+<tr>
+<td><img src="docs/images/dock.jpg" alt="Kermit racing on the DOCK course"></td>
+<td><img src="docs/images/london.jpg" alt="Snow falling on the LONDON course"></td>
+</tr>
+<tr>
+<td><img src="docs/images/park.jpg" alt="Karts racing between stone walls"></td>
+<td><img src="docs/images/glacier.jpg" alt="GLACIER's overhead camera with items and snow"></td>
+</tr>
+<tr>
+<td colspan="2" align="center"><img src="docs/images/split.jpg" alt="Two-player split screen on the swamp course" width="640"></td>
+</tr>
+</table>
 
-Unzip `mrm-<version>-windows-x64.zip` anywhere and run
-`Muppet_RaceMania_Recompiled.exe`. On first run the launcher asks for your disc
-image (`.cue` + `.bin`). It uses the bundled, open-source OpenBIOS unless you
-select your own SCPH-1001 BIOS dump in Settings.
+## What's in it
 
-## What you must supply
+- **The whole game.** 18 race courses, 10 battle arenas and 6 stunt courses;
+  tournaments, ADVENTURE, the course secrets (boss challenges, reverse races,
+  dogfights, Doozer battles), two-player split screen and Chicken Chase, MEET
+  THE MUPPETS with its test drive, the attract demo, the credits, the cheat
+  codes, saves and unlocks.
+- **The original's feel.** Kart physics, AI, items, cameras and race rules are
+  ported from the game's own code with its integer arithmetic, so a race runs
+  the same way it did on the PlayStation.
+- **Its sound and movies.** Engine, effects and voice clips through a model of
+  the PlayStation's sound chip; the CD music streamed from the disc; all 30
+  movies decoded in Rust.
+- **Modern options, all switchable back.** Native widescreen with the HUD
+  pinned to the edges, 60 Hz logic with lower input latency, the whole course
+  drawn with no pop-in, MSAA, smooth texture filtering, a subtle distance haze,
+  keyboard and gamepads with rumble. One setting (`faithful_view`) restores
+  the PlayStation look.
 
-- Your own dump of the disc: *Muppet RaceMania (USA)*, Redump track 1 MD5
-  `ee4160b222e47182bc688c49bd65b2f8`.
-- Optional: your own SCPH-1001 (v2.2) BIOS dump. Not required.
+## Playing it
+
+You need your own copy of the game: a `.cue`/`.bin` image of
+*Muppet RaceMania (USA)* (SLUS-01237) made from your disc. A `.chd` can be
+converted with `chdman`.
+
+1. Get `muppet-racemania.exe`: download a release, or build it (below).
+2. Run it. The first time, it asks where your `.cue` is; paste the path and
+   press Enter. It checks the image against the known good dump and remembers
+   it.
+3. Race. Saves and settings live in `%APPDATA%\MuppetRaceMania\`.
+
+| | Keyboard | Gamepad |
+|---|---|---|
+| Steer | Arrows | D-pad / left stick |
+| Accelerate | X | A / Cross, or right trigger |
+| Brake / reverse | S | B / Circle, or left trigger |
+| Jump | Z | X / Square |
+| Camera lock-on, menu back | A | Y / Triangle |
+| Items: L1 / R1 / L2 / R2 | Q / W / E / R | bumpers / stick clicks |
+| Pause | Enter | Start |
+
+Player 2 uses a second pad, or the keyboard's right side (`port/README.md`).
+
+## How it was made
+
+The port was built against a working copy of the original. The PlayStation
+program was first recompiled to native code with
+[PSXRecomp](https://github.com/RetroPortingToolKit/psxrecomp); that build,
+with a small debug plugin, became the **oracle**. It replays recorded inputs
+frame-exactly and hands over its memory every frame. Each subsystem was then
+rewritten in plain Rust and compared with the oracle until the numbers matched.
+
+```mermaid
+flowchart LR
+    disc[("Your disc image")] --> oracle["Oracle<br/>(recompiled original)"]
+    disc --> port["Rust port<br/>(mr-sim + mr-bevy)"]
+    oracle -- "RAM, GPU and sound,<br/>every frame" --> check{"Compare,<br/>tick by tick"}
+    port -- "the same state" --> check
+    check -- "every difference explained<br/>or fixed" --> port
+```
+
+The simulation (`mr-sim`) is integer-only and deterministic, so a whole race,
+random numbers included, can be checked against a recording. Some results:
+
+| Area | Check against the original |
+|---|---|
+| All 18 race courses | race start and every kart, camera and random number exact for the full recording (~1,600 frames each) |
+| Items and AI | six karts free-running exact over 4,815 ticks; 308 / 308 item sound triggers |
+| Battle, stunt, adventure, secrets, two players | every mode's recordings exact, both players and cameras included |
+| HUD and menus | the game's own draw commands matched primitive for primitive (e.g. 9,714 / 9,714 race HUD sprites) |
+| Movies | every decoded frame region byte-identical to the original's video memory |
+| Robustness | 22 million fuzzed ticks across every mode at 30 and 60 Hz, no crashes |
+
+Every place the port differs on purpose (60 Hz, per-pixel depth instead of the
+PS1's draw order, widescreen) is written down in the ledgers in `docs/spec/`.
+
+<div align="center">
+<img src="docs/images/rust-growth.svg" alt="Chart: the Rust code grew from zero to 65,476 lines between 12 and 17 October 2026, Sessions 2 to 8" width="860">
+</div>
+
+The work ran in eight sessions with [Claude Code](https://claude.com/claude-code)
+doing the reverse-engineering, porting and verification under the author's
+direction. The session briefs, plans and daily logs are kept in
+`docs/history/`.
 
 ## Building
 
-Requirements: Git for Windows, Python 3, and psxrecomp's `cmake-clang-v1`
-Windows toolchain pack (see `tools/devshell.ps1` and `BINLIST.toml` for the
-exact release and hash). Then, from a clone with submodules:
+Requires Rust (the toolchain is pinned in `port/rust-toolchain.toml`) on
+Windows 10/11 x64.
 
-```powershell
-.\tools\build.ps1 -Disc "D:\dumps\Muppet RaceMania (USA).cue" -Package
+```
+cd port
+cargo run --release -p mr-bevy
 ```
 
-That builds the recompiler tools, generates the game C from your disc into
-`generated/` (gitignored), builds `build-release/`, and writes the portable zip
-to `dist/`.
+`tools\package-port.ps1` makes the stand-alone zip: a windowed exe with the C
+runtime built in, a readme and the third-party licences, and no game data.
+`cargo test --workspace` runs the test suite; tests that need recordings of the
+original skip themselves when those are absent.
 
-## Layout
+## Repository layout
 
 | Path | What |
 |---|---|
-| `game.toml` | Game identity, recompiler input, runtime/video/widescreen/controller defaults (commented with evidence) |
-| `seeds/` | Function entry seeds for the recompiler |
-| `mods/preloaded/packages/` | This title's mod packages (widescreen, controls, fast loading, skip movies, smooth motion) |
-| `src/mods/` | Their trusted plugins (compiled into the exe) |
-| `tools/` | `build.ps1`, `devshell.ps1`, `run-dev.ps1` + `drive.py` (debug-build test harness) |
-| `docs/` | Plan, milestones, session notes and handoff |
-| `psxrecomp/`, `recomp-ui/` | Framework and launcher submodules (pinned) |
+| `port/` | The game: a Cargo workspace. `mr-disc` (disc image), `mr-assets` (models, textures, courses), `mr-audio` (sound chip, CD audio), `mr-video` (movies), `mr-sim` (the game logic), `mr-bevy` (the app), `mr-trace` (comparison tools) |
+| `docs/spec/` | How the game works, subsystem by subsystem, with the original's code addresses, plus the ledgers of every deliberate difference |
+| `docs/FINAL-REPORT.md` | The full verification report |
+| `docs/history/` | Session briefs, plans and logs from the build |
+| `tools/oracle/` | Capture and comparison scripts used against the oracle |
+| `game.toml`, `src/mods/`, `psxrecomp/` | The PSXRecomp project that builds the oracle (development only) |
 
-## Legal
+## License
 
-You must own the original game. Disc images, BIOS dumps, generated game C,
-overlay captures and caches are never committed. PSXRecomp is licensed
-PolyForm Noncommercial 1.0.0; see `psxrecomp/LICENSE`.
+The code in this repository is dual-licensed under [MIT](LICENSE-MIT) or
+[Apache-2.0](LICENSE-APACHE), at your option. The `psxrecomp` and `recomp-ui`
+submodules, and the oracle project files generated from their templates, keep
+their own licence (PolyForm Noncommercial 1.0.0; see `psxrecomp/LICENSE`).
+
+---
+
+<sub>*Muppet RaceMania* was developed by Traveller's Tales and published in
+2000; the Muppets characters and names are trademarks of their owners
+(The Muppets Studio / Disney). This is an unofficial, non-commercial fan
+project made out of affection for the game and the people who created it. It
+is not affiliated with, endorsed by or sponsored by any of them. The repository
+contains no game code, art, audio or other game data; the screenshots show
+the port running on the author's own copy. To play, you need your own legally
+obtained disc.</sub>

@@ -3,7 +3,7 @@
 #
 #   .\tools\build.ps1 -Disc "F:\path\to\Muppet RaceMania (USA).cue" [-Bios F:\BIOS\scph1001.bin] [-Package]
 #
-# Steps (the commands psxrecomp documents; see docs/notes/2026-10-11.md):
+# Steps (the commands psxrecomp documents; see docs/history/notes/2026-10-11.md):
 #   1. psxrecomp/tools/ci/build_emitters.sh          (recompiler tools)
 #   2. psxrecomp_cli.py generate                      (game C from YOUR disc -> generated/, gitignored)
 #   3. cmake configure + build, Release               (build-release/)

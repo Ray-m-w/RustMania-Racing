@@ -238,7 +238,7 @@ loop) must be <= 0xFFFF; vol' = vol * (0x2000 - 32 * sqrt(d)) >> 13; owner
 
 The item code (track A) makes the rest: pickups 0x16 / 0x18 / 0x1E,
 firing 0x14, projectiles 0x14 / 0x15 / 0xB / 0x21 / 10, effects 0x57 /
-0x18 / 0x23, specials; the calls are listed in docs/notes/SESSION-4-coord.md.
+0x18 / 0x23, specials; the calls are listed in docs/history/notes/SESSION-4-coord.md.
 Only human karts have an engine sound (AI karts are heard through their
 one-shots: jumps, landings, walls, contacts, voices).
 

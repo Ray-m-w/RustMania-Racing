@@ -7,7 +7,7 @@ whole game - title, menus, every mode (races, tournaments, stunt trial,
 battles, adventure, course secrets, two players, MEET THE MUPPETS / TEST
 DRIVE, the attract demo, THE END, cheat codes, movies), saves and options.
 Keyboard and gamepads (Bevy's gilrs backend, with rumble; 2026-10-17).
-Final report: ../docs/notes/FINAL-REPORT.md; plan: ../docs/PLAN-COMPLETE.md.
+Final report: ../docs/FINAL-REPORT.md; plan: ../docs/history/PLAN-COMPLETE.md.
 
 ## Play
 ```

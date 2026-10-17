@@ -1911,7 +1911,7 @@ impl Session {
     }
 
     /// The race's item state: pickups, projectiles, this tick's events
-    /// (crate::items; docs/notes/SESSION-4-coord.md "A items sim").
+    /// (crate::items; docs/history/notes/SESSION-4-coord.md "A items sim").
     pub fn items(&self) -> &crate::items::ItemState {
         &self.globals.items
     }

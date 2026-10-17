@@ -8,7 +8,7 @@
 # psxrecomp README "Bundled toolchain" lines; nothing is installed or persisted.
 #
 # The owner's VS Build Tools (MSVC) cannot build the pinned framework (see
-# docs/notes/SESSION-1-tools.md), so MSVC is deliberately not on PATH here.
+# docs/history/notes/SESSION-1-tools.md), so MSVC is deliberately not on PATH here.
 #
 # Git for Windows' bin goes first so `bash` is Git bash, not WSL's
 # C:\Windows\System32\bash.exe (psxrecomp's scripts call `bash`).

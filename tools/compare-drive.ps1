@@ -6,7 +6,7 @@
 # Needs the debug build running with the oracle bridge:
 #   .\tools\run-dev.ps1 -Start   (dev package mrm.dev.oracle-bridge enabled in
 #   build-dev\mods\state.toml, savestate slot 2 = DOCK grid; see
-#   docs\notes\SESSION-2-oracle.md)
+#   docs\history\notes\SESSION-2-oracle.md)
 # Writes <stamp>.oracle.trace.jsonl and plots under analysis\drives\<stamp>-cmp\.
 # Note: the port's default catch-up matches the oracle race (player 6th); a
 # drive recorded with -Leader will differ by design (ledger section 7).

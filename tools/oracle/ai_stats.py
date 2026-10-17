@@ -171,7 +171,7 @@ def main():
     print("finishing order (oracle):", report["oracle_orders"])
     print("finishing order (port):  ", report["port_orders"])
 
-    # Tolerance check (docs/notes/SESSION-3-ai.md): per kart mean lap time
+    # Tolerance check (docs/history/notes/SESSION-3-ai.md): per kart mean lap time
     # within max(3 %, 2 standard errors of the difference); all karts pooled
     # within 1.5 %; lateral |offset| / width median and p90 within 0.10;
     # mean finishing position within 1.5 places.

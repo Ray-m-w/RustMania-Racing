@@ -1,6 +1,6 @@
 /* Oracle bridge (development only): the Rust port's window into the recomp.
  *
- * docs/notes/SESSION-2-oracle.md. Disabled unless the dev package
+ * docs/history/notes/SESSION-2-oracle.md. Disabled unless the dev package
  * mrm.dev.oracle-bridge is enabled (mods/state.toml beside the exe); release
  * packaging excludes it (tools/build.ps1).
  *

@@ -3,6 +3,7 @@ name = "mr-sim"
 edition.workspace = true
 version.workspace = true
 publish.workspace = true
+license.workspace = true
 
 # std-only simulation (ADR-0002). Path dependencies inside this workspace
 # only: mr-disc (read SLUS_012.37 and the course files from the owner's disc)

@@ -5,13 +5,13 @@ branch, and every input the port takes from outside. Companion to
 kart-physics.md.
 
 ## Revisit list (not one-for-one; first to make exact for full fidelity)
-AI (Session 3, mr-sim ai.rs; docs/spec/ai.md, docs/notes/SESSION-3-ai.md).
+AI (Session 3, mr-sim ai.rs; docs/spec/ai.md, docs/history/notes/SESSION-3-ai.md).
 The owner's rule: AI behaves the same within a tolerance; these are the
 places it is not one-for-one:
 - Items (Session 4, docs/spec/items.md): ported and on in the session
   (`SessionConfig::items`); the AI's L1/L2/R1/R2 take effect. `ai::items_off`
   remains for the Session 3 items-off analysis (mr-ai). Item-use
-  statistics against oracle races: docs/notes/2026-10-12.md, Session 4 A.
+  statistics against oracle races: docs/history/notes/2026-10-12.md, Session 4 A.
 - Items, not one-for-one (Session 4):
   * FUN_8007F03C (kart particles) is ported (2026-10-13, items/kart_fx.rs)
     except its first loop (track objects; none on DOCK), and the kart-kart
@@ -564,7 +564,7 @@ median 0.019 track widths, lateral quantiles within 0.012; recorded inputs
 median 494 units / 0.18 deg after 1 s; AI lap means per kart within 0.9 %
 (limit 3 %), pooled +0.42 % (limit 1 %); item use (fires, boxes, tokens,
 turbo, special moves, hits) within 2 * sqrt(sd_a^2/n + sd_b^2/n). Full table:
-docs/notes/2026-10-13.md, "Session 5, G 60 Hz".
+docs/history/notes/2026-10-13.md, "Session 5, G 60 Hz".
 Open: with items the AI leans slower at 60 Hz (+0.4 to +0.9 % pooled over
 runs; items off +0.2 %), cause not isolated (every item rate in tolerance).
 

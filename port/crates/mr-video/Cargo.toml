@@ -3,6 +3,7 @@ name = "mr-video"
 edition.workspace = true
 version.workspace = true
 publish.workspace = true
+license.workspace = true
 
 # std only (ADR-0002): the game's STR movies (MDEC video + CD-XA audio).
 # Playback (window, timing, the audio bus) lives in mr-bevy.

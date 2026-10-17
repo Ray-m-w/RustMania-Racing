@@ -165,7 +165,7 @@ fn dec_str(b: &[u8]) -> String {
 }
 
 /// One directory record (ECMA-119 9.1) [T5 layout; validated byte-for-byte
-/// on this disc by the reference tool, docs/notes/SESSION-1-toolchain.md].
+/// on this disc by the reference tool, docs/history/notes/SESSION-1-toolchain.md].
 pub struct DirRec {
     pub name: String,
     pub lba: u32,
@@ -346,7 +346,7 @@ pub fn verify_against_dir(bin: &Path, dir: &Path) -> R<Vec<String>> {
 }
 
 /// Default artifact locations relative to the repo root (documented in
-/// docs/notes/SESSION-2-assets.md; overridable from the CLI).
+/// docs/history/notes/SESSION-2-assets.md; overridable from the CLI).
 pub fn default_paths(repo: &Path) -> (PathBuf, PathBuf) {
     (
         repo.join("extract/muppet-usa.bin"),

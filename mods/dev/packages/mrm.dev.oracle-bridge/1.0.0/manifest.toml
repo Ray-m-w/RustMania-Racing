@@ -3,7 +3,7 @@ id = "mrm.dev.oracle-bridge"
 version = "1.0.0"
 name = "Oracle Bridge (development)"
 author = "MuppetRaceManiaRecomp"
-description = "Development only: shares per-frame RAM regions and replays savestate-anchored input routes for the Rust port's oracle harness (docs/notes/SESSION-2-oracle.md). Not shipped in releases."
+description = "Development only: shares per-frame RAM regions and replays savestate-anchored input routes for the Rust port's oracle harness (docs/history/notes/SESSION-2-oracle.md). Not shipped in releases."
 resolver = "declarative"
 save_compatibility = "shared"
 

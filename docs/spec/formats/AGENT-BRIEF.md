@@ -1,6 +1,6 @@
 # Brief for format-decoder agents (Session 2, STEP 3)
 
-Project: G:\GameDev\Muppets Claude Racemania. Read CLAUDE.md and docs/SESSION-2.md
+Project: G:\GameDev\Muppets Claude Racemania. Read CLAUDE.md and docs/history/SESSION-2.md
 first. You decode ONE file format of Muppet RaceMania (PS1, SLUS-01237) into Rust.
 
 ## Inputs

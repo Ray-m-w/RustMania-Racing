@@ -92,7 +92,7 @@ starvation_dump.jsonl
 !/.recomp.json
 
 # Session screenshots show the game's own artwork: kept local.
-docs/notes/shots/
+docs/history/notes/shots/
 
 
 # The Rust port's lockfile pins every crate with its checksum (BINLIST.toml): committed.

@@ -161,6 +161,18 @@ struct Loading {
 
 #[derive(Component)]
 struct LoadCamera;
+/// Row 12: the MEMORY CARD page's picture (under the HUD, over the scene).
+#[derive(Component)]
+struct CardCamera;
+#[derive(Component)]
+struct CardQuad;
+
+/// The shown MEMORY CARD picture (n, its image).
+#[derive(Resource, Default)]
+struct CardPic {
+    shown: Option<u8>,
+    image: Handle<Image>,
+}
 #[derive(Component)]
 struct LoadQuad;
 
@@ -170,7 +182,9 @@ impl Plugin for LoadingPlugin {
     fn build(&self, app: &mut App) {
         let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(1) | 1;
         app.insert_resource(Loading { level: FULL, hold: 0, vb_frac: 0.0, args: None, movie: None, last: -1, rng: seed, frame: Vec::new(), shown: -1, image: Handle::default(), paused_time: false, title_next: false })
+            .init_resource::<CardPic>()
             .add_systems(Startup, setup)
+            .add_systems(Update, card_backdrop)
             .add_systems(First, load)
             .add_systems(Update, step);
         if crate::settings::arg_value("--boot-soak").is_some() {
@@ -214,11 +228,115 @@ fn setup(mut c: Commands, mut res: ResMut<Loading>, mut images: ResMut<Assets<Im
         LoadQuad,
         KeepOnBoot,
     ));
+    // row 12: the MEMORY CARD page's picture (camera order 9: over the 3D
+    // view, under the HUD's 10)
+    let img = Image::new(
+        Extent3d { width: 512, height: H as u32, depth_or_array_layers: 1 },
+        TextureDimension::D2,
+        [0, 0, 0, 255].repeat(512 * H),
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,
+    );
+    let card_img = images.add(img);
+    c.insert_resource(CardPic { shown: None, image: card_img.clone() });
+    c.spawn((
+        Camera3d::default(),
+        Camera { order: 9, clear_color: ClearColorConfig::Custom(Color::BLACK), is_active: false, ..default() },
+        Projection::Orthographic(OrthographicProjection {
+            scaling_mode: bevy::camera::ScalingMode::Fixed { width: 1.0, height: 1.0 },
+            near: -10.0,
+            far: 10.0,
+            ..OrthographicProjection::default_3d()
+        }),
+        Tonemapping::None,
+        settings.msaa(),
+        Transform::IDENTITY,
+        bevy::camera::visibility::RenderLayers::layer(CARD_LAYER),
+        CardCamera,
+        KeepOnBoot,
+    ));
+    let mat = mats.add(StandardMaterial { base_color_texture: Some(card_img), unlit: true, ..default() });
+    c.spawn((
+        Mesh3d(meshes.add(Mesh::from(Rectangle::new(1.0, 1.0)))),
+        MeshMaterial3d(mat),
+        Transform::IDENTITY,
+        Visibility::Hidden,
+        bevy::camera::visibility::RenderLayers::layer(CARD_LAYER),
+        CardQuad,
+        KeepOnBoot,
+    ));
+}
+
+const CARD_LAYER: usize = 7;
+
+/// Row 12: the MEMORY CARD page's picture: FRONTEND/MEM_0n.RAW (course 10's
+/// RAW, FUN_8004627C: n = a random byte >> 5, + 1, not the last one), drawn
+/// as the loading pictures are (x 0, from line 8; 512 wide) on the view
+/// rectangle (oracle: MEM_03 exact but for the text).
+#[allow(clippy::type_complexity)]
+fn card_backdrop(
+    front: Res<crate::menus::Front>,
+    settings: Res<crate::settings::Settings>,
+    mut pic: ResMut<CardPic>,
+    mut images: ResMut<Assets<Image>>,
+    win: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    mut cam: Query<(&mut Camera, &mut Projection), With<CardCamera>>,
+    mut quad: Query<(&mut Transform, &mut Visibility), (With<CardQuad>, Without<CardCamera>)>,
+) {
+    let want = (front.page == crate::menus::Page::MemoryCard).then_some(front.card_pic).flatten();
+    if want != pic.shown {
+        if let Some(n) = want {
+            let file = mr_disc::Disc::open_default().ok().and_then(|mut d| d.read(&format!("FRONTEND/MEM_0{n}.RAW")).ok());
+            let frame = file.as_deref().and_then(|f| screen_frame(f, 512, 8)).unwrap_or_else(|| vec![0; 512 * H]);
+            if let Some(mut img) = images.get_mut(&pic.image) {
+                img.data = Some(faded_rgba(&frame, FULL));
+            }
+        }
+        pic.shown = want;
+    }
+    let on = want.is_some();
+    let Ok((mut c, mut proj)) = cam.single_mut() else { return };
+    if c.is_active != on {
+        c.is_active = on;
+    }
+    let Ok((mut t, mut v)) = quad.single_mut() else { return };
+    let wv = if on { Visibility::Inherited } else { Visibility::Hidden };
+    if *v != wv {
+        *v = wv;
+    }
+    if !on {
+        return;
+    }
+    let Ok(w) = win.single() else { return };
+    let size = w.physical_size();
+    if size.x == 0 || size.y == 0 {
+        return;
+    }
+    let (pos, sz) = crate::view_rect(size, settings.aspect());
+    let vp = Some(bevy::camera::Viewport { physical_position: pos, physical_size: sz, ..default() });
+    if c.viewport.as_ref().map(|v| (v.physical_position, v.physical_size)) != Some((pos, sz)) {
+        c.viewport = vp;
+    }
+    if let Projection::Orthographic(o) = &mut *proj {
+        let (ww, wh) = (sz.x as f32, sz.y as f32);
+        if !matches!(o.scaling_mode, bevy::camera::ScalingMode::Fixed { width, height } if width == ww && height == wh) {
+            o.scaling_mode = bevy::camera::ScalingMode::Fixed { width: ww, height: wh };
+        }
+        let want = Transform::from_scale(Vec3::new(ww, wh, 1.0));
+        if *t != want {
+            *t = want;
+        }
+    }
 }
 
 /// GFX/LOAD_nn.RAW's picture as the screen shows it (FUN_80046DFC /
 /// FUN_80046794 with x 0, y -8, a 320-pixel screen), 15-bit.
 pub fn picture_frame(file: &[u8]) -> Option<Vec<u16>> {
+    screen_frame(file, W, 8)
+}
+
+/// A RAW's picture chunk (type 0x20 / 0x25): width, height, 15-bit pixels.
+pub fn raw_picture(file: &[u8]) -> Option<(usize, usize, Vec<u16>)> {
     let raw = mr_assets::raw::parse(file).ok()?;
     let c = raw.chunks.iter().find(|c| c.kind == 0x20 || c.kind == 0x25)?;
     let d = &c.data;
@@ -227,13 +345,20 @@ pub fn picture_frame(file: &[u8]) -> Option<Vec<u16>> {
     if w == 0 || h == 0 {
         return None;
     }
-    let px = |x: usize, y: usize| d.get(0x10 + 2 * (y * w + x)..0x10 + 2 * (y * w + x) + 2).map(|b| u16::from_le_bytes([b[0], b[1]])).unwrap_or(0);
-    let last = px(w - 1, h - 1);
-    let skip = 8usize;
-    let mut out = vec![0u16; W * H];
+    let px = (0..w * h).map(|i| d.get(0x10 + 2 * i..0x12 + 2 * i).map(|b| u16::from_le_bytes([b[0], b[1]])).unwrap_or(0)).collect();
+    Some((w, h, px))
+}
+
+/// The picture as FUN_80046DFC / FUN_80046794 put it on a `sw`-pixel
+/// screen from x 0 and y -`skip`: tiled across, the rows below it filled
+/// with its last pixel's colour; 240 lines.
+pub fn screen_frame(file: &[u8], sw: usize, skip: usize) -> Option<Vec<u16>> {
+    let (w, h, px) = raw_picture(file)?;
+    let last = px[w * h - 1];
+    let mut out = vec![0u16; sw * H];
     for y in 0..H {
-        for x in 0..W {
-            out[y * W + x] = if y + skip < h { px(x % w, y + skip) } else { last };
+        for x in 0..sw {
+            out[y * sw + x] = if y + skip < h { px[(y + skip) * w + x % w] } else { last };
         }
     }
     Some(out)
@@ -526,8 +651,13 @@ mod tests {
             let fr = picture_frame(&f).unwrap_or_else(|| panic!("LOAD_{k:02}"));
             assert_eq!(fr.len(), W * H);
         }
-        // MRM_LOAD_DUMP=DIR: the 22 frames as raw RGBA (oracle checks)
+        // MRM_LOAD_DUMP=DIR: the 22 frames as raw RGBA (oracle checks),
+        // and the memory card page's 8 pictures (512 wide, from y 0)
         if let Ok(dir) = std::env::var("MRM_LOAD_DUMP") {
+            for k in 1..=8 {
+                let f = d.read(&format!("FRONTEND/MEM_0{k}.RAW")).unwrap();
+                std::fs::write(format!("{dir}/mem_0{k}.rgba"), faded_rgba(&screen_frame(&f, 512, 0).unwrap(), FULL)).unwrap();
+            }
             for k in 0..PICTURES {
                 let f = d.read(&format!("GFX/LOAD_{k:02}.RAW")).unwrap();
                 std::fs::write(format!("{dir}/load_{k:02}.rgba"), faded_rgba(&picture_frame(&f).unwrap(), FULL)).unwrap();

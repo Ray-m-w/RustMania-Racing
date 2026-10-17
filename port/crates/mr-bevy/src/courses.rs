@@ -158,6 +158,8 @@ pub fn session_config(logic_hz: u8, character: u8, vehicle: u8) -> mr_sim::sessi
             cfg.laps = s.block.laps(0).max(1) as i16;
             if let Some(l) = crate::league::League::load().filter(|l| l.started) {
                 cfg.lineup = Some(l.lineup());
+                // row 12: the tie-break race's field
+                cfg.opponents = l.opponents();
                 cfg.draw_grid = true;
                 // 0x800B07E4 (a BATTLE LEAGUE battle ends with FUN_80082450)
                 cfg.league = true;

@@ -644,6 +644,10 @@ pub trait CameraEnv {
     fn orbit_point(&mut self, _chunk: i16, _phase: i32) -> [i32; 3] {
         [0; 3]
     }
+    /// Row 12: DAT chunk `chunk`'s path is loaded (0x16: 0x800D1CA0).
+    fn has_path(&mut self, _chunk: i16) -> bool {
+        false
+    }
     /// FUN_8006FB2C(x >> 5, z >> 5, quad): the stunt strip's edge points
     /// across the kart and the fraction along the quad (mr_sim::stunt).
     fn strip_project(&mut self, _x5: i32, _z5: i32, _quad: i16) -> Option<([i32; 3], [i32; 3], i16)> {
@@ -886,7 +890,9 @@ fn select_mode(cam: &mut CameraState, inp: &CameraInput) -> i16 {
         // 0x80070614: the course menu and the character select (game
         // state 0; Session 7) and state 17 orbit (mode 1).
         0 | 17 => 1,
-        18 => unreachable_in_scope!("camera mode 11 (game state 18)"),
+        // row 12: the league presentation (game state 0x12, 0x80070418
+        // case 0x12)
+        18 => 11,
         1 | 2 => {
             if g.alt_rule != 0 {
                 // Game modes 1 / 2 (phase 8): the attract demo (0x800B0BD2) shows
@@ -1174,6 +1180,28 @@ pub fn tick(cam: &mut CameraState, inp: &CameraInput, t: &CameraTables, env: &mu
             pitch_div = 8;
             yaw_div = 8;
             orbit_paths = paths;
+        }
+        11 => {
+            // Row 12: the league presentation (0x80070418 case 0xB): on the
+            // change a random phase (+0x4C), direction (+0x6B) and +0x6C,
+            // speed 0x10 (0x800B0D58); the eye runs along DAT chunk 0x16's
+            // path (0x800D1CA0) by speed * dt a frame; with no path the eye
+            // goal is (0, -160000, -160000). The common tail looks at the
+            // camera kart [INFER: sp+0x70 left as the look point].
+            if changed {
+                cam.orbit_angle = env.rand();
+                cam.rand_b = (env.rand() >> 14) as u8;
+                cam.rand_a = (env.rand() >> 14) as u8;
+            }
+            if env.has_path(0x16) {
+                let a = if cam.rand_a == 0 { cam.orbit_angle.wrapping_add(16 * dt) } else { cam.orbit_angle.wrapping_sub(16 * dt) };
+                cam.orbit_angle = a & 0x7FFF;
+                goal = env.orbit_point(0x16, cam.orbit_angle);
+            } else {
+                goal = [0, -160000, -160000];
+            }
+            pitch_div = 8;
+            yaw_div = 8;
         }
         5 => {
             // Course select (0x80070E4C): eye at (0xA000, y, -0x28000)

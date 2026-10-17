@@ -296,6 +296,21 @@ impl SaveBlock {
     pub fn set_alt_controls(&mut self, pad: usize, b: bool) {
         self.set_u8(0x202 + pad, b as u8);
     }
+    /// 0x800E0394 + pad: VIBRATION (1 = on).
+    pub fn vibration(&self, pad: usize) -> bool {
+        self.u8(0x204 + pad) != 0
+    }
+    pub fn set_vibration(&mut self, pad: usize, on: bool) {
+        self.set_u8(0x204 + pad, on as u8);
+    }
+    /// 0x800E0396 / 97: ADJUST SCREEN's display offset (FUN_8005E260).
+    pub fn screen(&self) -> (u8, u8) {
+        (self.u8(0x206), self.u8(0x207))
+    }
+    pub fn set_screen(&mut self, x: u8, y: u8) {
+        self.set_u8(0x206, x);
+        self.set_u8(0x207, y);
+    }
     /// 0x800E039A: the AI catch-up scale (/16).
     pub fn difficulty(&self) -> u8 {
         self.u8(0x20A)

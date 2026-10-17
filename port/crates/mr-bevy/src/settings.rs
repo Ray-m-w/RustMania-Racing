@@ -17,7 +17,6 @@
 //! process's arguments).
 
 use std::collections::BTreeMap;
-use std::sync::OnceLock;
 
 use bevy::prelude::*;
 
@@ -60,10 +59,14 @@ pub const KNOWN: &[Opt] = &[
     Opt { key: "sound_volume", default: "12", allowed: "", help: "ADJUST SOUND's sound effects volume, 0..15 (12 = the game's default)" },
     Opt { key: "controller_config", default: "A", allowed: "A|B", help: "SET CONTROLLERS: A = square jumps, circle brakes; B = the game's alternate layout (square brakes, circle jumps)" },
     Opt { key: "controller_config_2", default: "A", allowed: "A|B", help: "SET CONTROLLERS, controller 2 (two players): as controller_config" },
+    Opt { key: "vibration", default: "true", allowed: "true|false", help: "SET CONTROLLERS: VIBRATION of controller 1 (the race's rumble; the save block's 0x204)" },
+    Opt { key: "vibration_2", default: "true", allowed: "true|false", help: "SET CONTROLLERS: VIBRATION of controller 2" },
+    Opt { key: "screen_x", default: "8", allowed: "", help: "OPTIONS -> ADJUST SCREEN: the picture's x offset 0..32 (the game's display offset, save 0x206; 8 = centred): moves the view in the window" },
+    Opt { key: "screen_y", default: "2", allowed: "", help: "OPTIONS -> ADJUST SCREEN: the picture's y offset 0..32 (save 0x207; 2 = centred)" },
     Opt { key: "unlock_all", default: "false", allowed: "true|false", help: "show every character, vehicle, course and league open (the game's everything code on a copy of the save; save.bin itself is not changed); false = the progress in save.bin" },
 ];
 
-#[derive(Resource, Clone, Debug)]
+#[derive(Resource, Clone, Debug, PartialEq)]
 pub struct Settings {
     /// key -> value, for every known key (defaults filled) and any unknown
     /// key a file or `--set` gave (kept, warned about).
@@ -74,7 +77,12 @@ pub struct Settings {
     pub explicit: std::collections::BTreeSet<String>,
 }
 
-static GLOBAL: OnceLock<Settings> = OnceLock::new();
+/// The process-wide settings: loaded on first use, and again at each
+/// in-process course change (row 12: what the menus wrote to settings.txt
+/// applies from the next course on, as it did with the relaunch). A changed
+/// file leaks one copy (callers hold `&'static` references); an unchanged
+/// one is reused.
+static GLOBAL: std::sync::RwLock<Option<&'static Settings>> = std::sync::RwLock::new(None);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Aspect {
@@ -132,7 +140,25 @@ impl Settings {
 
     /// The process-wide settings (loaded on first use).
     pub fn global() -> &'static Settings {
-        GLOBAL.get_or_init(Settings::load)
+        if let Some(s) = *GLOBAL.read().unwrap() {
+            return s;
+        }
+        let mut g = GLOBAL.write().unwrap();
+        *g.get_or_insert_with(|| Box::leak(Box::new(Settings::load())))
+    }
+
+    /// Read settings.txt again (boot.rs); returns the settings now in force.
+    pub fn reload() -> &'static Settings {
+        let fresh = Settings::load();
+        let mut g = GLOBAL.write().unwrap();
+        match *g {
+            Some(cur) if *cur == fresh => cur,
+            _ => {
+                let s: &'static Settings = Box::leak(Box::new(fresh));
+                *g = Some(s);
+                s
+            }
+        }
     }
 
     pub fn load_from(args: &[String]) -> Settings {

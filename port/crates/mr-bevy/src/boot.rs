@@ -81,6 +81,9 @@ pub fn reboot(world: &mut World, args: Vec<String>) {
     let t0 = std::time::Instant::now();
     let before = live_entities(world);
     crate::settings::set_args(args);
+    // what the menus wrote to settings.txt applies from this course on
+    let st = crate::settings::Settings::reload();
+    world.insert_resource(st.clone());
     crate::courses::reset();
     GEN.fetch_add(1, Ordering::Relaxed);
     // the game's main(): the course session starts unpaused

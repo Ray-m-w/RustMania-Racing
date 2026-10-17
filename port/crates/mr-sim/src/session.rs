@@ -333,6 +333,9 @@ pub struct Session {
     /// set this frame (empty off the course select).
     pub course_select: Option<crate::title::CourseSelect>,
     pub menu_slots: Vec<crate::title::SlotSet>,
+    /// Row 12: FUN_8007D304's motor value per pad this frame (bit 0 small
+    /// motor, & 0xFE the large one).
+    pub pad_motor: [u8; 2],
     /// Phase 7: player 2's camera (0x800C4FB0, FUN_80070418 on kart 1 in a
     /// split-screen race); None with one player.
     pub camera2: Option<CameraState>,
@@ -485,9 +488,17 @@ impl camera::CameraEnv for SessionCameraEnv<'_> {
         }
     }
 
+    fn has_path(&mut self, chunk: i16) -> bool {
+        chunk == 0x16 && !self.world.course.path_16.is_empty()
+    }
+
     fn orbit_point(&mut self, chunk: i16, phase: i32) -> [i32; 3] {
         let c = &self.world.course;
-        let pts = if chunk == 0x0A { &c.path_a } else { &c.path_b };
+        let pts = match chunk {
+            0x0A => &c.path_a,
+            0x16 => &c.path_16,
+            _ => &c.path_b,
+        };
         crate::objects::path_lerp(pts, 0, 0, phase, true)
     }
 
@@ -1044,6 +1055,7 @@ impl Session {
             camera_menu: None,
             course_select: None,
             menu_slots: Vec::new(),
+            pad_motor: [0; 2],
             camera2: two.then(|| CameraState::from_bytes(&cam_bytes)),
             pad2: 0,
             rand_state,
@@ -1606,6 +1618,18 @@ impl Session {
         }
         let w = &self.world;
         crate::sound::character_voices(ks, g, w);
+        // FUN_8007D304 (karts 0 and 1, the pads' karts): the motors' value
+        // FUN_8004357C gets (large = +0x4B7 * a / b & 0xFE while a = +0x4EA
+        // runs; the small-motor bit (+0x4EC) has no writer the port runs),
+        // then a runs down by dt (row 12: VIBRATION; mr-bevy decides
+        // whether the pad gets it)
+        for (s, k) in ks.iter_mut().enumerate().take(2) {
+            let (a, b) = (k.rumble_a as i32, k.rumble_b as i32);
+            self.pad_motor[s] = if a == 0 || b == 0 { 0 } else { (crate::fixed::div(k.rumble as i32 * a, b) & 0xFE) as u8 };
+            if k.rumble_a != 0 {
+                k.rumble_a = (a - g.dt).max(0) as i8;
+            }
+        }
         for (s, k) in ks.iter().enumerate() {
             let rec = if s == 0 { &mut self.record } else { &mut self.others[s - 1].record };
             k.to_record(rec);
@@ -1941,6 +1965,7 @@ impl Session {
             camera_menu: None,
             course_select: None,
             menu_slots: Vec::new(),
+            pad_motor: [0; 2],
             camera2: None,
             pad2: 0,
             rand_state: m.u32(0x8000_9010),

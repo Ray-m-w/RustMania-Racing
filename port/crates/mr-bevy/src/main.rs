@@ -19,6 +19,8 @@
 mod audio;
 mod boot;
 mod loading;
+mod rumble;
+mod screen;
 mod crash;
 mod discsel;
 mod paths;
@@ -554,6 +556,7 @@ fn main() {
         .add_plugins(ending::EndingPlugin)
         .add_plugins(movie::MoviePlugin)
         .add_plugins(loading::LoadingPlugin)
+        .add_plugins(rumble::plugin)
         .add_systems(FixedUpdate, capture::tick.after(sim_tick).before(karts::feed_player))
         .add_systems(Last, write_outputs)
         .add_systems(PostUpdate, (fit_viewports, fit_bars).before(bevy::camera::CameraUpdateSystems))
@@ -689,7 +692,9 @@ pub fn view_rect(win: UVec2, aspect: settings::Aspect) -> (UVec2, UVec2) {
         return (UVec2::ZERO, UVec2::new(w, h));
     }
     let (vw, vh) = if wide { ((h * 4 + 1) / 3, h) } else { (w, (w * 3 + 2) / 4) };
-    (UVec2::new((w - vw) / 2, (h - vh) / 2), UVec2::new(vw, vh))
+    // row 12: ADJUST SCREEN moves the picture within the free border
+    let (x, y) = screen::shifted((w, h), ((w - vw) / 2, (h - vh) / 2), (vw, vh));
+    (UVec2::new(x, y), UVec2::new(vw, vh))
 }
 
 /// Keep every camera (3D, far pass, HUD) on `view_rect`; the projections
@@ -1047,6 +1052,10 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
             // The title's course select: the camera on the film strips
             // (game state 0xC, mode 5).
             run.session.camera_menu = (front.page == menus::Page::CourseSelect).then_some((0xC, front.row));
+            // row 12: the league presentation (game mode 0x12: camera mode 11)
+            if front.page == menus::Page::Presentation {
+                run.session.camera_menu = Some((0x12, 0));
+            }
             // row 12: the course select's props and backdrop (FUN_80091B8C
             // mode 0xC, mr-sim title.rs `CourseSelect`)
             if front.page == menus::Page::CourseSelect {
@@ -1078,7 +1087,13 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
                 let s = &run.session;
                 feed.external = true;
                 let show = front.page == menus::Page::CharSelect;
-                feed.set_records(s.kart_records().filter(|_| show).map(|(slot, _, _, r)| (slot as u8, r)));
+                if let (menus::Page::Standings(page), Some(lg)) = (front.page, front.league.as_ref()) {
+                    // row 12: the standings' line-up (menus.rs)
+                    let recs = menus::lineup_records(lg, page, s, front.vb);
+                    feed.set_records(recs.iter().enumerate().map(|(i, r)| (32 + i as u8, &r[..])));
+                } else {
+                    feed.set_records(s.kart_records().filter(|_| show).map(|(slot, _, _, r)| (slot as u8, r)));
+                }
                 hud_g.results = None;
                 pose = pacing::session_pose(s);
                 kart = Some(s.record().to_vec());

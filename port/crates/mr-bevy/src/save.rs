@@ -116,6 +116,11 @@ pub fn persist() {
         s.block.set_volumes(mv, sv);
         s.block.set_alt_controls(0, st.get("controller_config") == Some("B"));
         s.block.set_alt_controls(1, st.get("controller_config_2") == Some("B"));
+        // row 12: VIBRATION and ADJUST SCREEN (0x204 / 0x205, 0x206 / 0x207)
+        s.block.set_vibration(0, crate::rumble::enabled(st, 0));
+        s.block.set_vibration(1, crate::rumble::enabled(st, 1));
+        let (x, y) = crate::screen::offset(st);
+        s.block.set_screen(x as u8, y as u8);
         if s.written.as_ref() == Some(&s.block) {
             return;
         }
@@ -127,6 +132,40 @@ pub fn persist() {
                 s.written = Some(s.block.clone());
             }
             Err(e) => warn!("save: cannot write {}: {e}", p.display()),
+        }
+    })
+}
+
+/// Row 12: the MEMORY CARD page's SAVE (over save.bin): write the block
+/// now, changed or not. False when it cannot be written (no path, a tool
+/// run, an I/O error: "FAILED TO SAVE").
+pub fn save_now() -> bool {
+    if !may_write() {
+        return false;
+    }
+    with(|s| s.written = None);
+    persist();
+    with(|s| s.written.is_some())
+}
+
+/// Row 12: the MEMORY CARD page's LOAD: read save.bin again (the block as
+/// last saved; unsaved progress since then is dropped, as a card load
+/// does). False when there is no readable file ("FAILED TO LOAD").
+pub fn load_now() -> bool {
+    with(|s| {
+        let Some(p) = s.path.clone() else { return false };
+        match std::fs::read(&p).map_err(|e| e.to_string()).and_then(|b| SaveBlock::from_file(&b)) {
+            Ok(block) => {
+                info!("save: loaded {} (MEMORY CARD)", p.display());
+                s.written = Some(block.clone());
+                s.block = block;
+                s.source = "file";
+                true
+            }
+            Err(e) => {
+                warn!("save: MEMORY CARD load of {}: {e}", p.display());
+                false
+            }
         }
     })
 }

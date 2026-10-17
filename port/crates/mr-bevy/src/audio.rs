@@ -641,6 +641,14 @@ impl MusicDirector {
         self.queue.request_entry((TAUNT_BASE + n as u16) | xa::ONE_SHOT | xa::INTRO, t.music);
     }
 
+    /// Row 12: FUN_80060468 from the course select's MUSIC: this track
+    /// now (from its start, looping), the queue emptied.
+    pub fn play_now(&mut self, track: u16) {
+        self.queue.stop();
+        self.pending_end = false;
+        self.queue.q = [Some(track), None, None];
+    }
+
     /// 0x800B0760 bit 0: a track or clip is playing.
     pub fn xa_playing(&self) -> bool {
         self.queue.playing

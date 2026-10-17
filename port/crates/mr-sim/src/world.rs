@@ -60,6 +60,9 @@ pub struct Course {
     /// path) and 0x0B (0x800D1C74, the eye path), world units >> 5.
     pub path_a: Vec<[i32; 3]>,
     pub path_b: Vec<[i32; 3]>,
+    /// Row 12: DAT chunk 0x16 (0x800D1CA0): the league presentation's
+    /// camera path (camera mode 11), world units >> 5.
+    pub path_16: Vec<[i32; 3]>,
     /// The stunt courses' lists (stunt.rs): gates (chunk 0x04, 0x800D1C58:
     /// point pairs), the strip's two edges (0x0F / 0x10, 0x800D1C84 /
     /// 0x800D1C88) and the pipes (0x14, 0x800D1C98: groups of 5 points).
@@ -245,7 +248,7 @@ impl Course {
                 [le32(o), le32(o + 4), le32(o + 8)]
             }).collect()).unwrap_or_default()
         };
-        let (path_a, path_b) = (pts(0x0A), pts(0x0B));
+        let (path_a, path_b, path_16) = (pts(0x0A), pts(0x0B), pts(0x16));
         let opt = |id: i16| find(id).map(|_| pts(id));
         let gates = opt(chunk::GATES);
         let strip = match (opt(chunk::STRIP_A), opt(chunk::STRIP_B)) {
@@ -254,7 +257,7 @@ impl Course {
         };
         let pipes = opt(chunk::PIPES);
         let (mirror_walls, mirror_floors, paired, banners) = (opt(0x08), opt(0x17), opt(0x0D), opt(0x09));
-        Course { grid, look_points, course_points, finish, length, triggers, has_other_objects, objects, path_a, path_b, gates, strip, pipes, mirror_walls, mirror_floors, paired, banners }
+        Course { grid, look_points, course_points, finish, length, triggers, has_other_objects, objects, path_a, path_b, path_16, gates, strip, pipes, mirror_walls, mirror_floors, paired, banners }
     }
 }
 

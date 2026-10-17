@@ -51,7 +51,7 @@ use bevy::prelude::*;
 use mr_assets::hud::{HudTables, Size, Sprite};
 use mr_assets::hud_items::Prim;
 
-use crate::input::{CROSS, DOWN, LEFT, RIGHT, SQUARE, START, TRIANGLE, UP};
+use crate::input::{CIRCLE, CROSS, DOWN, LEFT, RIGHT, SQUARE, START, TRIANGLE, UP};
 
 // ---------------------------------------------------------------- exe tables
 
@@ -145,6 +145,10 @@ mod sp {
     pub const RACES: u32 = 0x800B_0430;
     pub const NEXT: u32 = 0x800B_0164;
     pub const START_RACE: u32 = 0x800B_03C8;
+    pub const START_TIE_BREAKER: u32 = 0x800B_03C4;
+    pub const TOURNAMENT_CHAMPION: u32 = 0x800B_0304;
+    pub const CAN_YOU_GET: u32 = 0x800B_0468;
+    pub const PRESS_START: u32 = 0x800B_0284;
     pub const START_BATTLE: u32 = 0x800B_03CC;
     pub const POINTS: u32 = 0x800B_0310;
     pub const QUIT_TOURNAMENT: u32 = 0x800B_02F0;
@@ -254,7 +258,7 @@ impl MenuTables {
             sp::GAME_MENU, sp::BACK_TO_MAIN_MENU, sp::BEST_LAP, sp::NOT_COLLECTED, sp::NOT_WON, sp::MUPPET, sp::VEHICLE, sp::PAUSED, sp::CONTINUE,
             sp::RETIRE, sp::RESTART, sp::YES, sp::NO, sp::MUSIC_VOLUME, sp::SOUND_VOLUME, sp::CONTROLLER, sp::JUMP, sp::BRAKE, sp::CONFIGURATION,
             sp::VIBRATION, sp::RACE_LEAGUE_A, sp::RACE_LEAGUE_B, sp::BATTLE_LEAGUE, sp::RANDOM_RACE_LEAGUE, sp::RACE_POINTS, sp::TOURNAMENT_POINTS,
-            sp::FINAL_TABLE, sp::AFTER, sp::RACES, sp::NEXT, sp::START_RACE, sp::START_BATTLE, sp::POINTS, sp::QUIT_TOURNAMENT, sp::P1,
+            sp::FINAL_TABLE, sp::AFTER, sp::RACES, sp::NEXT, sp::START_RACE, sp::START_BATTLE, sp::START_TIE_BREAKER, sp::TOURNAMENT_CHAMPION, sp::CAN_YOU_GET, sp::PRESS_START, sp::POINTS, sp::QUIT_TOURNAMENT, sp::P1,
             sp::BEST_TIME, sp::ONE_PLAYER_STUNT_TRIAL, sp::TWO_PLAYER_STUNT_RACE, sp::ONE_PLAYER_BATTLE, sp::TWO_PLAYER_BATTLE,
             sp::REVERSE_RACE, sp::PLAY_MOVIE, sp::DOGFIGHT, sp::BOSS_CHALLENGE, sp::DOOZER_BATTLE, sp::BATTLE_AS_BOSS, sp::CHICKEN_CHASE,
             sp::REVERSE, sp::TWO_PLAYERS, sp::REVERSE_BATTLE_RACE, sp::BACK_TO_CREDITS, sp::TEST_DRIVE,
@@ -482,6 +486,55 @@ pub enum Page {
     Gallery,
     /// Phase 11: its TEST DRIVE (game mode 0xE, `Front::test_drive`).
     TestDrive,
+    /// Row 12: OPTIONS -> ADJUST SCREEN (sub-state 4; screen.rs).
+    AdjustScreen,
+    /// Row 12: OPTIONS -> MEMORY CARD (the game's course 10 page; over
+    /// save.bin).
+    MemoryCard,
+    /// Row 12: the league's presentation (game mode 0x12, league.rs).
+    Presentation,
+}
+
+/// Row 12: the MEMORY CARD page's state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Card {
+    /// s LOAD, x SAVE, t EXIT.
+    #[default]
+    Menu,
+    /// CONFIRM LOAD (true) / CONFIRM SAVE, PRESS x TO CONFIRM, PRESS t TO
+    /// EXIT.
+    Confirm(bool),
+    /// GAME LOADED / FAILED TO LOAD / GAME SAVED / FAILED TO SAVE (the
+    /// string's address) until menu VBlank `until`.
+    Message(u32, i32),
+}
+
+/// The memory card page's strings (the executable's).
+pub mod card_str {
+    pub const LOAD: u32 = 0x800B_0484;
+    pub const SAVE: u32 = 0x800B_0490;
+    pub const EXIT: u32 = 0x800B_049C;
+    pub const SLOT_1: u32 = 0x8002_1B80;
+    pub const CONFIRM_LOAD: u32 = 0x8002_1A0C;
+    pub const CONFIRM_SAVE: u32 = 0x8002_1A1C;
+    pub const PRESS_X: u32 = 0x8002_1A40;
+    pub const PRESS_T: u32 = 0x8002_1A54;
+    pub const LOADED: u32 = 0x8002_1A64;
+    pub const LOAD_FAILED: u32 = 0x8002_1A70;
+    pub const SAVE_FAILED: u32 = 0x8002_1A80;
+    pub const SAVED: u32 = 0x8002_1A90;
+}
+
+/// A C string of the executable.
+pub fn card_text(a: u32) -> String {
+    let e = crate::courses::exe();
+    let mut out = String::new();
+    let mut p = a;
+    while e.contains(p) && e.u8(p) != 0 && out.len() < 64 {
+        out.push(e.u8(p) as char);
+        p += 1;
+    }
+    out
 }
 
 /// Where GAME STATUS goes back to.
@@ -495,7 +548,7 @@ impl Page {
     /// Pages over a loaded course whose race is not running (the session
     /// runs `menu_tick`).
     pub fn course_menu(self) -> bool {
-        matches!(self, Page::CourseMenu | Page::GameMenu | Page::WorldList | Page::CourseList | Page::CharSelect | Page::Standings(_) | Page::LeagueMenu | Page::LeaguePoints | Page::LeagueQuit | Page::Secrets | Page::GameStatus(GameStatusFrom::GameMenu))
+        matches!(self, Page::CourseMenu | Page::GameMenu | Page::WorldList | Page::CourseList | Page::CharSelect | Page::Standings(_) | Page::LeagueMenu | Page::LeaguePoints | Page::LeagueQuit | Page::Secrets | Page::GameStatus(GameStatusFrom::GameMenu) | Page::Presentation)
     }
 
     /// Pages that freeze the race (virtual time paused).
@@ -554,7 +607,7 @@ pub struct Front {
     /// ADJUST SOUND's values while it is open (0x800B0E30 / 31).
     sound: [u8; 2],
     /// PORT SETTINGS: the file's settings being edited.
-    port: Option<crate::settings::Settings>,
+    pub port: Option<crate::settings::Settings>,
     pub request: Request,
     /// The current course's world / type (0x800B0E38 / 0x800B0E32).
     here: Option<(usize, usize)>,
@@ -601,6 +654,20 @@ pub struct Front {
     /// Sounds main.rs asks `run` to play (FUN_8005EECC calls of the
     /// gallery / TEST DRIVE logic).
     pub pending_sfx: Vec<(i32, i32, i32, i32)>,
+    /// Row 12: ADJUST SCREEN's offset while it is open (0x800B0D44 / 48)
+    /// and the menu VBlank of the last press (0x800B0AF0's start).
+    pub screen: (i32, i32),
+    pub screen_idle: i32,
+    /// Row 12: the MEMORY CARD page and its picture (FRONTEND/MEM_0n.RAW,
+    /// n = 1..8; 0x800B0670 the last one).
+    pub card: Card,
+    pub card_pic: Option<u8>,
+    /// Row 12: the course select's MUSIC pick playing (0x800B0740).
+    pub music_pick: Option<u16>,
+    /// Row 12: the presentation's load: the champion's voice clip 3
+    /// (character), the fanfare; then its idle VBlanks (0x800B0AF0).
+    pub pending_clip: Option<u8>,
+    pub presentation_idle: i32,
 }
 
 /// One COURSE SECRETS row: its text ("?" while its secret is not found),
@@ -766,6 +833,13 @@ impl Default for Front {
             gallery_prev: u16::MAX,
             test_drive: None,
             pending_sfx: Vec::new(),
+            screen: crate::screen::offset(st),
+            screen_idle: 0,
+            card: Card::Menu,
+            card_pic: None,
+            music_pick: None,
+            pending_clip: None,
+            presentation_idle: 0,
         };
         if crate::title::on_title() { f } else { f.on_course(info.id, info.lap_record) }
     }
@@ -819,6 +893,23 @@ impl Front {
         self.open(Page::Main);
     }
 
+    /// Row 12: FUN_8008C4AC entering game mode 0x12 (@0x8008CE98): the
+    /// league's result into the save (won when the player tops the table;
+    /// best points kept; fanfare 0x24 for a new win or 30+ / battle 20+),
+    /// the human champion's clip 3 (FUN_80060580); the presentation page.
+    pub fn start_presentation(&mut self, l: &crate::league::League) {
+        let table = l.table();
+        let fanfare = crate::save::with(|s| s.block.league_end(l.league as usize, table[0] == 0, l.points[0]));
+        if fanfare {
+            self.pending_sfx.push((0x24, 5000, 0x80, 0x80));
+        }
+        crate::save::between_courses();
+        if table[0] == 0 {
+            self.pending_clip = Some(l.karts[0].0);
+        }
+        self.page = Page::Presentation;
+    }
+
     /// The results screen's START / RETIRE: the course menu with a fresh
     /// menu session (the save re-read: records, won bits). In a league the
     /// results go to the standings instead (`League::score` first).
@@ -867,7 +958,7 @@ impl Front {
             Page::Secrets => 4,
             Page::GameStatus(_) => 7,
             Page::LeaguePoints => 1,
-            Page::Standings(_) | Page::None | Page::Gallery | Page::TestDrive => 1,
+            Page::Standings(_) | Page::None | Page::Gallery | Page::TestDrive | Page::AdjustScreen | Page::MemoryCard | Page::Presentation => 1,
         }
     }
 }
@@ -1069,6 +1160,15 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
         Page::Gallery => {
             return gallery_prims(t, fr);
         }
+        Page::AdjustScreen => {
+            return adjust_screen_prims(t, fr.screen, f);
+        }
+        Page::Presentation => {
+            return presentation_prims(t, fr, f);
+        }
+        Page::MemoryCard => {
+            return memory_card_prims(t, fr.card);
+        }
         Page::TestDrive => {
             return test_drive_prims(t, fr);
         }
@@ -1089,7 +1189,12 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
                     sp_out.extend(select_button(t, 0x20, 0xD2, 2, false));
                     let list = [
                         // (the BATTLE LEAGUE: START BATTLE n, 0x800C1E4C)
-                        Item::new(format!("{} {}", txt(if fr.league.as_ref().is_some_and(|l| l.league as usize == mr_sim::save::LEAGUE_BATTLE) { sp::START_BATTLE } else { sp::START_RACE }), race + 1)),
+                        // (row 12: the tie-break race, START TIE-BREAKER)
+                        if fr.league.as_ref().is_some_and(|l| l.tie_break()) {
+                            Item::new(txt(sp::START_TIE_BREAKER))
+                        } else {
+                            Item::new(format!("{} {}", txt(if fr.league.as_ref().is_some_and(|l| l.league as usize == mr_sim::save::LEAGUE_BATTLE) { sp::START_BATTLE } else { sp::START_RACE }), race + 1))
+                        },
                         Item::new(txt(sp::POINTS)),
                         Item::new(txt(sp::QUIT_TOURNAMENT)).tint([0xFF, 0x1F, 0x1F]),
                     ];
@@ -1131,8 +1236,8 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
             let mut list = vec![
                 Item::new(txt(sp::ADJUST_SOUND)),
                 Item::new(txt(sp::SET_CONTROLLERS)),
-                Item::new(txt(sp::ADJUST_SCREEN)).grey(true),
-                Item::new(txt(sp::MEMORY_CARD)).grey(true),
+                Item::new(txt(sp::ADJUST_SCREEN)),
+                Item::new(txt(sp::MEMORY_CARD)),
             ];
             if the_end_open() {
                 list.push(Item::new(crate::ending::tables().lines[0].text.clone().unwrap_or_default()));
@@ -1163,9 +1268,12 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
             sp_out.extend(t.hud.text_rgb(sq.as_bytes(), x, 0x6F, 0, Size::from_arg(0), 0, 0x60, [0xDC, 0x60, 0xBC]));
             let ci = format!("{} o", txt(if alt { sp::JUMP } else { sp::BRAKE }));
             sp_out.extend(t.hud.text_rgb(ci.as_bytes(), x, 0x81, 0, Size::from_arg(0), 0, 0x60, [0xDC, 0x50, 0x28]));
+            // row 12: VIBRATION - ON / OFF (0x800B0C5A)
+            let st0 = fr.port.clone().unwrap_or_else(|| crate::settings::Settings::global().clone());
+            let onoff = |on: bool| t.st(if on { si::ON } else { si::OFF });
             let rows = [
                 (format!("{} - {}", txt(sp::CONFIGURATION), t.st(if alt { si::B } else { si::A })), 0x9D, 0x60),
-                (format!("{} - {}", txt(sp::VIBRATION), t.st(si::OFF)), 0xAD, 0),
+                (format!("{} - {}", txt(sp::VIBRATION), onoff(crate::rumble::enabled(&st0, 0))), 0xAD, 0x60),
             ];
             for (k, (s, y, abr)) in rows.iter().enumerate() {
                 let (size, colour, rgb) = if k as i32 == sel { (0, 0, t.pulse(f)) } else { (2, 1, [0x80; 3]) };
@@ -1180,8 +1288,15 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
             sp_out.extend(t.hud.text_rgb(sq.as_bytes(), x, 0x6F, 0, Size::from_arg(0), 0, 0x60, [0xDC, 0x60, 0xBC]));
             let ci = format!("{} o", txt(if alt2 { sp::JUMP } else { sp::BRAKE }));
             sp_out.extend(t.hud.text_rgb(ci.as_bytes(), x, 0x81, 0, Size::from_arg(0), 0, 0x60, [0xDC, 0x50, 0x28]));
-            let s2 = format!("{} - {}", txt(sp::CONFIGURATION), t.st(if alt2 { si::B } else { si::A }));
-            sp_out.extend(t.hud.text_rgb(s2.as_bytes(), x, 0x9D, 0, Size::from_arg(2), 1, 0x60, [0x80; 3]));
+            // (row 12: its own cursor, pad 2's UP / DOWN: `col`)
+            let rows2 = [
+                (format!("{} - {}", txt(sp::CONFIGURATION), t.st(if alt2 { si::B } else { si::A })), 0x9D),
+                (format!("{} - {}", txt(sp::VIBRATION), onoff(crate::rumble::enabled(&st0, 1))), 0xAD),
+            ];
+            for (k, (s2, y)) in rows2.iter().enumerate() {
+                let (size, colour, rgb) = if k as i8 == fr.col { (0, 0, t.pulse(f)) } else { (2, 1, [0x80; 3]) };
+                sp_out.extend(t.hud.text_rgb(s2.as_bytes(), x, *y, 0, Size::from_arg(size), colour, 0x60, rgb));
+            }
             sp_out.extend(select_button(t, 0x100, 0xD2, 0, true));
             sp_out.extend(back_button(t, 0x100, 0x1E, 0, true));
         }
@@ -1216,7 +1331,8 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
                 width = wd;
             }
             let playable = open && is_race(t.cups[w * 4 + c]);
-            sp_out.extend(t.hud.text_rgb(format!("o {}", txt(sp::MUSIC)).as_bytes(), 0x180, 0xD2, 0, Size::from_arg(0), 0, 0, [0xDC, 0x50, 0x28]));
+            // (row 12: MUSIC bright on an open course, FUN_80051698)
+            sp_out.extend(t.hud.text_rgb(format!("o {}", txt(sp::MUSIC)).as_bytes(), 0x180, 0xD2, 0, Size::from_arg(0), 0, if open { 0x60 } else { 0 }, [0xDC, 0x50, 0x28]));
             // (FUN_80051698: MOVIE bright once the course's movie object
             // was found, flags & 0x80)
             let movie = p.0.flags(w, c) & 0x80 != 0;
@@ -1714,6 +1830,10 @@ pub struct Effects {
     pub league: bool,
     /// Phase 9: play this movie (MOVIE, PLAY MOVIE; movie.rs).
     pub movie: Option<u8>,
+    /// Row 12: the course select's MUSIC: this course track now.
+    pub music: Option<u16>,
+    /// Row 12: MEMORY CARD: load (true) / save save.bin.
+    pub card: Option<bool>,
 }
 
 impl Front {
@@ -1726,6 +1846,7 @@ impl Front {
         let back = pressed(TRIANGLE);
         let start = pressed(START);
         let square = pressed(SQUARE);
+        let circle = pressed(CIRCLE);
         self.prev = buttons;
         // (phase 11: MEET THE MUPPETS and TEST DRIVE run in main.rs, on the
         // simulation's ticks)
@@ -1800,6 +1921,28 @@ impl Front {
                             self.port = Some(file_settings());
                             self.open(Page::Controllers);
                         }
+                        // row 12: ADJUST SCREEN (sub-state 4: the saved
+                        // offset to 0x800B0D44 / 48)
+                        2 => {
+                            confirm(&mut fx);
+                            self.screen = crate::screen::offset(&file_settings());
+                            crate::screen::set_live(Some(self.screen));
+                            self.screen_idle = self.vb;
+                            self.open(Page::AdjustScreen);
+                        }
+                        // row 12: MEMORY CARD (course 10: a MEM_0n picture
+                        // that is not the last one, 0x800B0670)
+                        3 => {
+                            confirm(&mut fx);
+                            let last = self.card_pic;
+                            let mut n = ((self.vb as u32).wrapping_mul(2_654_435_761) >> 29) as u8 + 1;
+                            if Some(n) == last {
+                                n = n % 8 + 1;
+                            }
+                            self.card_pic = Some(n);
+                            self.card = Card::Menu;
+                            self.open(Page::MemoryCard);
+                        }
                         // phase 8: THE END (course 0x1D, ending.rs)
                         4 if the_end_open() => {
                             confirm(&mut fx);
@@ -1848,19 +1991,39 @@ impl Front {
             Page::Controllers => {
                 // phase 7: controller 2's configuration with pad 2's LEFT /
                 // RIGHT (FUN_80073B0C's second column)
-                let p2 = self.pad2 & !self.prev2 & (LEFT | RIGHT) != 0;
+                let e2 = self.pad2 & !self.prev2;
                 self.prev2 = self.pad2;
-                if p2 {
+                // row 12: pad 2's own cursor (0x800B0E26): UP / DOWN
+                if e2 & UP != 0 && self.col > 0 {
+                    self.col -= 1;
+                    fx.sfx.push(NAV_SFX);
+                }
+                if e2 & DOWN != 0 && self.col < 1 {
+                    self.col += 1;
+                    fx.sfx.push(NAV_SFX);
+                }
+                let toggle = |st: &mut crate::settings::Settings, key: &str, row: i8| {
+                    if row == 0 {
+                        let alt = st.get(key) == Some("B");
+                        let _ = st.set(key, if alt { "A" } else { "B" });
+                    } else {
+                        // VIBRATION (FUN_800744EC: 0..1)
+                        let k = if key.ends_with("_2") { "vibration_2" } else { "vibration" };
+                        let on = st.bool(k, true);
+                        let _ = st.set(k, if on { "false" } else { "true" });
+                    }
+                };
+                if e2 & (LEFT | RIGHT) != 0 {
+                    let row = self.col;
                     if let Some(st) = self.port.as_mut() {
-                        let alt = st.get("controller_config_2") == Some("B");
-                        let _ = st.set("controller_config_2", if alt { "A" } else { "B" });
+                        toggle(st, "controller_config_2", row);
                         fx.sfx.push(NAV_SFX);
                     }
                 }
-                if self.row == 0 && (left || right) {
+                if left || right {
+                    let row = self.row;
                     if let Some(st) = self.port.as_mut() {
-                        let alt = st.get("controller_config") == Some("B");
-                        let _ = st.set("controller_config", if alt { "A" } else { "B" });
+                        toggle(st, "controller_config", row);
                         fx.sfx.push(NAV_SFX);
                     }
                 }
@@ -1876,6 +2039,95 @@ impl Front {
                     self.row = 1;
                 }
             }
+            Page::Presentation => {
+                // FUN_80074A94 game mode 0x12: CROSS / START or 0x1C20 idle
+                // VBlanks: after a tie-break the course (OVAL / ARENA
+                // BATTLE) opens (flags | 1) and shows its course menu (game
+                // mode 0); without, its course menu when open, else the title
+                if self.presentation_idle == 0 {
+                    self.presentation_idle = self.vb.max(1);
+                }
+                if cross || start || self.vb.wrapping_sub(self.presentation_idle) > 0x1C20 {
+                    confirm(&mut fx);
+                    if let Some(lg) = self.league.take() {
+                        let c = crate::league::final_course(lg.league);
+                        let place = crate::save::with(|s| s.tables.place(c));
+                        let open = place.is_some_and(|(w, t)| {
+                            crate::save::with(|s| {
+                                if !lg.tie.is_empty() {
+                                    s.block.or_flags(w, t, 1);
+                                }
+                                s.block.course_open(w, t)
+                            })
+                        });
+                        crate::save::persist();
+                        crate::league::League::clear();
+                        if open {
+                            fx.relaunch_course = crate::courses::races().iter().find(|i| i.id == c).map(|i| i.name.clone());
+                        } else {
+                            fx.relaunch_title = true;
+                        }
+                    } else {
+                        fx.relaunch_title = true;
+                    }
+                }
+            }
+            Page::AdjustScreen => {
+                // FUN_80073138 (sub-state 4): RIGHT / LEFT x, DOWN / UP y,
+                // 0..32, live; CROSS keeps, TRIANGLE (or 0x708 idle
+                // VBlanks) puts the saved offset back
+                let (x, y) = self.screen;
+                let nx = (x + right as i32 - left as i32).clamp(0, 32);
+                let ny = (y + down as i32 - up as i32).clamp(0, 32);
+                if up || down || left || right {
+                    self.screen_idle = self.vb;
+                }
+                if (nx, ny) != (x, y) {
+                    self.screen = (nx, ny);
+                    crate::screen::set_live(Some(self.screen));
+                }
+                let timeout = self.vb.wrapping_sub(self.screen_idle) > 0x708;
+                if cross || back || timeout {
+                    if !timeout {
+                        confirm(&mut fx);
+                    }
+                    let mut st = file_settings();
+                    if cross {
+                        let _ = st.set("screen_x", &nx.to_string());
+                        let _ = st.set("screen_y", &ny.to_string());
+                        save_settings(&st);
+                    }
+                    crate::screen::set_live(Some(crate::screen::offset(&st)));
+                    self.open(Page::Options);
+                    self.row = 2;
+                }
+            }
+            Page::MemoryCard => match self.card {
+                Card::Menu => {
+                    if back {
+                        confirm(&mut fx);
+                        self.open(Page::Options);
+                        self.row = 3;
+                    } else if square || cross {
+                        confirm(&mut fx);
+                        self.card = Card::Confirm(square);
+                    }
+                }
+                Card::Confirm(load) => {
+                    if cross {
+                        confirm(&mut fx);
+                        fx.card = Some(load);
+                    } else if back {
+                        confirm(&mut fx);
+                        self.card = Card::Menu;
+                    }
+                }
+                Card::Message(_, until) => {
+                    if cross || back || self.vb.wrapping_sub(until) > 0 {
+                        self.card = Card::Menu;
+                    }
+                }
+            },
             Page::PortSettings => {
                 let d = right as i32 - left as i32;
                 if d != 0 {
@@ -1950,22 +2202,30 @@ impl Front {
                         // progression check (FUN_8008BE68)
                         crate::save::between_courses();
                         lg.race += 1;
+                        let fin = crate::courses::races().iter().find(|i| i.id == crate::league::final_course(lg.league)).map(|i| i.name.clone());
                         if lg.race < 6 {
                             lg.store();
                             fx.relaunch_course = crate::courses::races().iter().find(|i| i.id == lg.courses[lg.race as usize]).map(|i| i.name.clone());
                             fx.league = true;
                             self.league = Some(lg);
+                        } else if let Some(tie) = (lg.race == 6).then(|| lg.tie_needed()).flatten() {
+                            // row 12: a tie for first with the player: the
+                            // tie-break race on OVAL / ARENA BATTLE with the
+                            // tied karts (0x800C1E49, START TIE-BREAKER)
+                            lg.tie = tie;
+                            lg.store();
+                            fx.relaunch_course = fin;
+                            fx.league = true;
+                            self.league = Some(lg);
                         } else {
-                            // FUN_8008C4AC @0x8008CE98: the league's result
-                            let table = lg.table();
-                            let l = lg.league as usize;
-                            let fanfare = crate::save::with(|s| s.block.league_end(l, table[0] == 0, lg.points[0]));
-                            if fanfare {
-                                fx.sfx.push((0x24, 5000, 0x80, 0x80));
-                            }
-                            crate::save::between_courses();
-                            crate::league::League::clear();
-                            fx.relaunch_title = true;
+                            // row 12: the presentation on OVAL / ARENA
+                            // BATTLE (game mode 0x12; its load writes the
+                            // league's result, boot_front)
+                            lg.race = crate::league::PRESENTATION;
+                            lg.store();
+                            fx.relaunch_course = fin;
+                            fx.league = true;
+                            self.league = Some(lg);
                         }
                     }
                 }
@@ -2006,6 +2266,18 @@ impl Front {
             }
             Page::CourseSelect => {
                 let (w, c) = (self.row as usize, self.col as usize);
+                // row 12: o MUSIC (FUN_80074A94 sub-state 0xC, CIRCLE): an
+                // open course with a track (row + 3) plays it at once
+                // (FUN_80060468; the queue cleared) unless it already plays
+                if circle && self.progress.course_open(w, c) {
+                    let course = t.cups[w * 4 + c];
+                    if course >= 0 {
+                        let tr = crate::courses::exe().u8(0x800A_CB37 + 0xC * course as u32) as i8;
+                        if tr >= 0 {
+                            fx.music = Some(tr as u16);
+                        }
+                    }
+                }
                 if left && self.col > 0 {
                     self.col -= 1;
                     fx.sfx.push(NAV_SFX);
@@ -2415,6 +2687,10 @@ impl Plugin for MenusPlugin {
 /// its MOVIE, FUN_80074A94 sub-state 0xC).
 fn boot_front() -> Front {
     let mut front = Front::default();
+    if let Some(l) = front.league.clone().filter(|l| l.race == crate::league::PRESENTATION && !crate::title::on_title()) {
+        front.start_presentation(&l);
+        return front;
+    }
     if crate::settings::args().into_iter().any(|a| a == "--menu") && !crate::title::on_title() {
         front.page = Page::CourseMenu;
         // a league: its character select first, then each race at once
@@ -2422,6 +2698,12 @@ fn boot_front() -> Front {
             Some(false) => front.open(Page::CharSelect),
             Some(true) => front.open(Page::LeagueMenu),
             None => {}
+        }
+    }
+    // (checks: `--open-page standings:N` a league's standings page N)
+    if let Some(n) = crate::settings::arg_value("--open-page").and_then(|v| v.strip_prefix("standings:").and_then(|n| n.parse::<u8>().ok())) {
+        if front.league.as_ref().is_some_and(|l| l.started) {
+            front.open(Page::Standings(n.clamp(1, 2)));
         }
     }
     if let Some(v) = crate::settings::arg_value("--open-page").and_then(|v| v.strip_prefix("courses:").map(String::from)) {
@@ -2503,6 +2785,7 @@ fn run(
     mut sfx: ResMut<crate::sfx::Sfx>,
     bus: Option<Res<crate::audio::AudioBus>>,
     p: Res<crate::Player>,
+    mut dir: ResMut<crate::audio::MusicDirector>,
 ) {
     // Phase 9: no menu input while a movie covers the screen; row 12: nor
     // during a course change's fades and LOADING picture
@@ -2564,6 +2847,34 @@ fn run(
     for s in &fx.sfx {
         sfx.play(*s);
     }
+    // row 12: the course select's MUSIC (not when that track plays already,
+    // 0x800B0760 bit 0 / 0x800B0740)
+    if let Some(tr) = fx.music {
+        if !(dir.xa_playing() && front.music_pick == Some(tr)) {
+            sfx.play(CONFIRM_SFX);
+            front.music_pick = Some(tr);
+            dir.play_now(tr);
+        }
+    }
+    // row 12: the presentation's champion clip (FUN_80060580(c, 3))
+    if let Some(c) = front.pending_clip.take() {
+        dir.clip(c, 3);
+    }
+    // row 12: MEMORY CARD over save.bin
+    if let Some(load) = fx.card {
+        let ok = if load { crate::save::load_now() } else { crate::save::save_now() };
+        if ok && load {
+            front.refresh();
+        }
+        let msg = match (load, ok) {
+            (true, true) => card_str::LOADED,
+            (true, false) => card_str::LOAD_FAILED,
+            (false, true) => card_str::SAVED,
+            (false, false) => card_str::SAVE_FAILED,
+        };
+        let until = front.vb + 120;
+        front.card = Card::Message(msg, until);
+    }
     if let Some(v) = fx.volumes {
         if let Some(bus) = bus.as_ref() {
             crate::audio::apply_game_volumes(bus, t.music_gain(v[0]), t.sound_gain(v[1]));
@@ -2623,6 +2934,174 @@ fn pause(front: Res<Front>, mut time: ResMut<Time<Virtual>>, mut paused_here: Lo
         time.unpause();
         *paused_here = false;
     }
+}
+
+/// Row 12: ADJUST SCREEN's layer (FUN_80051698 sub-state 4): magenta
+/// corner brackets, the dark purple border, x SELECT, t BACK and a red
+/// arrow toward each side the picture can still move to.
+fn adjust_screen_prims(t: &MenuTables, (x, y): (i32, i32), f: i32) -> Vec<Prim> {
+    let mut v = Vec::new();
+    let tile = |x: i32, y: i32, w: i32, h: i32, rgb: [u8; 3]| Prim::Tile { x, y, w, h, rgb };
+    let m = [0xFF, 0, 0xFF];
+    for (tx, ty, w, h) in [(0x3E, 0x1D, 0x40, 2), (0x3E, 0x1D, 4, 0x1E), (0x182, 0x1D, 0x40, 2), (0x1BE, 0x1D, 4, 0x1E), (0x182, 0xD1, 0x40, 2), (0x1BE, 0xB5, 4, 0x1E), (0x3E, 0xD1, 0x40, 2), (0x3E, 0xB5, 4, 0x1E)] {
+        v.push(tile(tx, ty, w, h, m));
+    }
+    let b = [0x40, 0, 0x40];
+    for (tx, ty, w, h) in [(0, 0, 0x200, 0x1E), (0, 0xD2, 0x200, 0x1E), (0, 0, 0x40, 0xF0), (0x1C0, 0, 0x40, 0xF0)] {
+        v.push(tile(tx, ty, w, h, b));
+    }
+    let mut sp = select_button(t, 0x100, 0xD2, 0, true);
+    sp.extend(back_button(t, 0x100, 0x1E, 0, true));
+    v.extend(sp.into_iter().map(Prim::Sprt));
+    let a = t.arrow_size(f);
+    let red = [0xFF, 0, 0];
+    if x > 0 {
+        v.push(t.arrow(0x80, 0x78, 0xC00, red, a, a));
+    }
+    if x < 32 {
+        v.push(t.arrow(0x180, 0x78, 0x400, red, a, a));
+    }
+    if y > 0 {
+        v.push(t.arrow(0x100, 0x3C, 0, red, a, a));
+    }
+    if y < 32 {
+        v.push(t.arrow(0x100, 0xB4, 0x800, red, a, a));
+    }
+    v
+}
+
+/// Row 12: the presentation's layer (FUN_80051698 case 0x12): TOURNAMENT
+/// CHAMPION (0x100, 0x1E), the champion's name (0x100, 0x36, size 1,
+/// colour 5), PRESS START blinking (0xD2) and, the player champion of
+/// league 0..2, "CAN YOU GET n POINTS?" (0x100, 0xB4, size 1, colour 6; n =
+/// 30, the battle league 20) while the best is lower, else the trophy
+/// (FUN_8002FD04(0x100, 0xB4, 0x10, 0x10, ..., u 0xC0, v 0x80, 0x37 x 0x37,
+/// slot 0x15, clut + 0xB)).
+fn presentation_prims(t: &MenuTables, fr: &Front, f: i32) -> Vec<Prim> {
+    let txt = |s: u32| t.st(s).to_string();
+    let mut sp = t.hud.text(txt(sp::TOURNAMENT_CHAMPION).as_bytes(), 0x100, 0x1E, 0, Size::from_arg(0), 4, 0x60);
+    let mut v = Vec::new();
+    if let Some(l) = fr.league.as_ref() {
+        let champ = l.table()[0];
+        let c = l.karts[champ].0 as u32;
+        let e = crate::courses::exe();
+        let name = card_text(e.i32(0x800A_B124 + 8 * c) as u32);
+        sp.extend(t.hud.text(name.as_bytes(), 0x100, 0x36, 0, Size::from_arg(1), 5, 0x60));
+        if (l.league as usize) < 3 && champ == 0 {
+            let target = if l.league as usize == mr_sim::save::LEAGUE_BATTLE { 20 } else { 30 };
+            let best = crate::save::with(|s| s.block.u8(0x121 + 2 * l.league as usize));
+            if best < target {
+                let s = txt(sp::CAN_YOU_GET).replace("%i", &target.to_string());
+                sp.extend(t.hud.text(s.as_bytes(), 0x100, 0xB4, 0, Size::from_arg(1), 6, 0x60));
+            } else if let Some(q) = item_tables().as_ref().and_then(|it| mr_assets::hud_items::quad(it, 0x100, 0xB4, 0x10, 0x10, 0, 0xC0, 0x80, 0x37, 0x37, [0x80; 3], 0x15, 0xB, 0x60)) {
+                v.push(Prim::Ft4(q));
+            }
+        }
+    }
+    if f % 60 < 45 && f > 0x20 {
+        sp.extend(t.hud.text(txt(sp::PRESS_START).as_bytes(), 0x100, 0xD2, 0, Size::from_arg(0), 4, 0x60));
+    }
+    v.extend(sp.into_iter().map(Prim::Sprt));
+    v
+}
+
+/// Row 12: the standings' karts lined up in front of the camera
+/// (FUN_8006B1C8 in game mode 0x11 + FUN_80036228's camera-space draw):
+/// page 1 (RACE POINTS) in finishing order 0x3000 apart at y -0xF00, pitch
+/// 0x180, scale 0x600; page 2 (TOURNAMENT POINTS) in table order 0x3400
+/// apart at y 0xC00, pitch 0xC0, scale 0x700 (+0x442); z 0x8000, centred; turning by the menu VBlanks << 4
+/// (FUN_80025D8C: FUN_80024AB4(pitch, vb << 4, 0)). Drawn without the
+/// view's 1.6 x stretch (the RACE POINTS columns, 62 pixels apart, sit
+/// over them): in the port's camera the point (0.625 x, y, z) on the
+/// session camera's axes. Records: the player's, with each kart's
+/// character / vehicle (+0x4B2 / +0x4B1).
+pub fn lineup_records(lg: &crate::league::League, page: u8, s: &mr_sim::session::Session, vb: i32) -> Vec<Vec<u8>> {
+    let (spacing, y, pitch, scale, order): (i32, i32, i32, i64, Vec<usize>) = if page == 1 {
+        (0x3000, -0xF00, 0x180, 0x600, lg.finish.iter().map(|&k| k as usize).collect())
+    } else {
+        (0x3400, 0xC00, 0xC0, 0x700, lg.table())
+    };
+    let start = (spacing - 6 * spacing) / 2;
+    let cam = &s.camera;
+    let r = cam.matrix;
+    let to_world = |v: [i64; 3]| -> [i32; 3] { std::array::from_fn(|k| cam.pos[k] + ((0..3).map(|j| v[j] * r[j][k] as i64).sum::<i64>() >> 12) as i32) };
+    let ml = mr_sim::render::rot_xyz(&s.world.tables, pitch, (vb & 0xFF) << 4, 0);
+    // world matrix = R^T * M (R rows = the camera's axes)
+    let mw: [[i32; 3]; 3] = std::array::from_fn(|a| std::array::from_fn(|b| ((0..3).map(|j| r[j][a] as i64 * ml[j][b] as i64).sum::<i64>() >> 12) as i32));
+    let mut out = Vec::new();
+    for (i, &k) in order.iter().enumerate().take(6) {
+        let x = (start + spacing * i as i32) as i64;
+        // (+0x442's scale as distance: the point moved out along its ray
+        // by 0x1000 / scale shows the kart that much smaller in place)
+        let p = to_world([x * 5 / 8 * 0x1000 / scale, y as i64 * 0x1000 / scale, 0x8000 * 0x1000 / scale]);
+        let mut rec = s.record().to_vec();
+        let (c, v) = lg.karts[k];
+        rec[0x4B2] = c;
+        rec[0x4B1] = v;
+        for (n, val) in p.iter().enumerate() {
+            rec[4 * n..4 * n + 4].copy_from_slice(&val.to_le_bytes());
+        }
+        rec[0xC..0xE].copy_from_slice(&(pitch as i16).to_le_bytes());
+        rec[0xE..0x10].copy_from_slice(&((((vb & 0xFF) << 4) as i16).to_le_bytes()));
+        rec[0x10..0x12].copy_from_slice(&0i16.to_le_bytes());
+        // the body, its second base and the driver turn with the kart; the
+        // driver's position (FUN_80025D8C) keeps its place on the kart
+        use crate::kartmodel::off;
+        let old = s.record();
+        let rd32 = |o: usize| i32::from_le_bytes(old[o..o + 4].try_into().unwrap()) as i64;
+        let rd16 = |o: usize| i16::from_le_bytes(old[o..o + 2].try_into().unwrap()) as i64;
+        let m_old: [[i64; 3]; 3] = std::array::from_fn(|a| std::array::from_fn(|b| rd16(off::BODY_M + 2 * (3 * a + b))));
+        let dv: [i64; 3] = std::array::from_fn(|n| rd32(off::DRIVER_POS + 8 * n) - rd32(4 * n));
+        // kart-local offset (M_old^T dv), then turned by the new matrix
+        let local: [i64; 3] = std::array::from_fn(|b| (0..3).map(|a| m_old[a][b] * dv[a]).sum::<i64>() >> 12);
+        for base in [off::BODY_M, off::BODY2_M, off::DRIVER_M] {
+            for a in 0..3 {
+                for b in 0..3 {
+                    let o = base + 2 * (3 * a + b);
+                    rec[o..o + 2].copy_from_slice(&(mw[a][b] as i16).to_le_bytes());
+                }
+            }
+        }
+        for n in 0..3 {
+            let o = off::DRIVER_POS + 8 * n;
+            let nd = (0..3).map(|b| mw[n][b] as i64 * local[b]).sum::<i64>() >> 12;
+            rec[o..o + 4].copy_from_slice(&(p[n] + nd as i32).to_le_bytes());
+        }
+        out.push(rec);
+    }
+    out
+}
+
+/// The item HUD's tables (FUN_8002FD04's sine), read once.
+fn item_tables() -> &'static Option<mr_assets::hud_items::ItemTables> {
+    static T: OnceLock<Option<mr_assets::hud_items::ItemTables>> = OnceLock::new();
+    T.get_or_init(|| mr_disc::Disc::open_default().ok().and_then(|mut d| d.read("SLUS_012.37").ok()).and_then(|e| mr_assets::hud_items::ItemTables::from_exe(&e)))
+}
+
+/// Row 12: the MEMORY CARD page's layer (the game's course 10 page, as
+/// the oracle draws it with a formatted card: s LOAD / x SAVE / t EXIT at
+/// y 0x64 / 0x78 / 0x8C, MEMORY CARD SLOT 1 at 0xD2; the picture behind is
+/// loading.rs `card_backdrop`).
+fn memory_card_prims(t: &MenuTables, card: Card) -> Vec<Prim> {
+    let mut sp = Vec::new();
+    match card {
+        Card::Menu => {
+            sp.extend(t.hud.text_rgb(card_text(card_str::LOAD).as_bytes(), 0x100, 0x64, 0, Size::from_arg(0), 0, 0x60, [0xDC, 0x60, 0xBC]));
+            sp.extend(t.hud.text_rgb(card_text(card_str::SAVE).as_bytes(), 0x100, 0x78, 0, Size::from_arg(0), 0, 0x60, [0x68, 0x84, 0xDC]));
+            sp.extend(t.hud.text_rgb(card_text(card_str::EXIT).as_bytes(), 0x100, 0x8C, 0, Size::from_arg(0), 0, 0x60, [0x10, 0xA4, 0x60]));
+        }
+        Card::Confirm(load) => {
+            let a = if load { card_str::CONFIRM_LOAD } else { card_str::CONFIRM_SAVE };
+            sp.extend(t.hud.text(card_text(a).as_bytes(), 0x100, 0x64, 0, Size::from_arg(0), 4, 0x60));
+            sp.extend(t.hud.text(card_text(card_str::PRESS_X).as_bytes(), 0x100, 0x80, 0, Size::from_arg(2), 4, 0x60));
+            sp.extend(t.hud.text(card_text(card_str::PRESS_T).as_bytes(), 0x100, 0x90, 0, Size::from_arg(2), 4, 0x60));
+        }
+        Card::Message(a, _) => {
+            sp.extend(t.hud.text(card_text(a).as_bytes(), 0x100, 0x78, 0, Size::from_arg(0), 4, 0x60));
+        }
+    }
+    sp.extend(t.hud.text(card_text(card_str::SLOT_1).as_bytes(), 0x100, 0xD2, 0, Size::from_arg(2), 4, 0x60));
+    sp.into_iter().map(Prim::Sprt).collect()
 }
 
 /// The boot arguments for `course` in its course menu (`--menu`), or the
@@ -2792,7 +3271,14 @@ mod tests {
         press(&mut f, CROSS);
         assert_eq!(f.page, Page::Standings(2));
         let fx = press(&mut f, CROSS);
-        assert!(fx.relaunch_title);
+        // row 12: the presentation on OVAL (course 0x1A), whose load writes
+        // the result
+        assert_eq!(fx.relaunch_course.as_deref(), crate::courses::races().iter().find(|i| i.id == 0x1A).map(|i| i.name.as_str()));
+        let lg = f.league.clone().unwrap();
+        assert_eq!(lg.race, crate::league::PRESENTATION);
+        f.start_presentation(&lg);
+        assert_eq!(f.page, Page::Presentation);
+        assert_eq!(f.pending_clip, Some(lg.karts[0].0));
         assert!(crate::save::with(|s| s.block.league_flags(0) & 2 != 0), "the player topped the table: league A won");
         assert_eq!(crate::save::with(|s| s.block.league_best(0)), 30);
     }
@@ -2867,7 +3353,7 @@ mod tests {
         let t = MenuTables::from_exe(&exe);
         let mut disc = mr_disc::Disc::open_default().unwrap();
         // the league after the first race (league.txt: ranks, points)
-        let mut lg = crate::league::League { league: 0, race: 0, courses: [8, 9, 16, 1, 3, 15], karts: [(0, 0); 6], points: [0; 6], last: Default::default(), finish: [0; 6], started: true };
+        let mut lg = crate::league::League { league: 0, race: 0, courses: [8, 9, 16, 1, 3, 15], karts: [(0, 0); 6], points: [0; 6], last: Default::default(), finish: [0; 6], started: true, tie: Vec::new() };
         for l in txt.lines().filter(|l| l.starts_with("kart ")) {
             let w: Vec<&str> = l.split_whitespace().collect();
             let k: usize = w[1].parse().unwrap();
@@ -2915,6 +3401,38 @@ mod tests {
             let extra: Vec<_> = theirs.iter().filter(|o| !ours.contains(o)).collect();
             assert_eq!(bad, 0, "{file} (best frame {vb}): port only {missing:?}; oracle only {extra:?}");
         }
+    }
+
+    /// Row 12: the league presentation (game mode 0x12 on OVAL; the oracle
+    /// with the league's end poked, analysis/s8/p12/pres/p700.json):
+    /// TOURNAMENT CHAMPION, KERMIT THE FROG, CAN YOU GET 30 POINTS? equal
+    /// the game's font sprites (PRESS START was off in that frame).
+    #[test]
+    fn gp0_presentation() {
+        let Some(exe) = exe() else { return };
+        let Ok(text) = std::fs::read_to_string(mr_sim::oracle::repo_root().join("analysis/s8/p12/pres/p700.json")) else { return };
+        let t = MenuTables::from_exe(&exe);
+        let mut disc = mr_disc::Disc::open_default().unwrap();
+        let course = 0x1Au32;
+        let path = mr_assets::raw::course_raw_path(&exe, course).unwrap();
+        let env = mr_assets::raw::LoadEnv::from_exe(&exe, course).unwrap();
+        let dec = mr_assets::raw::decode(&disc.read(&path).unwrap(), &env).unwrap();
+        let slots = mr_assets::hud::slot_attrs(&dec.slots);
+        let theirs = oracle_font_sprites(&text, slots[mr_assets::hud::FONT_SLOT as usize].1);
+        let lg = crate::league::League { league: 0, race: crate::league::PRESENTATION, courses: [1, 9, 8, 7, 3, 4], karts: [(0, 0), (5, 30), (13, 12), (17, 16), (23, 18), (1, 1)], points: [25, 20, 18, 9, 4, 2], last: Default::default(), finish: [0, 1, 2, 3, 4, 5], started: true, tie: Vec::new() };
+        let mut f = Front { progress: Progress::new_game(), league: Some(lg), ..Default::default() };
+        f.page = Page::Presentation;
+        // a frame with PRESS START off (f % 60 >= 45)
+        f.vb = 50;
+        let ours: Vec<_> = presentation_prims(&t, &f, 50)
+            .into_iter()
+            .filter_map(|p| if let Prim::Sprt(s) = p { Some(s) } else { None })
+            .map(|s| (s.x, s.y, s.u, s.v, s.w, s.h, s.attrs(&slots).1, s.raw))
+            .collect();
+        let missing: Vec<_> = ours.iter().filter(|o| !theirs.contains(o)).collect();
+        let extra: Vec<_> = theirs.iter().filter(|o| !ours.contains(o)).collect();
+        assert!(missing.is_empty() && extra.is_empty(), "port only {missing:?}; oracle only {extra:?}");
+        assert_eq!(ours.len(), 49);
     }
 
     /// (x, y, u, v, w, h, clut, raw) of the oracle frame's SPRTs in the font

@@ -17,11 +17,17 @@
 //!   the save (won when the player tops the table; the best points kept).
 //! The port carries the league across its per-course restarts in
 //! `league.txt` beside the save file (`--league` on the command line).
-//! Not ported: the karts lined up on the standings screens (the port shows
-//! the course's orbit behind them), the tie-break race on STUDIO (a tie for
-//! first with the player: the port's table keeps the player first, as the
-//! game's sort does for equal points), the trophy presentation (course
-//! 0x1A, game mode 0x12), BATTLE LEAGUE.
+//! Row 12: after the sixth race a tie for first with the player is played
+//! off on OVAL (course 0x1A; the battle league on ARENA/BATTLE, 0x1B):
+//! START TIE-BREAKER, the tied karts only, its points added as a race's;
+//! then the presentation (game mode 0x12 on that course, `PRESENTATION`):
+//! no karts (FUN_8008C4AC counts them for the load's game mode 0, oracle:
+//! 0x800B0DFE = 0), camera mode 11, TOURNAMENT CHAMPION and
+//! the champion's name, the human champion's voice clip 3, the league's
+//! result into the save (FUN_8008C4AC @0x8008CE98); START: a tie-break
+//! opens that course, which then shows its course menu, else the title.
+//! The standings' karts line up in front of the camera (menus.rs
+//! `lineup_records`, FUN_8006B1C8).
 
 use std::path::PathBuf;
 
@@ -45,6 +51,21 @@ pub struct League {
     pub finish: [u8; 6],
     /// The opponents are drawn (after the first character select).
     pub started: bool,
+    /// Row 12: the karts tied for first with the player after the sixth
+    /// race (0x800C1E49 on; the tie-break race's karts), player first.
+    pub tie: Vec<u8>,
+}
+
+/// `League::race` of the presentation (game mode 0x12) after the last race.
+pub const PRESENTATION: u8 = 7;
+/// The tie-break / presentation course: OVAL, ARENA/BATTLE for the battle
+/// league (FUN_8008C4AC: 0x800B0FAC - 0x1A < 2).
+pub fn final_course(league: u8) -> u8 {
+    if league as usize == mr_sim::save::LEAGUE_BATTLE {
+        0x1B
+    } else {
+        0x1A
+    }
 }
 
 pub fn path() -> Option<PathBuf> {
@@ -75,7 +96,30 @@ impl League {
                 *c = all[i] as u8;
             }
         }
-        League { league, race: 0, courses, karts: [(0, 0); 6], points: [0; 6], last: [RacePoints::default(); 6], finish: [0, 1, 2, 3, 4, 5], started: false }
+        League { league, race: 0, courses, karts: [(0, 0); 6], points: [0; 6], last: [RacePoints::default(); 6], finish: [0, 1, 2, 3, 4, 5], started: false, tie: Vec::new() }
+    }
+
+    /// After the sixth race: the karts tied on the most points when the
+    /// player is one of them (the tie-break race's field), else None.
+    pub fn tie_needed(&self) -> Option<Vec<u8>> {
+        let top = *self.points.iter().max()?;
+        let tied: Vec<u8> = (0..6u8).filter(|&k| self.points[k as usize] == top).collect();
+        (tied.len() > 1 && tied.contains(&0)).then_some(tied)
+    }
+
+    /// The tie-break race runs (race 6 with a field).
+    pub fn tie_break(&self) -> bool {
+        self.race == 6 && self.tie.len() > 1
+    }
+
+    /// The session's slot `s` -> the league's kart (the tie-break race's
+    /// field is the tied karts).
+    pub fn kart_of_slot(&self, s: usize) -> usize {
+        if self.tie_break() {
+            self.tie.get(s).copied().unwrap_or(0) as usize
+        } else {
+            s
+        }
     }
 
     /// FUN_8008BAF8: the player's kart and five opponents (a race's
@@ -94,7 +138,20 @@ impl League {
 
     /// The opponents as a session line-up (slots 1..5).
     pub fn lineup(&self) -> [(u8, u8); 5] {
+        if self.tie_break() {
+            let opp: Vec<(u8, u8)> = self.tie[1..].iter().map(|&k| self.karts[k as usize]).collect();
+            return std::array::from_fn(|i| opp[i % opp.len()]);
+        }
         [self.karts[1], self.karts[2], self.karts[3], self.karts[4], self.karts[5]]
+    }
+
+    /// The opponents in the session (the tie-break: the tied ones).
+    pub fn opponents(&self) -> u8 {
+        if self.tie_break() {
+            (self.tie.len() - 1) as u8
+        } else {
+            5
+        }
     }
 
     /// Entering game mode 0x11 after a league race (FUN_8008C4AC): every
@@ -121,15 +178,26 @@ impl League {
             return;
         }
         let rows = s.results();
-        let mut karts = vec![LeagueKart { rank: 5, best_lap: 0, hits: 0, hits_taken: 0 }; 6];
+        let n = rows.len().min(6);
+        let mut karts = vec![LeagueKart { rank: 5, best_lap: 0, hits: 0, hits_taken: 0 }; n.max(1)];
         for (rank, r) in rows.iter().enumerate() {
-            if r.slot < 6 {
+            if r.slot < n {
                 karts[r.slot] = LeagueKart { rank, best_lap: r.best_lap, hits: r.hits, hits_taken: r.hits_taken };
-                self.finish[rank] = r.slot as u8;
             }
         }
+        // the finishing order of the league's karts (the tie-break race:
+        // its field, then the others in kart order)
+        let mut order: Vec<u8> = rows.iter().filter(|r| r.slot < n).map(|r| self.kart_of_slot(r.slot) as u8).collect();
+        for k in 0..6u8 {
+            if !order.contains(&k) {
+                order.push(k);
+            }
+        }
+        self.finish.copy_from_slice(&order[..6]);
         let pts = mr_sim::save::race_points(&karts, s.globals.lap_threshold, s.globals.start_best_mask);
-        for (k, p) in pts.iter().enumerate() {
+        self.last = [RacePoints::default(); 6];
+        for (slot, p) in pts.iter().enumerate() {
+            let k = self.kart_of_slot(slot);
             self.last[k] = *p;
             self.points[k] = self.points[k].saturating_add(p.total);
         }
@@ -151,11 +219,14 @@ impl League {
         s += &format!("points {}\n", join(&mut self.points.iter().map(|c| c.to_string())));
         s += &format!("finish {}\n", join(&mut self.finish.iter().map(|c| c.to_string())));
         s += &format!("last {}\n", join(&mut self.last.iter().map(|p| format!("{},{},{},{},{}", p.place, p.fastest_lap, p.best_start, p.most_hits, p.total))));
+        if !self.tie.is_empty() {
+            s += &format!("tie {}\n", join(&mut self.tie.iter().map(|c| c.to_string())));
+        }
         s
     }
 
     pub fn from_text(t: &str) -> Option<League> {
-        let mut l = League { league: 0, race: 0, courses: [0; 6], karts: [(0, 0); 6], points: [0; 6], last: [RacePoints::default(); 6], finish: [0, 1, 2, 3, 4, 5], started: false };
+        let mut l = League { league: 0, race: 0, courses: [0; 6], karts: [(0, 0); 6], points: [0; 6], last: [RacePoints::default(); 6], finish: [0, 1, 2, 3, 4, 5], started: false, tie: Vec::new() };
         let nums = |v: &str| v.split(|c: char| !c.is_ascii_digit()).filter(|x| !x.is_empty()).filter_map(|x| x.parse::<u8>().ok()).collect::<Vec<u8>>();
         for line in t.lines() {
             let (k, v) = line.split_once(' ')?;
@@ -167,6 +238,7 @@ impl League {
                 "courses" => l.courses = n.get(..6)?.try_into().ok()?,
                 "points" => l.points = n.get(..6)?.try_into().ok()?,
                 "finish" => l.finish = n.get(..6)?.try_into().ok()?,
+                "tie" => l.tie = n.into_iter().filter(|&k| k < 6).collect(),
                 "karts" => {
                     for k in 0..6 {
                         l.karts[k] = (*n.get(2 * k)?, *n.get(2 * k + 1)?);
@@ -181,7 +253,7 @@ impl League {
                 _ => {}
             }
         }
-        (l.league < 4 && l.race <= 6).then_some(l)
+        (l.league < 4 && l.race <= PRESENTATION).then_some(l)
     }
 
     pub fn store(&self) {
@@ -217,9 +289,25 @@ impl League {
 mod tests {
     use super::*;
 
+    /// Row 12: a tie for first with the player -> the tie-break field.
+    #[test]
+    fn tie_break_field() {
+        let mut l = League { league: 0, race: 6, courses: [1, 9, 8, 7, 3, 4], karts: [(0, 0), (5, 30), (13, 12), (17, 16), (23, 18), (1, 1)], points: [20, 20, 9, 20, 4, 2], last: [RacePoints::default(); 6], finish: [0, 1, 2, 3, 4, 5], started: true, tie: Vec::new() };
+        assert_eq!(l.tie_needed(), Some(vec![0, 1, 3]));
+        l.tie = vec![0, 1, 3];
+        assert!(l.tie_break());
+        assert_eq!(l.opponents(), 2);
+        assert_eq!(l.lineup()[0], (5, 30));
+        assert_eq!(l.lineup()[1], (17, 16));
+        assert_eq!(l.kart_of_slot(2), 3);
+        // no tie with the player: no tie-break
+        l.points = [19, 20, 9, 20, 4, 2];
+        assert_eq!(l.tie_needed(), None);
+    }
+
     #[test]
     fn text_round_trip() {
-        let mut l = League { league: 3, race: 2, courses: [8, 9, 16, 1, 3, 15], karts: [(0, 0), (5, 30), (13, 12), (17, 16), (23, 18), (1, 1)], points: [7, 3, 9, 0, 1, 2], last: [RacePoints::default(); 6], finish: [2, 0, 1, 5, 4, 3], started: true };
+        let mut l = League { league: 3, race: 2, courses: [8, 9, 16, 1, 3, 15], karts: [(0, 0), (5, 30), (13, 12), (17, 16), (23, 18), (1, 1)], points: [7, 3, 9, 0, 1, 2], last: [RacePoints::default(); 6], finish: [2, 0, 1, 5, 4, 3], started: true, tie: vec![0, 2] };
         l.last[2] = RacePoints { place: 3, fastest_lap: 1, best_start: 0, most_hits: 1, total: 5 };
         assert_eq!(League::from_text(&l.to_text()), Some(l));
     }

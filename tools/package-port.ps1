@@ -29,8 +29,16 @@ $Version = $Matches[1]
 Push-Location $Port
 try {
     if (-not $NoBuild) {
-        cargo build --release --offline -p mr-bevy
-        if ($LASTEXITCODE -ne 0) { throw "build failed" }
+        # The shipped exe links the MSVC C runtime statically (+crt-static) so
+        # it runs on any Windows PC without the VC++ redistributable (owner
+        # decision 2026-10-16). Own target dir: dev builds stay dynamic and
+        # their cache untouched.
+        $prevFlags = $env:RUSTFLAGS
+        $env:RUSTFLAGS = "-C target-feature=+crt-static"
+        try {
+            cargo build --release --offline -p mr-bevy --target-dir target-dist
+            if ($LASTEXITCODE -ne 0) { throw "build failed" }
+        } finally { $env:RUSTFLAGS = $prevFlags }
     }
     $metaJson = cargo metadata --offline --format-version 1 --filter-platform x86_64-pc-windows-msvc
     if ($LASTEXITCODE -ne 0) { throw "cargo metadata failed" }
@@ -110,7 +118,7 @@ foreach ($t in $texts.Keys) {
 $Stage = Join-Path $Root "release-stage\port"
 if (Test-Path $Stage) { Remove-Item -Recurse -Force $Stage }
 New-Item -ItemType Directory -Force $Stage | Out-Null
-Copy-Item (Join-Path $Port "target\release\mr-bevy.exe") (Join-Path $Stage "muppet-racemania.exe")
+Copy-Item (Join-Path $Port "target-dist\release\mr-bevy.exe") (Join-Path $Stage "muppet-racemania.exe")
 $readme = (Get-Content (Join-Path $Port "package\README-port.txt") -Raw).Replace("@VERSION@", $Version).Replace("`r`n", "`n").Replace("`n", "`r`n")
 [System.IO.File]::WriteAllText((Join-Path $Stage "README-port.txt"), $readme)
 [System.IO.File]::WriteAllText((Join-Path $Stage "THIRD-PARTY-LICENSES.txt"), $sb.ToString().Replace("`r`n", "`n").Replace("`n", "`r`n"))

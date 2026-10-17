@@ -11,6 +11,11 @@
 //! y up, right-handed, -z forward. Mapping (x, y, z) -> (x, -y, -z) * SCALE is
 //! a rotation (two axes flipped), so handedness and winding are preserved.
 
+// A windowed program in release builds: no console window when started from
+// Explorer (owner decision 2026-10-16). Started from a terminal, it attaches
+// to that terminal's console so tool output still shows (`attach_console`).
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod audio;
 mod crash;
 mod discsel;
@@ -458,6 +463,7 @@ impl SimRun {
 }
 
 fn main() {
+    attach_console();
     crash::install();
     let args = parse_args();
     // Phase 10: the disc (--disc, settings `disc`, $MRM_DISC, game.toml) or
@@ -1078,3 +1084,24 @@ fn write_outputs(mut ev: MessageReader<AppExit>, p: Res<Player>) {
         }
     }
 }
+
+/// Release builds use the Windows GUI subsystem (no console of their own).
+/// When started from a terminal, attach to its console so stdout/stderr
+/// (tool flags, warnings) still appear there; from Explorer there is no
+/// parent console and nothing happens.
+#[cfg(all(windows, not(debug_assertions)))]
+fn attach_console() {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn AttachConsole(process_id: u32) -> i32;
+    }
+    const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+    // SAFETY: plain Win32 call with a constant argument; failure (no parent
+    // console) is harmless.
+    unsafe {
+        AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
+
+#[cfg(not(all(windows, not(debug_assertions))))]
+fn attach_console() {}

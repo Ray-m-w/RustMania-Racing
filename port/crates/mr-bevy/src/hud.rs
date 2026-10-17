@@ -108,6 +108,9 @@ pub struct TwoHud {
 #[derive(Resource, Clone, Debug, Default)]
 pub struct HudOverlay {
     pub prims: Option<Vec<Prim>>,
+    /// Phase 11: TEST DRIVE: the item HUD (FUN_8004F688 case 0xE) under
+    /// the overlay.
+    pub test_drive: bool,
 }
 
 #[derive(Resource)]
@@ -607,6 +610,11 @@ pub fn results_for(s: &mr_sim::session::Session, slot: usize) -> Option<hud::Res
         r.rival = Some(s.globals.adv.tagged as u8);
         r.rival_blink = s.globals.results_clock;
     }
+    // phase 11: the results taunt's faces (one player; audio.rs)
+    if s.globals.split_screen == 0 && crate::audio::TAUNT_PLAYING.load(std::sync::atomic::Ordering::Relaxed) {
+        let b = s.globals.items.blink;
+        r.taunt = Some([b[0] & 1, b[2] & 1]);
+    }
     Some(r)
 }
 
@@ -808,6 +816,11 @@ fn draw(
 ) {
     let (Some(mut res), Some(mut tex)) = (res, tex) else { return };
     let prims: Vec<Prim> = match (overlay.prims.as_ref(), input.state, items.state.as_ref()) {
+        (Some(o), _, Some(it)) if overlay.test_drive => {
+            let mut v = o.clone();
+            v.extend(hud_items::test_drive_hud(&res.tables, &res.items, it));
+            v
+        }
         (Some(o), _, _) => o.clone(),
         (None, _, _) if two.state.is_some() => {
             let t = two.state.as_ref().unwrap();

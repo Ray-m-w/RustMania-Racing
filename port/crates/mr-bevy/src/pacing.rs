@@ -174,7 +174,8 @@ fn predict(mut p: ResMut<Player>, mut feed: ResMut<KartFeed>, latch: Res<PadLatc
     }
     // the course menu / character select (and THE END) run `menu_tick`,
     // not the race
-    if front.is_some_and(|f| f.page.course_menu()) || crate::ending::on() {
+    // (phase 11: and MEET THE MUPPETS)
+    if front.is_some_and(|f| f.page.course_menu() || f.page == crate::menus::Page::Gallery) || crate::ending::on() {
         la.key = None;
         if let Some(f) = fx_la.as_mut() {
             f.0 = None;

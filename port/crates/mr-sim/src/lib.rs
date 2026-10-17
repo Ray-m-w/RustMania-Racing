@@ -28,6 +28,7 @@ pub mod chicken;
 pub mod collide;
 pub mod course;
 pub mod fixed;
+pub mod gallery;
 pub mod globals;
 pub mod harness;
 pub mod hooks;

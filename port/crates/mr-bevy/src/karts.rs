@@ -117,13 +117,18 @@ impl ModelLib {
         mats: &mut Assets<StandardMaterial>,
     ) -> Option<&RigTemplate> {
         if !self.templates.contains_key(&(character, vehicle)) {
-            let veh = self.mdl(VEHICLE_PATHS, vehicle)?;
             let drv = self.mdl(CHARACTER_PATHS, character)?;
-            let model = KartModel::new(&veh, &drv);
+            // vehicle 0xFF: the driver alone (phase 11, MEET THE MUPPETS:
+            // FUN_800276E8 without FUN_80026F3C, +0x4A4 = -1)
+            let veh = if vehicle == 0xFF { None } else { Some(self.mdl(VEHICLE_PATHS, vehicle)?) };
+            let mut model = KartModel::new(veh.as_ref().unwrap_or(&drv), &drv);
+            if veh.is_none() {
+                model.vehicle_pivots.clear();
+            }
             let local = |p: [i32; 3]| crate::to_bevy(p[0] * 32, p[1] * 32, p[2] * 32);
             let mut parts = Vec::new();
             let mut necks = vec![Vec::new(); model.driver_necks.len()];
-            for (mi, m) in [&veh, &drv].into_iter().enumerate() {
+            for (mi, m) in [veh.as_ref(), Some(&drv)].into_iter().enumerate().filter_map(|(i, m)| Some((i, m?))) {
                 for (slot, (_, part)) in m.meshes().enumerate() {
                     let polys = crate::scene::part_polys(part, &self.slots);
                     if mi == 1 {
@@ -384,7 +389,7 @@ pub fn place_rigs(
         tr.translation = t0.translation.lerp(t1.translation, a);
         tr.rotation = t0.rotation.slerp(t1.rotation, a);
         tr.scale = t0.scale.lerp(t1.scale, a);
-        let want = if b1.visible && lod_hidden & (1 << rp.slot) == 0 { Visibility::Inherited } else { Visibility::Hidden };
+        let want = if b1.visible && (lod_hidden as u32).checked_shr(rp.slot as u32).unwrap_or(0) & 1 == 0 { Visibility::Inherited } else { Visibility::Hidden };
         if *vis != want {
             *vis = want;
         }

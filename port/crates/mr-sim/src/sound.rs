@@ -53,6 +53,21 @@ pub struct SoundState {
     /// Kart +0x4F5 per slot: VBlanks until the character may speak again
     /// (FUN_8007A7F4). Kept here: nothing else reads it.
     pub voice_timer: [u8; 8],
+    /// Phase 11: the race frame's requests to the game's CD-XA queue
+    /// (0x800B0744..48, docs/spec/audio.md "The queue"), in call order, not
+    /// yet drained by the front end (mr-bevy audio.rs `MusicDirector`).
+    pub xa: Vec<XaReq>,
+}
+
+/// A request the race code makes of the CD-XA queue.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum XaReq {
+    /// FUN_80060580(character, n): the character's voice clip n (base
+    /// 0x800AC230[character * 0x14] + n), then the course track again.
+    Clip { character: u8, n: u8 },
+    /// FUN_800606D0: the results taunt (VOICES/WIN.XA, channel
+    /// 0x800B074C, cycling 0..6), then the course track again.
+    Taunt,
 }
 
 impl SoundState {
@@ -83,6 +98,15 @@ pub fn begin_frame(g: &mut RaceGlobals, karts: &mut [KartState], dt: i32, eye: [
     s.listeners[0] = eye;
     for k in karts.iter_mut() {
         k.event_bits = 0;
+    }
+}
+
+/// FUN_80060580(character, n) from the race code: the character's voice
+/// clip (the call itself returns at once in the attract demo, 0x800B0BD2;
+/// the character's voice flag and the queue are the front end's).
+pub fn voice_clip(g: &mut RaceGlobals, character: u8, n: u8) {
+    if g.demo == 0 && g.sound.xa.len() < MAX_FRAMES {
+        g.sound.xa.push(XaReq::Clip { character, n });
     }
 }
 

@@ -161,6 +161,11 @@ pub struct SessionConfig {
     /// effects; it ends after 0x4650 race-clock units or at kart 0's finish
     /// (`Session::demo_over`).
     pub demo: bool,
+    /// Phase 11 (docs/spec/frontend.md "MEET THE MUPPETS"): TEST DRIVE on
+    /// the frontend course (game mode 0xE, FUN_8008C4AC): the player alone
+    /// with `character` / `vehicle` on grid point 5, heading 0x600 / 0xA00
+    /// by a random byte; camera mode 7; no countdown, no laps.
+    pub test_drive: bool,
 }
 
 /// The Doozer (character 24): ADVENTURE's parked kart to rescue.
@@ -218,6 +223,7 @@ impl SessionConfig {
             p2_vehicle: 0xFF,
             p2_alt_controls: false,
             demo: false,
+            test_drive: false,
         }
     }
 
@@ -611,7 +617,9 @@ impl Session {
         // The title (title.rs): three AI karts in game mode 0x10.
         let title = cfg.course == crate::title::TITLE_COURSE;
         let title_data = if title { Some(Box::new(crate::title::TitleData::load(disc, &world).map_err(SessionError::Disc)?)) } else { None };
-        let n = if title { crate::title::TITLE_KARTS } else { 1 + cfg.opponents as usize };
+        // Phase 11: TEST DRIVE, the player alone on the frontend course.
+        let test_drive = title && cfg.test_drive;
+        let n = if test_drive { 1 } else if title { crate::title::TITLE_KARTS } else { 1 + cfg.opponents as usize };
         let race_type = world.info.race_type;
         // Race courses (mode 1) and the stunt courses' 1 PLAYER STUNT TRIAL
         // (race type 3, mode 3: one kart, FUN_8008C4AC).
@@ -657,7 +665,9 @@ impl Session {
         // 7 / 0x14 off a stunt course, else the kart count).
         let grid_mod = if battle || (chicken && race_type != 3) { 6 } else { n };
         let race_flags = if title { crate::title::TITLE_RACE_FLAGS } else { cfg.race_flags };
-        let mode = if title {
+        let mode = if test_drive {
+            0xE
+        } else if title {
             crate::title::TITLE_MODE
         } else if chicken {
             0x14
@@ -737,7 +747,9 @@ impl Session {
         // FUN_8008C4AC: the first human's grid slot (*rng++ % karts), the
         // other karts on the following slots; with no opponents the
         // configured slot.
-        let grid0 = if adventure {
+        let grid0 = if test_drive {
+            5
+        } else if adventure {
             // (the draw *rng++ % 1 is still taken; the player's grid point
             // is drawn in FUN_800609F4)
             crate::ai::grid_start(&mut globals, &world, 1);
@@ -750,7 +762,7 @@ impl Session {
         // The title's kart 0 is an AI kart like the others (FUN_8008C4AC
         // @0x8008DCC4: the same draw for every slot).
         let mut title_first: Option<(u8, u8)> = None;
-        let (mut record, mut kart) = if let Some(d) = title_data.as_deref() {
+        let (mut record, mut kart) = if let Some(d) = title_data.as_deref().filter(|_| !test_drive) {
             let mut rand = || bios_rand(&mut rand_state);
             let (c, v) = crate::ai::pick_opponent(&world.exe, &[], &crate::title::character_loaded, &|v| d.templates.get(v as usize).is_some_and(|t| t.is_some()), &mut rand);
             let (pivot, _) = d.characters[c as usize].clone().ok_or_else(|| SessionError::Disc(format!("character {c}: no model")))?;
@@ -992,6 +1004,9 @@ impl Session {
             cutscene_sync: crate::stunt::strip(&world).is_some(),
             scene_center: [0; 3],
             menu_row: 0,
+            gallery: None,
+            // FUN_80070418 mode 7 reads grid point 5 when *0x800D1C4C >= 6.
+            test_drive_slot: if test_drive && world.course.grid.len() >= 3 { world.course.grid.get(5).map(|g| g.pos) } else { None },
         };
         if let Some(d) = title_data {
             let chars: Vec<u8> = std::iter::once(record[0x4B2]).chain(others.iter().map(|o| o.character)).collect();
@@ -1125,6 +1140,18 @@ impl Session {
         let mut env = SessionCameraEnv { peek_rand: false, world: w, rand_state: &mut self.rand_state, rng: &mut g.rng, strip_out: None };
         camera::tick(&mut self.camera, &inp, &self.camera_tables, &mut env);
         self.ticks += 1;
+    }
+
+    /// Phase 11: TEST DRIVE's vehicle change (FUN_8008B644 swaps the
+    /// vehicle's template into the kart where it stands): the player's
+    /// position, angles and velocity taken over from the kart before.
+    pub fn carry_player(&mut self, k: &KartState) {
+        let n = &mut self.kart;
+        (n.x, n.y, n.z) = (k.x, k.y, k.z);
+        (n.prev_x, n.prev_y, n.prev_z) = (k.prev_x, k.prev_y, k.prev_z);
+        (n.pitch, n.heading, n.roll) = (k.pitch, k.heading, k.roll);
+        (n.vx, n.vy, n.vz) = (k.vx, k.vy, k.vz);
+        n.to_record(&mut self.record);
     }
 
     /// The whole changing state (see `Snapshot`).
@@ -1296,8 +1323,8 @@ impl Session {
         // with dt 3).
         g.dt = dt;
         // FUN_8007916C's start: once every human has finished (+0x4C7) the
-        // race goes to the results (mode 10: 0x8007975C, FUN_800606D0 (not
-        // ported: results / sound set-up), 0x80079858) and the frame goes on
+        // race goes to the results (mode 10: 0x8007975C, FUN_800606D0 (the
+        // results taunt, below), 0x80079858) and the frame goes on
         // to LAB_80079A58, which in mode 10 runs the race simulation as any
         // other frame (0x80079A84 -> 0x80079D50). (Until Session 7 the
         // session skipped the frame's simulation; oracle captures
@@ -1314,6 +1341,8 @@ impl Session {
                 k.finished = 1;
                 k.shown_pos = 1;
                 k.race_pos = 1;
+                // 0x800791F8: FUN_80060580(character, 3), the winner's clip.
+                crate::sound::voice_clip(g, k.character, 3);
                 // 0x8007926C: an arena's "BEAT x" battle (race flag 0x10)
                 // won by player 1 collects the character.
                 if g.race_flags & 0x10 != 0 && k.player_index == 0 {
@@ -1368,6 +1397,12 @@ impl Session {
                 // karts still standing settles them (FUN_80082450).
                 if g.adv.league && g.mode == 2 && (g.humans as i32) < g.karts as i32 {
                     crate::progress::battle_league_finish(ks, g, w);
+                }
+                // FUN_800606D0 (0x80079850): a 1-player race won (and not
+                // knocked out under race flag 8) queues the results taunt.
+                let k0 = &ks[0];
+                if g.demo == 0 && g.mode == 1 && g.split_screen == 0 && k0.race_pos < 2 && (g.race_flags & 8 == 0 || k0.impact < 1000) {
+                    g.sound.xa.push(crate::sound::XaReq::Taunt);
                 }
                 g.mode = 10;
                 g.results_clock = 0;

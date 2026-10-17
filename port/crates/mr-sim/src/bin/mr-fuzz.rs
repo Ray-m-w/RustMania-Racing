@@ -15,7 +15,8 @@
 //! `--seeds N` runs per course and rate (default 4); `--long N` of them
 //! (default 1) run 12 minutes of race clock (the 10-minute limit), the
 //! others until 30 s after the player's finish (or 9 minutes). COURSE: a
-//! name or index; TITLE for the title (course 0x1E).
+//! name or index; TITLE for the title (course 0x1E). `--test-drive`: TEST
+//! DRIVE runs (phase 11, on the frontend course).
 
 use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
@@ -166,6 +167,10 @@ enum Kind {
     /// Phase 8: the attract demo (all AI, no pad; ends at 0x4651 race clock
     /// or kart 0's finish); stunt courses run as plain races.
     Demo,
+    /// Phase 11: TEST DRIVE (game mode 0xE on the frontend course, TITLE
+    /// only): a random character in its own vehicle (a random loaded one
+    /// when that is not loaded).
+    TestDrive,
 }
 
 fn run(info: &CourseInfo, title: bool, hz: u8, seed: u32, long: bool, kind: Kind) -> Outcome {
@@ -176,13 +181,23 @@ fn run(info: &CourseInfo, title: bool, hz: u8, seed: u32, long: bool, kind: Kind
     let rand_seed = r.next();
     let rng_start = RNG_START + r.below(0x5DB);
     let mut cfg = if title { SessionConfig::title(rand_seed, rng_start, hz) } else { SessionConfig { logic_hz: hz, ..SessionConfig::course(info) } };
+    if title && kind == Kind::TestDrive {
+        let exe = mr_sim::tables::ExeImage::parse(&disc.read("SLUS_012.37").expect("exe")).expect("exe");
+        cfg.test_drive = true;
+        cfg.character = r.below(25) as u8;
+        cfg.vehicle = mr_sim::ai::character_entry(&exe, cfg.character).1;
+        while !mr_sim::title::vehicle_loaded(cfg.vehicle) {
+            cfg.vehicle = r.below(31) as u8;
+        }
+        out.course = "TEST DRIVE".into();
+    }
     if !title {
         cfg.rand_seed = rand_seed;
         cfg.rng_start = rng_start;
         // ADVENTURE: the save's secrets drawn (none / some / all found)
         let flags = [0x101u16, 0x13D, 0x1FF][r.below(3) as usize];
         match kind {
-            Kind::Race => {}
+            Kind::Race | Kind::TestDrive => {}
             Kind::Adventure => {
                 cfg.adventure = true;
                 cfg.course_flags = flags;
@@ -326,6 +341,7 @@ fn main() {
             "--secrets" => kind = Kind::Secrets,
             "--two" => kind = Kind::Two,
             "--demo" => kind = Kind::Demo,
+            "--test-drive" => kind = Kind::TestDrive,
             _ => names.push(a.to_ascii_uppercase()),
         }
     }
@@ -348,6 +364,9 @@ fn main() {
     }
     if kind == Kind::Secrets || kind == Kind::Two {
         courses.retain(|(_, t)| !*t);
+    }
+    if kind == Kind::TestDrive {
+        courses.retain(|(_, t)| *t);
     }
     // (the demo: FUN_80089CA8's courses, races and arenas)
     if kind == Kind::Demo {

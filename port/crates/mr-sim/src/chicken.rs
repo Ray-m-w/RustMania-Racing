@@ -234,16 +234,19 @@ pub fn frame(ks: &mut [KartState], g: &mut RaceGlobals, w: &World, rand: &mut dy
         k.hit_dir = 1;
         if k.adv_targets as i32 == target {
             // The winner and the other player (by player index) are out;
-            // FUN_80060580 voices (3 the winner, 2 the other: not modelled).
+            // FUN_80060580 voices: the other's clip 2, then the winner's 3.
             k.finished = 1;
             k.pause_bits = 0x80;
             k.flags |= 1;
+            let winner = k.character;
             let other = ((k.player_index as i32 + 1) & 1) as usize;
             if let Some(o) = ks.get_mut(other) {
                 o.finished = 1;
                 o.flags |= 1;
                 o.pause_bits = 0x80;
+                crate::sound::voice_clip(g, o.character, 2);
             }
+            crate::sound::voice_clip(g, winner, 3);
         } else {
             let b = byte(g, w);
             ks[i].event_bits |= if b < 0x55 {

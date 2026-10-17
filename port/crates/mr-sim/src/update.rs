@@ -1403,7 +1403,12 @@ pub fn rumble(k: &mut KartState, g: &RaceGlobals, strength: i32) {
 /// rv = sway[15+j]. Axes 0 and 1 are driven by sway[1+j] / sway[7+j]
 /// scaled by `gain`; axis 2 chases `target` and kicks with random bytes.
 pub fn sway_springs(k: &mut KartState, g: &mut RaceGlobals, w: &World, target: i32, gain: i32, effect: i32) {
-    let s = &mut k.sway;
+    sway_springs_raw(&mut k.sway, g, w, target, gain, effect);
+}
+
+/// FUN_80064738 on any spring block (the karts' +0x3A0; phase 11: the
+/// MEET THE MUPPETS characters' records +0xC, gallery.rs).
+pub fn sway_springs_raw(s: &mut [i32; 18], g: &mut RaceGlobals, w: &World, target: i32, gain: i32, effect: i32) {
     for j in 0..3usize {
         for _ in 0..substeps(g.dt) {
             if j < 2 {

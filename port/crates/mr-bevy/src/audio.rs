@@ -542,8 +542,10 @@ pub fn apply_game_volumes(bus: &AudioBus, music: f32, sound: f32) {
 
 // ---------------------------------------------------------------- race phases
 
-/// The game's XA queue driven from the race (docs/spec/audio.md). Other
-/// tracks request character voice clips with `clip(character, n)`.
+/// The game's XA queue driven from the race (docs/spec/audio.md): the race
+/// loads, the race code's requests (`mr_sim::sound::XaReq`: the voice clips
+/// of FUN_80060580 and the results taunt FUN_800606D0), MEET THE MUPPETS'
+/// clips and TEST DRIVE's tracks (phase 11).
 #[derive(Resource, Default)]
 pub struct MusicDirector {
     pub queue: xa::XaQueue,
@@ -552,13 +554,25 @@ pub struct MusicDirector {
     intro_played: bool,
     /// Phase 8: THE END's track drawn.
     started_end: bool,
-    finished: bool,
     clips_seen: u64,
     /// A clip ended on the thread; the device still plays its tail.
     pending_end: bool,
     /// Set by menus.rs on the course menu: its course track plays without
     /// the intro clip, which waits for the race load.
     pub menu: bool,
+    /// Phase 11: MEET THE MUPPETS (game mode 0xD) is open (menus.rs): the
+    /// music stops on entry (FUN_8005FA18) and a clip queues no course
+    /// track behind it (FUN_80060580 in mode 0xD).
+    pub gallery: bool,
+    in_gallery: bool,
+    /// Phase 11: TEST DRIVE (game mode 0xE) runs (menus.rs): whenever
+    /// nothing plays, a random open course's track once (FUN_8005FB4C).
+    pub test_drive: bool,
+    /// 0x800B0A18..1A: the last three tracks FUN_80089B98 drew (None:
+    /// the executable's initial -1s).
+    recent: Option<[i8; 3]>,
+    /// 0x800B074C: the next results taunt's WIN.XA channel (0..6).
+    taunt_next: u8,
     tables: Option<Tables>,
 }
 
@@ -566,7 +580,7 @@ pub struct MusicDirector {
 struct Tables {
     music: Option<u16>,
     intro: Option<u16>,
-    /// Character rows (flags, clip base).
+    /// Character rows (flags, clip base): the 25 racers and the bosses.
     chars: Vec<(u8, u8)>,
 }
 
@@ -574,7 +588,7 @@ fn load_tables() -> Tables {
     let Ok(mut d) = mr_disc::Disc::open_default() else { return Tables::default() };
     let exe = d.read("SLUS_012.37").unwrap_or_default();
     let at = |a: u32| exe.get((a - xa::EXE_T_ADDR) as usize + 0x800).copied();
-    let chars = (0..16u32)
+    let chars = (0..0x30u32)
         .map_while(|c| Some((at(CHAR_VOICE_TABLE + c * 20)?, at(CHAR_VOICE_TABLE + c * 20 + 2)?)))
         .collect();
     // The course's row of 0x800ACB34 (+3 music track, +4 intro clip).
@@ -582,40 +596,83 @@ fn load_tables() -> Tables {
     Tables { music: xa::exe_course_music(&exe, course), intro: xa::exe_course_voice(&exe, course), chars }
 }
 
+/// The track of the results taunt: VOICES/WIN.XA channel n is track 0xD0 +
+/// n, queued with flags 0xC000 (FUN_800606D0).
+pub const TAUNT_BASE: u16 = 0xD0;
+
 impl MusicDirector {
     fn tables(&mut self) -> Tables {
         self.tables.get_or_insert_with(load_tables).clone()
     }
 
     /// FUN_80060580(character, n): the character's voice clip (base + n)
-    /// once, then the course track again from its start. Ignored for
-    /// characters without voice. Character = kart record +0x4B2.
+    /// once, then the course track again from its start (not in MEET THE
+    /// MUPPETS). Ignored for characters without voice (row +0 bit 0; the
+    /// bosses). Character = kart record +0x4B2.
     pub fn clip(&mut self, character: u8, n: u8) {
         let t = self.tables();
         let Some(&(flags, base)) = t.chars.get(character as usize) else { return };
         if flags & 1 == 0 || base == 0xFF {
             return;
         }
-        self.queue.request_clip(base as u16 + n as u16, t.music);
+        let music = if self.gallery { None } else { t.music };
+        self.queue.request_clip(base as u16 + n as u16, music);
+    }
+
+    /// FUN_800606D0: the results taunt, VOICES/WIN.XA channel 0x800B074C
+    /// (which then steps through 0..6), flags 0xC000, then the course track.
+    pub fn taunt(&mut self) {
+        let t = self.tables();
+        let n = self.taunt_next;
+        self.taunt_next = (n + 1) % 7;
+        self.queue.request_entry((TAUNT_BASE + n as u16) | xa::ONE_SHOT | xa::INTRO, t.music);
+    }
+
+    /// 0x800B0760 bit 0: a track or clip is playing.
+    pub fn xa_playing(&self) -> bool {
+        self.queue.playing
+    }
+
+    /// FUN_8004CEA0's test: the current entry has flags 0xC000 (the results
+    /// taunt; also the course intro) and plays.
+    pub fn taunt_playing(&self) -> bool {
+        self.queue.playing && self.queue.cur.is_some_and(|c| c & 0xC000 == 0xC000)
     }
 }
 
-/// Race load / restart / finish -> the queue; the queue -> the music thread.
-fn direct_music(p: Res<crate::Player>, bus: Res<AudioBus>, mut dir: ResMut<MusicDirector>) {
+/// Phase 11: the results taunt plays (FUN_8004CEA0 draws its two faces);
+/// read by hud.rs.
+pub static TAUNT_PLAYING: AtomicBool = AtomicBool::new(false);
+/// Phase 11: 0x800B0760 bit 0 and 0x800B074A's character: what the gallery
+/// (main.rs) reads; bit 8 = playing, low byte = the current clip's track.
+pub static XA_STATE: AtomicU32 = AtomicU32::new(0);
+
+/// Race load / restart / the race's requests -> the queue; the queue -> the
+/// music thread.
+fn direct_music(mut p: ResMut<crate::Player>, bus: Res<AudioBus>, mut dir: ResMut<MusicDirector>) {
     // Phase 9: no music decisions while a movie plays (the game's player
     // owns the drive; the scene is frozen)
     if crate::movie::playing() {
         return;
     }
-    if let crate::Driver::Sim(run) = &p.driver {
-        let s = &run.session;
+    // Phase 11: MEET THE MUPPETS stops the music (FUN_8008C4AC entering game
+    // mode 0xD: FUN_8005FA18).
+    if dir.gallery && !dir.in_gallery {
+        dir.queue.stop();
+        dir.pending_end = false;
+        bus.music(MusicCmd::Stop);
+    }
+    dir.in_gallery = dir.gallery;
+    // (the race's requests are drained without marking the player changed)
+    let p = p.bypass_change_detection();
+    if let crate::Driver::Sim(run) = &mut p.driver {
+        let s = &mut run.session;
         let ticks = s.ticks;
         let fresh = !dir.started || ticks < dir.last_ticks;
         dir.last_ticks = ticks;
-        if fresh {
+        if fresh && !dir.gallery && !dir.test_drive {
             // Race load (a restart in the port = the game's menu round trip).
             dir.started = true;
-            dir.finished = false;
             // Phase 8: THE END plays a random open course's track
             // (FUN_80089B98; course 0x1D's row has none).
             if crate::ending::on() && !dir.started_end {
@@ -633,14 +690,38 @@ fn direct_music(p: Res<crate::Player>, bus: Res<AudioBus>, mut dir: ResMut<Music
             let intro = if dir.intro_played || dir.menu || crate::demo::active() { None } else { t.intro };
             dir.intro_played |= !dir.menu;
             dir.queue.race_load(t.music, intro);
+            // Phase 11: a BOSS CHALLENGE (game mode 7, FUN_8008C4AC
+            // @0x8008D1xx): the first boss's clip base (0x800AC230[0x800B0C7E
+            // * 0x14], no voice-flag test: VOICES/WIN.XA channels 8..13)
+            // before the course track.
+            if s.globals.mode == 7 {
+                let boss = mr_sim::secrets::bosses(s.config().course).0.first().map(|b| b.0);
+                if let Some(&(_, base)) = boss.and_then(|b| t.chars.get(b as usize)) {
+                    if base != 0xFF {
+                        dir.queue.request_entry(base as u16 | xa::ONE_SHOT, t.music);
+                    }
+                }
+            }
+        } else if fresh {
+            dir.started = true;
         }
-        // The player's finish (FUN_80082708, human players only): the
-        // character's clip + 3 for first place, + 2 otherwise.
-        if let mr_sim::race::RacePhase::Finished { place } = s.phase() {
-            if !dir.finished && s.globals.demo == 0 {
-                dir.finished = true;
-                let character = s.record()[0x4B2];
-                dir.clip(character, if place == 1 { 3 } else { 2 });
+        // The race code's requests (FUN_80060580 / FUN_800606D0).
+        for r in std::mem::take(&mut s.globals.sound.xa) {
+            match r {
+                mr_sim::sound::XaReq::Clip { character, n } => dir.clip(character, n),
+                mr_sim::sound::XaReq::Taunt => dir.taunt(),
+            }
+        }
+        // Phase 11: TEST DRIVE (FUN_8005FB4C in game mode 0xE): nothing
+        // playing -> FUN_80089B98's track (a random open course of worlds
+        // 0..5, not one of the last three), once.
+        if dir.test_drive && !dir.queue.playing && !dir.pending_end {
+            let open = |w: usize, t: usize| crate::save::with(|st| st.block.course_open(w, t));
+            let mut recent = dir.recent.unwrap_or([-1; 3]);
+            let tr = mr_sim::title::credits_track(&s.world, &mut s.globals.rng, &open, &mut recent);
+            dir.recent = Some(recent);
+            if tr >= 0 {
+                dir.queue.q = [Some(tr as u16 | xa::ONE_SHOT), None, None];
             }
         }
     }
@@ -660,9 +741,14 @@ fn direct_music(p: Res<crate::Player>, bus: Res<AudioBus>, mut dir: ResMut<Music
         // voice level. Observed exception: the course intro clip at race
         // load plays at the music level (oracle cd_in tap: gain exactly
         // 0x6C/0x60), so some CdMix(music) runs during the load after it
-        // starts (not located).
-        let intro = dir.queue.cur.is_some_and(|c| c & xa::INTRO != 0);
+        // starts (not located); the results taunt (also flags 0xC000, but
+        // queued in the race) keeps the voice level.
+        let taunt = (TAUNT_BASE..TAUNT_BASE + 7).contains(&track);
+        let intro = dir.queue.cur.is_some_and(|c| c & xa::INTRO != 0) && !taunt;
         let level = if track < 0x20 || intro { MUSIC_LEVEL } else { VOICE_LEVEL };
         bus.music(MusicCmd::Play { track, looping, level });
     }
+    TAUNT_PLAYING.store(dir.taunt_playing(), Ordering::Relaxed);
+    let cur = dir.queue.cur.unwrap_or(0) & 0xFF;
+    XA_STATE.store(((dir.queue.playing as u32) << 8) | cur as u32, Ordering::Relaxed);
 }

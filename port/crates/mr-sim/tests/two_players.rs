@@ -66,8 +66,12 @@ fn chicken_chase_catches() {
         assert_eq!(s.kart.adv_targets, n, "catch {n}");
         assert_ne!(s.globals.chicken.pos, c, "a new chicken");
     }
-    // The tenth catch wins: both players out, the results.
+    // The tenth catch wins: both players out, the results; the voices
+    // (FUN_8006EC4C: the other player's clip 2, then the winner's 3)
     assert!(s.kart.finished != 0 && s.others[0].kart.finished != 0);
+    use mr_sim::sound::XaReq;
+    let (c1, c2) = (s.kart.character, s.others[0].kart.character);
+    assert_eq!(s.globals.sound.xa, vec![XaReq::Clip { character: c2, n: 2 }, XaReq::Clip { character: c1, n: 3 }]);
     s.tick(0).unwrap();
     assert_eq!(s.globals.mode, 10);
 }

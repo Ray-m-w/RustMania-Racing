@@ -163,8 +163,8 @@ pub fn gates(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
     k.finished = 2;
     k.shown_pos = k.race_pos;
     if (k.player_index as i32) < g.humans as i32 {
-        // FUN_80060580(character, 3 if first else 2): the finish voice
-        // (audio queue, not modelled).
+        // FUN_80060580(character, 3 if first else 2): the finish voice.
+        crate::sound::voice_clip(g, k.character, if k.race_pos == 1 { 3 } else { 2 });
     } else {
         let b = crate::update::rng_next(g, w) as i8;
         let bits = if k.race_pos == 1 { if b < 0 { 4 } else { 2 } } else if b < 0 { 0x20 } else { 0x10 };

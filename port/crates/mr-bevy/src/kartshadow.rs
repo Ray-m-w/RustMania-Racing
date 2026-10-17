@@ -191,6 +191,9 @@ impl ShadowState {
 fn kart_records(feed: &crate::karts::KartFeed) -> Vec<(&[u8], Option<&[u8]>)> {
     feed.now
         .iter()
+        // (phase 11: MEET THE MUPPETS' characters, drivers without a
+        // vehicle, have no shadow: game mode 0xD has no karts)
+        .filter(|f| f.record.get(0x4A4) != Some(&0xFF))
         .map(|f| (&f.record[..], feed.prev.iter().find(|q| q.slot == f.slot).map(|q| &q.record[..])))
         .collect()
 }

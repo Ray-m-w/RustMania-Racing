@@ -125,9 +125,17 @@ frontend.md "Menus"):
   everything is open): the credits roll over Kermit's kart, START opens the
   secret courses (SPEEDWAY, RALLY, GLACIER, VOLCANO, HAUNTED HOUSE,
   WHATEVER) and BACK TO MAIN MENU (`--ending` starts there).
+- Phase 11 (frontend.md "MEET THE MUPPETS", audio.md "Phase 11"): MEET THE
+  MUPPETS on the main menu: the 5 x 5 gallery of the characters (those not
+  collected black, "?"), each speaking when the cursor rests on it, the
+  camera moving in while it does; CROSS = TEST DRIVE: drive the character
+  round the frontend room in its vehicle (START / SELECT: the other
+  vehicles it has won; the three ratings; TRIANGLE back), random course
+  music. Every voice clip the game plays: the finish, knock-outs, the stunt
+  finish, a battle won, CHICKEN CHASE's win, a BOSS CHALLENGE's boss, the
+  results taunt after a win (Statler and Waldorf's faces on the results).
 Menu keys: arrows move, X (CROSS) selects, A (TRIANGLE) goes back; pad: D-pad,
-south, north. Shown greyed and not selectable (later phases): MEET THE
-MUPPETS, PLAY MOVIE,
+south, north. Shown greyed and not selectable (later phases): PLAY MOVIE,
 ADJUST SCREEN, MEMORY CARD, VIBRATION, MOVIE / MUSIC.
 Another course (or the title) restarts the program on it (`--course NAME
 --skip-title --menu --character C --vehicle V`, `--league` within a league;
@@ -213,8 +221,8 @@ throughput (no render thread) for ~2.5 ms. Default: low. `--latency-log` and
 `--fps-log` keep the app at full rate without focus (Bevy's game default
 updates an unfocused window at 60 Hz, which caps tool-launched runs).
 
-Sound (bevy_audio; the race music streams from TUNES/*.XA on the disc, the
-game's XA queue picks the track): `--no-audio`, `--no-music`,
+Sound (bevy_audio; the race music and the voice clips stream from TUNES/*.XA
+and VOICES/*.XA on the disc, the game's XA queue picks the track): `--no-audio`, `--no-music`,
 `--volume V` / `--music-volume V` / `--sfx-volume V` (linear, 1.0 = the
 game's levels), `--audio-stats` (stream counters on stderr), `--audio-dump F`
 (the mix as a WAV on exit; game audio, keep it under ../analysis/).

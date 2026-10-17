@@ -614,6 +614,10 @@ pub struct Results {
     /// with DAT_800B0AF0 (shown while % 60 < 45). None in a normal race.
     pub rival: Option<u8>,
     pub rival_blink: i32,
+    /// Phase 11: the results taunt (VOICES/WIN.XA, flags 0xC000) plays in a
+    /// 1-player game: FUN_8004CEA0 draws two faces with the blink toggles
+    /// 0x800B07B0 / 0x800B07B2 (mouths).
+    pub taunt: Option<[u8; 2]>,
 }
 
 /// "%i:%i%i.%i%i" (hundredths) as FUN_8004cea0 formats times; `plus` = the

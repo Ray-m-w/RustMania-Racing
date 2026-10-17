@@ -211,6 +211,15 @@ fn save_bits(cfg: &mut mr_sim::session::SessionConfig) {
 /// The course menu / character select session: the player's kart alone on
 /// grid slot 0 (FUN_80072D8C -> FUN_800609F4(kart, c, v, 0, 0)), ticked by
 /// `Session::menu_tick`.
+/// Phase 11: TEST DRIVE on the frontend course (game mode 0xE, from MEET
+/// THE MUPPETS): the title's set-up with the player alone in `character`'s
+/// `vehicle` (mr_sim SessionConfig::test_drive).
+pub fn test_drive_config(logic_hz: u8, character: u8, vehicle: u8) -> mr_sim::session::SessionConfig {
+    let (seed, rng) = crate::title::session_seed();
+    let alt_controls = crate::settings::Settings::global().get("controller_config") == Some("B");
+    mr_sim::session::SessionConfig { test_drive: true, character, vehicle, alt_controls, ..mr_sim::session::SessionConfig::title(seed, rng, logic_hz) }
+}
+
 pub fn menu_config(logic_hz: u8, character: u8, vehicle: u8) -> mr_sim::session::SessionConfig {
     mr_sim::session::SessionConfig { opponents: 0, grid: 0, lineup: None, ..session_config(logic_hz, character, vehicle) }
 }

@@ -66,6 +66,8 @@ fn stunt_finish_matches_oracle() {
     let o = mr_sim::kart::KartState::from_record(cap.read(282, mr_sim::kart::KART_ARRAY, mr_sim::kart::RECORD_SIZE).unwrap());
     assert_eq!((s.kart.gate, s.kart.finished, s.kart.race_time, s.kart.race_pos, s.kart.progress), (o.gate, o.finished, o.race_time, o.race_pos, o.progress));
     assert_eq!((s.kart.gate, s.kart.finished, s.kart.race_time), (2, 2, 181));
+    // phase 11: the finish voice (FUN_80081DD8: first -> clip 3)
+    assert_eq!(s.globals.sound.xa, vec![mr_sim::sound::XaReq::Clip { character: s.kart.character, n: 3 }]);
     assert_eq!(s.globals.lap_record, 171);
     // the save block: the record and its holder, the won bit (0x103)
     let mut b = SaveBlock::zero();

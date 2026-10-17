@@ -79,6 +79,12 @@ fn battle_win_matches_oracle() {
         assert_eq!((k.kart.finished, k.kart.race_pos, k.kart.impact), (o.finished, o.race_pos, o.impact), "kart {}", i + 1);
     }
     assert_eq!(s.globals.lap_record, 30009);
+    // phase 11: the winner's voice clip (FUN_8007916C -> FUN_80060580(0,
+    // 3)); the knocked-out AI karts ask for none. The oracle's queue at
+    // the win (tools/oracle/xa_probe.py LAGOON_grid + battle_win_pokes,
+    // VB 244): 0x8053 (VOICES/CHAR_04.XA channel 3 from LBA 192241), then
+    // the course track 0x12 again.
+    assert_eq!(s.globals.sound.xa, vec![mr_sim::sound::XaReq::Clip { character: 0, n: 3 }]);
     // the save block: the record and its holder, the won bit (0x41 -> 0x43)
     let mut b = SaveBlock::zero();
     let at = 0x20 * 4 + 8 * 2;

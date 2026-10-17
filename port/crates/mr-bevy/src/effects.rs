@@ -231,7 +231,16 @@ fn kart_all(t: &FxTables, rec: &[u8], cam: FxCamera, frame: i32, faithful_lod: b
 
 /// Pickups and projectiles from game memory (the oracle capture source;
 /// the live session will map track A's ItemState to the same billboards).
-pub fn items_from_mem(t: &FxTables, m: &Mem, cam: FxCamera, frame: i32, out: &mut Vec<Billboard>) {
+pub fn items_from_mem(t: &FxTables, m: &Mem, cam: FxCamera, frame: i32, narrow: Option<bool>, out: &mut Vec<Billboard>) {
+    // FUN_8007E21C draws tokens and item boxes within a square of the eye
+    // (camera +0x34 / +0x3C, view units) on x and z: +-20000, +-10000 in
+    // split screen (0x800B0CA6) or on a stunt course (0x800B0B9A = 3)
+    // (phase 11: far ones showed in MEET THE MUPPETS' gallery); `narrow`
+    // from the session, else (captures) from the RAM image
+    let narrow = narrow.unwrap_or_else(|| m.u8(0x800B_0CA6) != 0 || m.u8(0x800B_0B9A) == 3);
+    let r: i32 = if narrow { 10000 } else { 20000 };
+    let (ex, ez) = (cam.eye[0] >> 5, cam.eye[2] >> 5);
+    let near = |x: i32, z: i32| (x.wrapping_sub(ex).wrapping_add(r) as u32) <= 2 * r as u32 && (z.wrapping_sub(ez).wrapping_add(r) as u32) <= 2 * r as u32;
     // turbo tokens: DAT_800B0A52 of them at 0x800E2370, 4 groups
     let n = m.u8(0x800B_0A52) as usize;
     for g in 0..4usize {
@@ -239,6 +248,10 @@ pub fn items_from_mem(t: &FxTables, m: &Mem, cam: FxCamera, frame: i32, out: &mu
         let mut i = g;
         while i < n {
             let a = 0x800E_2370 + 0x20 * i as u32;
+            if !near(m.i32(a), m.i32(a + 8)) {
+                i += 4;
+                continue;
+            }
             let ty = m.u8(a + 0x1F) as usize;
             let tb = t.tokens.get(ty).copied().unwrap_or([0; 8]);
             let sc = m.i16(a + 0x16) as i32;
@@ -276,6 +289,9 @@ pub fn items_from_mem(t: &FxTables, m: &Mem, cam: FxCamera, frame: i32, out: &mu
         };
         for i in 0..n.min(0x40) {
             let a = 0x800E_1B70 + 0x20 * i as u32;
+            if !near(m.i32(a), m.i32(a + 8)) {
+                continue;
+            }
             let s = m.i16(a + 0x16) as i32 * 2;
             let (tp, cl) = t.slot_attr(0x15, 0xB, 0x60);
             out.push(Billboard { pos: [m.i32(a) << 5, m.i32(a + 4), m.i32(a + 8) << 5], hw: s, hh: s, angle: cam.roll & 0xFFF, anchor: 0, flat: false, u: 0xC0, v: 0x80, uw: 0x37, vh: 0x37, tpage: tp, clut: cl, rgb: [0x80; 3], semi: false, abr: 3, bias: 0 });
@@ -548,7 +564,7 @@ pub(crate) fn capture_source(
     let c = 0x800C_4F40;
     let cam = FxCamera { roll: m.i16(c + 0x54) as i32, yaw: m.i16(c + 0x52) as i32, eye: [m.i32(c + 0x28), m.i32(c + 0x2C), m.i32(c + 0x30)] };
     out.eye = cam.eye;
-    items_from_mem(&t, &m, cam, m.i32(0x800B_0D90), &mut out.billboards);
+    items_from_mem(&t, &m, cam, m.i32(0x800B_0D90), None, &mut out.billboards);
     let mut h = 0u8;
     for k in 0..6u32 {
         if kart_all(&t, m.slice(0x800C_30A8 + 0x504 * k, 0x504), cam, m.i32(0x800B_0D90), settings.faithful_draw_distance(), &|_| None, &mut out) {
@@ -799,7 +815,7 @@ pub(crate) fn session_source(
         out.flats = f.list.iter().filter(|f| f.life != 0).copied().collect();
     }
     out.eye = cam.eye;
-    items_from_mem(&t, m, cam, src.frame, &mut out.billboards);
+    items_from_mem(&t, m, cam, src.frame, Some(s.globals.split_screen != 0 || s.globals.race_type == 3), &mut out.billboards);
     doozer_goals(&t, s, cam, src.frame, &mut out.billboards);
     chicken(&t, s, cam, &mut out.billboards);
     let mut h = 0u8;

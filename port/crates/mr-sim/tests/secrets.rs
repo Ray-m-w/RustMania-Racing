@@ -125,3 +125,19 @@ fn boss_win_matches_oracle() {
     assert_eq!(flags, 0x159);
     assert_eq!(s.globals.adv.course_flags, flags, "the course flags = the game's save block");
 }
+
+/// Phase 11: a BOSS CHALLENGE's load queues its first boss's clip base
+/// (0x800AC230[0x800B0C7E * 0x14], FUN_8008C4AC in game mode 7): on LAGOON
+/// 0xDC, as the oracle queued it (0x80DC = VOICES/WIN.XA channel 12, then
+/// the course track; tools/oracle/xa_probe.py LAGOON_menu + the route of
+/// routes/boss_lagoon.json, VB 285).
+#[test]
+fn boss_challenge_clip() {
+    let mut d = disc();
+    let exe = ExeImage::parse(&d.read("SLUS_012.37").unwrap()).unwrap();
+    let info = CourseInfo::find(&exe, "LAGOON").unwrap();
+    let boss = mr_sim::secrets::bosses(info.id).0[0].0;
+    assert_eq!(exe.u8(0x800A_C230 + 0x14 * boss as u32), 0xDC);
+    // (the bosses have no voice flag: FUN_80060580 ignores them)
+    assert_eq!(exe.u8(0x800A_C22E + 0x14 * boss as u32) & 1, 0);
+}

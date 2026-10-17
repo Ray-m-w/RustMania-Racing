@@ -160,6 +160,7 @@ mod sp {
     pub const REVERSE: u32 = 0x800B_03B8;
     pub const TWO_PLAYERS: u32 = 0x800B_0418;
     pub const REVERSE_BATTLE_RACE: u32 = 0x800B_058C;
+    pub const TEST_DRIVE: u32 = 0x800B_0548;
 }
 
 /// Inline strings (the code takes their address).
@@ -185,6 +186,10 @@ mod tbl {
     pub const CUPS: u32 = 0x800A_C1E4;
     /// Character names (char *, stride 8).
     pub const NAMES: u32 = 0x800A_B128;
+    /// Full character names (char *, stride 8: KERMIT THE FROG ..).
+    pub const FULL_NAMES: u32 = 0x800A_B124;
+    /// Vehicle rows (8 bytes): +1, +3, +2 TEST DRIVE's three ratings.
+    pub const VEHICLE_STATS: u32 = 0x800A_CDB0;
     /// Vehicle names (char *[31]).
     pub const VEHICLES: u32 = 0x800A_B2A4;
     /// The 5 x 5 character grid (i8[25]); the character select's order.
@@ -216,7 +221,14 @@ pub struct MenuTables {
     pub course_names: Vec<String>,
     pub cups: Vec<i8>,
     pub names: Vec<String>,
+    pub full_names: Vec<String>,
     pub vehicles: Vec<String>,
+    /// TEST DRIVE's ratings per vehicle (0x800ACDB0 + 8 v: +1, +3, +2) and
+    /// their range over the 25 characters' own vehicles (FUN_80087D10).
+    pub vehicle_stats: Vec<[i32; 3]>,
+    pub stat_range: [(i32, i32); 3],
+    /// The 5 x 5 character grid (0x800AC208, -1 none).
+    pub grid: Vec<i8>,
     /// The character select's lists (0x800AC6A4 / 0x800AC6C0 as
     /// FUN_80092B08 / FUN_80092928 fill them with every model loaded).
     pub char_list: Vec<u8>,
@@ -245,7 +257,7 @@ impl MenuTables {
             sp::FINAL_TABLE, sp::AFTER, sp::RACES, sp::NEXT, sp::START_RACE, sp::START_BATTLE, sp::POINTS, sp::QUIT_TOURNAMENT, sp::P1,
             sp::BEST_TIME, sp::ONE_PLAYER_STUNT_TRIAL, sp::TWO_PLAYER_STUNT_RACE, sp::ONE_PLAYER_BATTLE, sp::TWO_PLAYER_BATTLE,
             sp::REVERSE_RACE, sp::PLAY_MOVIE, sp::DOGFIGHT, sp::BOSS_CHALLENGE, sp::DOOZER_BATTLE, sp::BATTLE_AS_BOSS, sp::CHICKEN_CHASE,
-            sp::REVERSE, sp::TWO_PLAYERS, sp::REVERSE_BATTLE_RACE, sp::BACK_TO_CREDITS,
+            sp::REVERSE, sp::TWO_PLAYERS, sp::REVERSE_BATTLE_RACE, sp::BACK_TO_CREDITS, sp::TEST_DRIVE,
         ];
         let mut s: std::collections::HashMap<u32, String> = ptrs.iter().map(|&p| (p, exe_ptr_str(exe, p))).collect();
         for a in [si::QUESTION, si::DASH, si::ON, si::OFF, si::A, si::B, si::T_PREFIX, si::X_PREFIX] {
@@ -258,6 +270,18 @@ impl MenuTables {
         let vehicle_ok = |v: u8| exe_bytes(exe, tbl::VEHICLE_ROWS + 4 * v as u32 + 3, 1)[0] & 1 != 0;
         let char_list = grid.iter().copied().filter(|&c| char_row(c, 0x0E) & 1 != 0).collect();
         let vehicle_list = grid.iter().map(|&c| default_vehicle[c as usize]).filter(|&v| vehicle_ok(v)).collect();
+        // TEST DRIVE (FUN_80051698 game mode 0xE): ratings +1 / +3 / +2;
+        // FUN_80087D10's min / max over the vehicles a character owns
+        let vehicle_stats: Vec<[i32; 3]> = (0..0x30u32).map(|v| [1u32, 3, 2].map(|o| exe_bytes(exe, tbl::VEHICLE_STATS + 8 * v + o, 1)[0] as i32)).collect();
+        let mut stat_range = [(999, -1); 3];
+        for v in 0..0x30usize {
+            if default_vehicle.contains(&(v as u8)) {
+                for k in 0..3 {
+                    stat_range[k].0 = stat_range[k].0.min(vehicle_stats[v][k]);
+                    stat_range[k].1 = stat_range[k].1.max(vehicle_stats[v][k]);
+                }
+            }
+        }
         let lv = |a: u32| -> [i16; 16] { std::array::from_fn(|i| i16::from_le_bytes(exe_bytes(exe, a + 2 * i as u32, 2).try_into().unwrap())) };
         MenuTables {
             hud: HudTables::from_exe(exe).expect("HUD tables"),
@@ -268,6 +292,10 @@ impl MenuTables {
             course_names: (0..36).map(|i| exe_ptr_str(exe, tbl::COURSE_NAMES + 4 * i)).collect(),
             cups: exe_bytes(exe, tbl::CUPS, 36).iter().map(|&b| b as i8).collect(),
             names: (0..25).map(|i| exe_ptr_str(exe, tbl::NAMES + 8 * i)).collect(),
+            full_names: (0..25).map(|i| exe_ptr_str(exe, tbl::FULL_NAMES + 8 * i)).collect(),
+            vehicle_stats: vehicle_stats.clone(),
+            stat_range,
+            grid: grid.iter().map(|&b| b as i8).collect(),
             vehicles: (0..31).map(|i| exe_ptr_str(exe, tbl::VEHICLES + 4 * i)).collect(),
             char_list,
             vehicle_list,
@@ -449,6 +477,11 @@ pub enum Page {
     /// 1): FUN_8004A878's page; `col` = 0x800B07FA, `row` = 0x800B07FC;
     /// back to this page.
     GameStatus(GameStatusFrom),
+    /// Phase 11: MEET THE MUPPETS (main menu row 0, game mode 0xD): the
+    /// gallery (`Front::gallery`, mr_sim::gallery; main.rs runs it).
+    Gallery,
+    /// Phase 11: its TEST DRIVE (game mode 0xE, `Front::test_drive`).
+    TestDrive,
 }
 
 /// Where GAME STATUS goes back to.
@@ -481,6 +514,23 @@ pub enum Request {
     Menu { keep_camera: bool },
     /// A race with the chosen character / vehicle.
     Race,
+    /// Phase 11: TEST DRIVE on the frontend course (`Front::test_drive`).
+    TestDrive,
+}
+
+/// Phase 11: TEST DRIVE's state (game mode 0xE).
+#[derive(Clone, Debug, Default)]
+pub struct TestDrive {
+    pub character: u8,
+    /// FUN_8008B36C's list (0x800C2FE8): the own vehicle, then those won.
+    pub vehicles: Vec<u8>,
+    /// 0x800B0B54.
+    pub pick: usize,
+    /// 0x800B0AF0 (VBlanks; menu presses zero it).
+    pub idle: i32,
+    pub prev: u16,
+    /// The pick changed: the session is rebuilt with the kart where it is.
+    pub swap: bool,
 }
 
 /// The front end's state.
@@ -540,6 +590,17 @@ pub struct Front {
     /// character select in player 2's turn).
     pub pad2: u16,
     prev2: u16,
+    /// Phase 11: MEET THE MUPPETS' state (None until main.rs creates it
+    /// from the session at the page's first tick), its fade-in VBlanks
+    /// (the logic waits for 0x800B0F88) and pad edge state.
+    pub gallery: Option<mr_sim::gallery::Gallery>,
+    pub gallery_fade: i32,
+    pub gallery_prev: u16,
+    /// Phase 11: TEST DRIVE.
+    pub test_drive: Option<TestDrive>,
+    /// Sounds main.rs asks `run` to play (FUN_8005EECC calls of the
+    /// gallery / TEST DRIVE logic).
+    pub pending_sfx: Vec<(i32, i32, i32, i32)>,
 }
 
 /// One COURSE SECRETS row: its text ("?" while its secret is not found),
@@ -700,6 +761,11 @@ impl Default for Front {
             p1_pick: (character, vehicle),
             pad2: 0,
             prev2: u16::MAX,
+            gallery: None,
+            gallery_fade: 0,
+            gallery_prev: u16::MAX,
+            test_drive: None,
+            pending_sfx: Vec::new(),
         };
         if crate::title::on_title() { f } else { f.on_course(info.id, info.lap_record) }
     }
@@ -801,7 +867,7 @@ impl Front {
             Page::Secrets => 4,
             Page::GameStatus(_) => 7,
             Page::LeaguePoints => 1,
-            Page::Standings(_) | Page::None => 1,
+            Page::Standings(_) | Page::None | Page::Gallery | Page::TestDrive => 1,
         }
     }
 }
@@ -853,6 +919,82 @@ pub fn items(t: &MenuTables, list: &[Item], sel: i32, centre: i32, f: i32) -> Ve
     out
 }
 
+/// Phase 11: MEET THE MUPPETS' 2D layer (FUN_80051698 game mode 0xD,
+/// @0x8005B8xx): "t BACK" (0x100, 0x1E); the name of the character under
+/// the cursor (0x100, 0xB4, medium, colour 5), "?" in colour 7 when not
+/// collected; once faded in "x TEST DRIVE" (0x100, 0xD2, blue, greyed (abr
+/// 0) when not collected).
+pub fn gallery_prims(t: &MenuTables, fr: &Front) -> Vec<Prim> {
+    let mut out: Vec<Sprite> = back_button(t, 0x100, 0x1E, 0, false);
+    if let Some(g) = &fr.gallery {
+        let c = t.grid.get(g.row as usize * 5 + g.col as usize).copied().unwrap_or(-1);
+        let have = c >= 0 && fr.progress.char_open(c as u8);
+        if have {
+            out.extend(t.hud.text(t.full_names[c as usize].as_bytes(), 0x100, 0xB4, 0, Size::from_arg(1), 5, 0x60));
+        } else {
+            out.extend(t.hud.text(t.st(si::QUESTION).as_bytes(), 0x100, 0xB4, 0, Size::from_arg(1), 7, 0x60));
+        }
+        if fr.gallery_fade >= GALLERY_FADE {
+            let s = format!("{}{}", t.st(si::X_PREFIX), t.st(sp::TEST_DRIVE));
+            out.extend(t.hud.text_rgb(s.as_bytes(), 0x100, 0xD2, 0, Size::from_arg(0), 0, if have { 0x60 } else { 0 }, [0x68, 0x84, 0xDC]));
+        }
+    }
+    out.into_iter().map(Prim::Sprt).collect()
+}
+
+/// VBlanks of the gallery's fade-in (FUN_8007D174(0x80, 8): +8 a VBlank
+/// to 0x100) before its logic runs (0x800B0F88).
+pub const GALLERY_FADE: i32 = 0x100 / 8;
+
+/// FUN_800514AC(x, y, value, min, max): 1..5 stars for the nearest of five
+/// levels from min to max (ties to the higher), centred on x, alternate
+/// stars darker in green.
+fn stars(x: i32, y: i32, v: i32, lo: i32, hi: i32) -> Vec<Prim> {
+    let d = hi - lo;
+    let lv = [lo, lo + d / 4, lo + d / 2, lo + d * 3 / 4, hi];
+    let mut best = (v - lv[0]).abs();
+    let mut k = 0;
+    for (i, l) in lv.iter().enumerate().skip(1) {
+        let e = (v - l).abs();
+        if e as i16 <= best as i16 {
+            best = e;
+            k = i;
+        }
+    }
+    let n = k as i32 + 1;
+    let mut x = x - (n - 1) * 6;
+    let mut out = Vec::new();
+    for i in 0..n {
+        let g = if i & 1 != 0 { 0x40 } else { 0x80 };
+        out.push(Prim::Sprt(mr_assets::hud_items::sprt(x - 0xC, y + 0x19 - 8, 0x40, 0, 0x18, 0x10, [0x80, g, 0x80], 0x15, 0xB, 0x60)));
+        x += 0xC;
+    }
+    out
+}
+
+/// Phase 11: TEST DRIVE's 2D layer (FUN_80051698 game mode 0xE): "t BACK",
+/// the vehicle's three ratings (stars over three icons at y 0xA8) and its
+/// name (0x100, 0x3C, medium, colour 5). The item HUD (FUN_8004F688 case
+/// 0xE) is added by hud.rs.
+pub fn test_drive_prims(t: &MenuTables, fr: &Front) -> Vec<Prim> {
+    let mut out: Vec<Prim> = back_button(t, 0x100, 0x1E, 0, false).into_iter().map(Prim::Sprt).collect();
+    let Some(td) = &fr.test_drive else { return out };
+    let v = td.vehicles.get(td.pick).copied().unwrap_or(0) as usize;
+    let st = t.vehicle_stats.get(v).copied().unwrap_or([0; 3]);
+    let r = t.stat_range;
+    let sp = mr_assets::hud_items::sprt;
+    out.extend(stars(0x80, 0xB8, st[0], r[0].0, r[0].1));
+    out.push(Prim::Sprt(sp(0x70, 0xA8, 0xE0, 0xE0, 0x20, 0x20, [0x80; 3], 0x15, 1, 0x60)));
+    out.extend(stars(0x100, 0xB8, st[1], r[1].0, r[1].1));
+    out.push(Prim::Sprt(sp(0xF0, 0xA8, 0, 0xE0, 0x20, 0x20, [0x80; 3], 0x15, 1, 0x60)));
+    out.extend(stars(0x180, 0xB8, st[2], r[2].0, r[2].1));
+    out.push(Prim::Sprt(sp(0x16C, 0xA8, 0xC0, 0, 0x28, 0x20, [0x80; 3], 0x15, 1, 0x60)));
+    if let Some(name) = t.vehicles.get(v) {
+        out.extend(t.hud.text(name.as_bytes(), 0x100, 0x3C, 0, Size::from_arg(1), 5, 0x60).into_iter().map(Prim::Sprt));
+    }
+    out
+}
+
 /// "BACK TO MAIN MENU" (THE END's last row, ending.rs).
 pub fn back_to_main_menu(t: &MenuTables) -> String {
     t.st(sp::BACK_TO_MAIN_MENU).to_string()
@@ -890,7 +1032,7 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
         Page::Main => {
             // FUN_80051698 course 0x1E, sub-state 1 (@0x8005A034)
             let list = [
-                Item::new(txt(sp::MEET_THE_MUPPETS)).grey(true),
+                Item::new(txt(sp::MEET_THE_MUPPETS)),
                 Item::new(txt(sp::GAME_STATUS)),
                 Item::new(txt(sp::SELECT_COURSE)),
                 Item::new(format!("{} - {}", txt(sp::TOURNAMENT), txt(sp::ONE_PLAYER))),
@@ -923,6 +1065,12 @@ pub fn page_prims(fr: &Front, t: &MenuTables) -> Vec<Prim> {
         }
         Page::GameStatus(_) => {
             return game_status(t, p, fr.col, fr.row, fr.vb);
+        }
+        Page::Gallery => {
+            return gallery_prims(t, fr);
+        }
+        Page::TestDrive => {
+            return test_drive_prims(t, fr);
         }
         Page::Standings(page) => {
             if let Some(l) = fr.league.as_ref() {
@@ -1579,7 +1727,9 @@ impl Front {
         let start = pressed(START);
         let square = pressed(SQUARE);
         self.prev = buttons;
-        if self.page == Page::None {
+        // (phase 11: MEET THE MUPPETS and TEST DRIVE run in main.rs, on the
+        // simulation's ticks)
+        if matches!(self.page, Page::None | Page::Gallery | Page::TestDrive) {
             return fx;
         }
         let rows = self.rows();
@@ -1597,13 +1747,21 @@ impl Front {
         }
         let confirm = |fx: &mut Effects| fx.sfx.push(CONFIRM_SFX);
         match self.page {
-            Page::None => {}
+            Page::None | Page::Gallery | Page::TestDrive => {}
             Page::Main => {
                 if back {
                     confirm(&mut fx);
                     self.page = Page::None;
                 } else if cross {
                     match self.row {
+                        0 => {
+                            // MEET THE MUPPETS (phase 11): game mode 0xD
+                            // (0x800B074A = -1, 0x800B074B = 0x3C, the
+                            // gallery set up by main.rs)
+                            confirm(&mut fx);
+                            self.open(Page::Gallery);
+                            self.gallery = None;
+                        }
                         1 => {
                             // GAME STATUS (phase 6b) on the first cell
                             confirm(&mut fx);
@@ -2356,6 +2514,10 @@ fn run(
         front.prev = b;
         return;
     }
+    // phase 11: the gallery's / TEST DRIVE's sounds (main.rs)
+    for s in std::mem::take(&mut front.pending_sfx) {
+        sfx.play(s);
+    }
     if front.page == Page::None {
         front.prev = latch.now;
         return;
@@ -2411,8 +2573,15 @@ fn overlay(front: Res<Front>, title: Res<crate::title::TitleOverlay>, mut ov: Re
     // the race's sound driver keeps running on the menus whose session does
     // not tick (sfx.rs), and the course menu plays the course track without
     // the intro clip (audio.rs)
-    sfx.idle = front.page.course_menu() || front.page.pauses_race();
+    sfx.idle = front.page.course_menu() || front.page.pauses_race() || front.page == Page::Gallery;
     dir.menu = front.page.course_menu();
+    // phase 11: MEET THE MUPPETS / TEST DRIVE (audio.rs); TEST DRIVE keeps
+    // the item HUD under its layer (hud.rs)
+    dir.gallery = front.page == Page::Gallery;
+    dir.test_drive = front.page == Page::TestDrive;
+    if ov.test_drive != dir.test_drive {
+        ov.test_drive = dir.test_drive;
+    }
 }
 
 /// The race freezes under the pause menu (virtual time).
@@ -2762,7 +2931,55 @@ mod tests {
         assert_eq!(bad, 0, "port only {missing:?}; oracle only {extra:?}");
     }
 
+    /// Phase 11: MEET THE MUPPETS (Kermit; character 3 at (3, 1), not
+    /// collected: "?", TEST DRIVE greyed) and TEST DRIVE (Kermit, RACER)
+    /// against the oracle's GP0 frames (tools/oracle/menu_walk.py title:
+    /// analysis/s8/meet/{g1,galq,td}.json, local). The gallery's font
+    /// sprites all match in number; TEST DRIVE's layer (name, ratings,
+    /// icons, BACK) is a subset of the frame (which adds the item HUD).
+    #[test]
+    fn gp0_gallery_and_test_drive() {
+        let Some(exe) = exe() else { return };
+        let root = mr_sim::oracle::repo_root().join("analysis/s8/meet");
+        let t = MenuTables::from_exe(&exe);
+        let mut disc = mr_disc::Disc::open_default().unwrap();
+        let path = mr_assets::raw::course_raw_path(&exe, 0x1E).unwrap();
+        let env = mr_assets::raw::LoadEnv::from_exe(&exe, 0x1E).unwrap();
+        let dec = mr_assets::raw::decode(&disc.read(&path).unwrap(), &env).unwrap();
+        let slots = mr_assets::hud::slot_attrs(&dec.slots);
+        let font = slots[mr_assets::hud::FONT_SLOT as usize].1;
+        let w = {
+            std::env::set_current_dir(mr_sim::oracle::repo_root()).unwrap();
+            mr_sim::world::World::course(&mut disc, 0x1E).unwrap()
+        };
+        let key = |s: &Sprite| (s.x, s.y, s.u, s.v, s.w, s.h, s.attrs(&slots).1, s.raw);
+        for (file, cursor, page) in [("g1.json", (0, 0), Page::Gallery), ("galq.json", (3, 1), Page::Gallery), ("td.json", (0, 0), Page::TestDrive)] {
+            let Ok(text) = std::fs::read_to_string(root.join(file)) else { continue };
+            // the oracle's save: characters 0..7, nothing won
+            let mut f = Front { progress: Progress::new_game(), ..Default::default() };
+            f.page = page;
+            let mut g = mr_sim::globals::RaceGlobals { rng: mr_sim::session::RNG_START, ..Default::default() };
+            f.gallery = Some(mr_sim::gallery::Gallery::new(&mut g, &w, cursor));
+            f.gallery_fade = GALLERY_FADE;
+            f.test_drive = Some(TestDrive { character: 0, vehicles: vec![0], ..Default::default() });
+            let ours: Vec<_> = page_prims(&f, &t).into_iter().filter_map(|p| if let Prim::Sprt(s) = p { Some(key(&s)) } else { None }).collect();
+            let all = oracle_sprites(&text, None);
+            let missing: Vec<_> = ours.iter().filter(|o| !all.contains(o)).collect();
+            assert!(missing.is_empty(), "{file}: {} of {} port sprites not in the oracle frame: {missing:?}", missing.len(), ours.len());
+            eprintln!("{file}: {} port sprites in the oracle frame", ours.len());
+            if page == Page::Gallery {
+                let theirs = oracle_font_sprites(&text, font);
+                let n = ours.iter().filter(|o| o.6 & 0xFFC0 == font & 0xFFC0).count();
+                assert_eq!(n, theirs.len(), "{file}: font sprite count");
+            }
+        }
+    }
+
     fn oracle_font_sprites(json: &str, font_clut: u16) -> Vec<(i32, i32, u8, u8, i32, i32, u16, bool)> {
+        oracle_sprites(json, Some(font_clut))
+    }
+
+    fn oracle_sprites(json: &str, font_clut: Option<u16>) -> Vec<(i32, i32, u8, u8, i32, i32, u16, bool)> {
         // a minimal scan of the decoded GP0 JSON: each prim's words
         let mut out = Vec::new();
         for chunk in json.split("\"words\": [").skip(1) {
@@ -2783,7 +3000,7 @@ mod tests {
             let (w, h) = ((words[3] & 0xFFFF) as i32, (words[3] >> 16) as i32);
             // glyph cells only (the frame also has a 256 x 5 strip from the
             // font page)
-            if clut & 0xFFC0 != font_clut & 0xFFC0 || w > 32 || h > 32 {
+            if font_clut.is_some_and(|f| clut & 0xFFC0 != f & 0xFFC0 || w > 32 || h > 32) {
                 continue;
             }
             out.push((x, y, u, v, w, h, clut, op & 1 != 0));

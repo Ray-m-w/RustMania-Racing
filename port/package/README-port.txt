@@ -88,8 +88,8 @@ logic_hz = 30 | 60, skip_intro_movies = true, music_volume / sound_volume
 
 4. Known differences
 --------------------
-Not everything of the original is ported yet (for example MEET THE
-MUPPETS, simultaneous two-player character select, 2-player tournament).
+Not everything of the original is ported yet (for example the
+simultaneous two-player character select, 2-player tournament).
 Such menu entries are shown greyed out. Choosing another course restarts
 the program on it (a short pause).
 

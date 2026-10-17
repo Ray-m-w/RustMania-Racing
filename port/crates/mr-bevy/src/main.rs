@@ -755,6 +755,130 @@ fn fit_bars(
     }
 }
 
+/// Phase 11: one MEET THE MUPPETS frame (FUN_80073138 + FUN_80074A94 game
+/// mode 0xD + FUN_80026A50) on the title session: the gallery is set up at
+/// its first frame (FUN_8008C4AC: the saved cursor, FUN_80026920); its
+/// logic waits for the fade-in; the nine characters around the cursor go
+/// to the kart renderer; the session only runs its camera (mode 6).
+fn gallery_tick(run: &mut SimRun, front: &mut menus::Front, feed: &mut karts::KartFeed, buttons: u16) {
+    let s = &mut run.session;
+    let vpt = s.vblanks_per_tick();
+    s.globals.dt = vpt;
+    let chars = front.progress.0.chars();
+    if front.gallery.is_none() {
+        let cur = save::with(|st| (st.block.u8(0x1FE) as i8, st.block.u8(0x1FF) as i8));
+        front.gallery = Some(mr_sim::gallery::Gallery::new(&mut s.globals, &s.world, cur));
+        front.gallery_fade = 0;
+        front.gallery_prev = u16::MAX;
+    }
+    let pressed = buttons & !front.gallery_prev;
+    front.gallery_prev = buttons;
+    let playing = audio::XA_STATE.load(std::sync::atomic::Ordering::Relaxed) & 0x100 != 0;
+    let mut g = front.gallery.take().unwrap();
+    let mut leave = false;
+    if front.gallery_fade < menus::GALLERY_FADE {
+        front.gallery_fade += vpt;
+    } else {
+        let p = |m: u16| pressed & m != 0;
+        if g.input(p(input::UP), p(input::DOWN), p(input::LEFT), p(input::RIGHT)) {
+            front.pending_sfx.push(menus::NAV_SFX);
+        }
+        // FUN_80073138: CROSS (accept) or TRIANGLE (back) alone, sound 0xF
+        let cross = pressed & input::CROSS != 0 && buttons & input::TRIANGLE == 0;
+        let back = pressed & input::TRIANGLE != 0 && buttons & input::CROSS == 0;
+        if cross || back {
+            front.pending_sfx.push(menus::CONFIRM_SFX);
+        }
+        let out = g.logic(&mut s.globals, &s.world, cross, back, playing, chars);
+        if out.nav {
+            front.pending_sfx.push(menus::NAV_SFX);
+        }
+        if let Some((character, n)) = out.clip {
+            s.globals.sound.xa.push(mr_sim::sound::XaReq::Clip { character, n });
+        }
+        // 0x800E038E / F: the cursor kept in the save block
+        if !menus::tool_run() {
+            save::with(|st| {
+                st.block.set_u8(0x1FE, g.row as u8);
+                st.block.set_u8(0x1FF, g.col as u8);
+            });
+        }
+        if let Some(c) = out.test_drive {
+            let won = |v: u8| front.progress.0.vehicle_open(c, v);
+            let vehicles = mr_sim::gallery::vehicle_list(&s.world, c, &won);
+            front.test_drive = Some(menus::TestDrive { character: c, vehicles, prev: u16::MAX, ..Default::default() });
+            front.open(menus::Page::TestDrive);
+            front.request = menus::Request::TestDrive;
+        }
+        if out.leave {
+            // (FUN_80074A94: game mode 0x10, sub-state 0: the title's PRESS
+            // START on a fresh title session)
+            if !menus::tool_run() {
+                save::persist();
+            }
+            front.page = menus::Page::None;
+            front.request = menus::Request::Menu { keep_camera: false };
+            leave = true;
+        }
+    }
+    g.animate(&mut s.globals, &s.world);
+    let pivot = |c: u8| s.world.title.as_deref().and_then(|d| d.characters.get(c as usize).cloned().flatten()).map_or(0, |(p, _)| p[1]);
+    let cam = g.camera(&s.world, playing, &pivot);
+    s.camera_globals.gallery = Some(cam);
+    s.camera_menu = Some((0xD, g.row));
+    s.menu_tick(vpt);
+    feed.external = true;
+    let drawn = g.drawn(&s.world, chars);
+    // (slots 32.. : apart from the session's karts, whose effects state
+    // the renderer keys by slot)
+    feed.set_records(drawn.iter().map(|(i, _, r)| (32 + *i as u8, &r[..])));
+    if leave {
+        s.camera_menu = None;
+        s.camera_globals.gallery = None;
+    } else {
+        front.gallery = Some(g);
+    }
+}
+
+/// Phase 11: TEST DRIVE's menu logic (FUN_80074A94 game mode 0xE) per
+/// tick: START / SELECT the next / previous vehicle of the list (sound 0xF
+/// when it changes), TRIANGLE back to the gallery (sound 0xF), 0x1C20 idle
+/// VBlanks (menu presses zero the count) back to the title.
+fn test_drive_tick(front: &mut menus::Front, buttons: u16, vpt: i32) {
+    let Some(td) = front.test_drive.as_mut() else { return };
+    let pressed = buttons & !td.prev;
+    td.prev = buttons;
+    td.idle += vpt;
+    if pressed & (input::UP | input::DOWN | input::LEFT | input::RIGHT | input::START | input::TRIANGLE) != 0 {
+        td.idle = 0;
+    }
+    let n = td.vehicles.len().max(1);
+    let old = td.pick;
+    if pressed & input::START != 0 {
+        td.pick = (td.pick + 1) % n;
+    }
+    if pressed & input::SELECT != 0 {
+        td.pick = (td.pick + n - 1) % n;
+    }
+    if td.pick != old {
+        front.pending_sfx.push(menus::CONFIRM_SFX);
+        td.swap = true;
+        front.request = menus::Request::TestDrive;
+    }
+    if pressed & input::TRIANGLE != 0 && buttons & input::CROSS == 0 {
+        // (FUN_80074A94: game mode 0xD again, 0x800B074A = -1, 0x800B074B =
+        // 0x3C; the port keeps this session for the gallery's camera)
+        front.pending_sfx.push(menus::CONFIRM_SFX);
+        front.test_drive = None;
+        front.gallery = None;
+        front.open(menus::Page::Gallery);
+    } else if td.idle >= mr_sim::gallery::TEST_DRIVE_IDLE_OUT {
+        front.test_drive = None;
+        front.page = menus::Page::None;
+        front.request = menus::Request::Menu { keep_camera: false };
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_g: ResMut<hud::HudGlobals>, mut feed: ResMut<karts::KartFeed>, mut front: ResMut<menus::Front>, mut split: ResMut<Split>) {
     // The pad as sampled this frame (pacing.rs; with low_latency also the
@@ -853,6 +977,20 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
                     // "new vehicle" check)
                     run.session.globals.items.hit_bits = save::vehicles_won();
                 }
+                menus::Request::TestDrive => {
+                    // Phase 11: TEST DRIVE (game mode 0xE) with the gallery's
+                    // character in the picked vehicle; a change of vehicle
+                    // keeps the kart where it is (FUN_8008B644)
+                    if let Some(td) = front.test_drive.as_mut() {
+                        let v = td.vehicles.get(td.pick).copied().unwrap_or(0);
+                        let old = td.swap.then(|| run.session.kart.clone());
+                        td.swap = false;
+                        **run = SimRun::with_config(courses::test_drive_config(pacing::logic_hz(), td.character, v));
+                        if let Some(k) = old {
+                            run.session.carry_player(&k);
+                        }
+                    }
+                }
             }
             // The title's course select: the camera on the film strips
             // (game state 0xC, mode 5).
@@ -861,7 +999,14 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
             if ending::on() {
                 run.session.camera_menu = Some((ending::MODE, 0));
             }
-            if front.page.course_menu() || ending::on() {
+            if front.page == menus::Page::Gallery {
+                // Phase 11: MEET THE MUPPETS (game mode 0xD): no race, the
+                // gallery's characters and camera mode 6
+                gallery_tick(run, &mut front, &mut feed, buttons);
+                hud_g.results = None;
+                pose = pacing::session_pose(&run.session);
+                kart = Some(run.session.record().to_vec());
+            } else if front.page.course_menu() || ending::on() {
                 // the course menu / character select: the race does not run
                 let vpt = run.session.vblanks_per_tick();
                 run.session.menu_tick(vpt);
@@ -873,6 +1018,10 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
                 pose = pacing::session_pose(s);
                 kart = Some(s.record().to_vec());
             } else {
+            // Phase 11: TEST DRIVE's menu presses (the pad also drives)
+            if front.page == menus::Page::TestDrive {
+                test_drive_tick(&mut front, buttons, run.session.vblanks_per_tick());
+            }
             let idle = run.session.ticks < run.align;
             let k = run.buttons.len() as u64;
             let scripted = run.route.as_ref().map(|r| {

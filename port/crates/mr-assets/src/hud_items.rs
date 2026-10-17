@@ -501,6 +501,38 @@ pub fn parts(ht: &HudTables, t: &ItemTables, s: &ItemHud) -> Parts {
     p
 }
 
+/// Phase 11: TEST DRIVE's item HUD (FUN_8004F688 case 0xE): the +0x4F9
+/// icon, FUN_80049440, FUN_8004CBC8(0x2D), FUN_8004A310.
+pub fn test_drive_hud(ht: &HudTables, t: &ItemTables, s: &ItemHud) -> Vec<Prim> {
+    let mut out = Vec::new();
+    if s.kart[kart::ICON_4F9] & 0x7F != 0 {
+        let y = if s.countdown == 0 { 0x3C } else { 0xB4 };
+        out.push(Prim::Sprt(sprt(0xED, y - 0xC, 0x80, 0x40, 0x25, 0x18, [0x80; 3], 0x15, 6, 0x60)));
+    }
+    out.extend(status(ht, t, s));
+    out.extend(weapons(t, s, 0x2D));
+    out.extend(meter(t, s));
+    out
+}
+
+/// Phase 11: FUN_8004CEA0's tail while the results taunt plays (one
+/// player, the current XA entry has flags 0xC000 and plays): two faces,
+/// FUN_8002FD04 at (0x120, y) and (0xE0, y), half-size 0x10, u = 0x80 +
+/// 0x20 * the blink toggle 0x800B07B0 / 0x800B07B2 (v 0xC0 / 0xE0, 0x1F x
+/// 0x1F, page slot 0x14, CLUT offset 0xE); y 0x3C under the rival / NEW
+/// COURSE line, else 0x1E.
+pub fn taunt_faces(t: &ItemTables, r: &crate::hud::Results) -> Vec<Prim> {
+    let Some(b) = r.taunt else { return Vec::new() };
+    let y = if r.rival.is_some() { 0x3C } else { 0x1E };
+    let mut out = Vec::new();
+    for (x, k, v) in [(0x120, 0, 0xC0u8), (0xE0, 1, 0xE0)] {
+        if let Some(q) = quad(t, x, y, 0x10, 0x10, 0, 0x80 + 0x20 * b[k], v, 0x1F, 0x1F, [0x80; 3], 0x14, 0xE, 0x60) {
+            out.push(Prim::Ft4(q));
+        }
+    }
+    out
+}
+
 /// FUN_80049440 (1 player): SPECIAL MOVE, the direction arrow and the
 /// message banner.
 pub fn status(ht: &HudTables, t: &ItemTables, s: &ItemHud) -> Vec<Prim> {
@@ -1220,6 +1252,9 @@ pub fn race_hud(ht: &HudTables, t: &ItemTables, st: &crate::hud::HudState, s: &I
         out.extend(base);
         if intro {
             out.extend(intro_faces(t, s));
+        }
+        if let Some(r) = st.results.filter(|_| st.finished || st.mode == 10) {
+            out.extend(taunt_faces(t, &r));
         }
         return out;
     }

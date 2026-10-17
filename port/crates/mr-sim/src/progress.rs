@@ -342,7 +342,7 @@ fn lap_completed(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
 /// driver, one random byte for its angle), the body squashes (FUN_80060878,
 /// unless an effect runs), +0x4C7 = 2, the AI takes the kart (+0x4F9 0x80,
 /// +0x496 | 1) and it spins (FUN_8007B26C(kart, 1)). An AI kart's voice
-/// bits draw one more byte (a human's knock-out voice is audio only).
+/// bits draw one more byte; a human's: its voice clip 2 (FUN_80060580).
 fn knocked_out(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
     let b = crate::update::rng_next(g, w) as i32;
     crate::items::particle(g, [k.drv_x, k.ref_y, k.drv_z], [k.vx, k.vy, k.vz], 0, b << 4, 0, 0x11, [0x80; 3], 0x180, 0x180, 0x20);
@@ -357,7 +357,11 @@ fn knocked_out(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
         g.end_mode = g.end_mode.wrapping_sub(1);
     }
     k.finished = 2;
-    if !((k.player_index as i32) < g.humans as i32 && g.game_state != 0x1E) {
+    if (k.player_index as i32) < g.humans as i32 && g.game_state != 0x1E {
+        // 0x80082858: a human knocked out (not on the frontend course):
+        // FUN_80060580(character, 2).
+        crate::sound::voice_clip(g, k.character, 2);
+    } else {
         let r = crate::update::rng_next(g, w) as i8;
         k.event_bits |= if r < 0 { 0x20 } else { 0x10 };
     }
@@ -427,8 +431,8 @@ fn race_finished(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
     k.race_pos = g.end_mode;
     k.flags |= 1;
     if (k.player_index as i32) < g.humans as i32 {
-        // FUN_80060580(character, 3 if won else 2): the finish voice (audio
-        // queue 0x800B0744, not modelled).
+        // FUN_80060580(character, 3 if won else 2): the finish voice.
+        crate::sound::voice_clip(g, k.character, if g.end_mode == 1 { 3 } else { 2 });
     } else {
         let b = crate::update::rng_next(g, w) as i8;
         let bits = if g.end_mode == 1 { if b < 0 { 4 } else { 2 } } else if b < 0 { 0x20 } else { 0x10 };

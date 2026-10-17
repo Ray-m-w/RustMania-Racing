@@ -105,7 +105,11 @@ pub fn init_kart(p: &KartInit, rng: &mut u32, rand: &mut dyn FnMut() -> i32) -> 
         3 => 0xC,
         _ => 0x12,
     };
-    let gi = if p.flags & 0x40 != 0 {
+    // Phase 11: TEST DRIVE (game mode 0xE) skips the computation: grid
+    // point `grid` (5, FUN_8008C4AC).
+    let gi = if s.mode == 0xE {
+        p.grid
+    } else if p.flags & 0x40 != 0 {
         base
     } else if p.flags & 0x20 != 0 {
         base + 1
@@ -142,6 +146,9 @@ pub fn init_kart(p: &KartInit, rng: &mut u32, rand: &mut dyn FnMut() -> i32) -> 
             (lo[0].wrapping_add(hi[0]).wrapping_mul(16), lo[1].wrapping_add(hi[1]).wrapping_mul(16), lo[2].wrapping_add(hi[2]).wrapping_mul(16), 0)
         }
     };
+    // 0x80060C40 (TEST DRIVE): the heading is 0x600 or 0xA00 by the sign
+    // of a random byte.
+    let heading = if s.mode == 0xE { if (next_rng() as i8) < 0 { 0x600 } else { 0xA00 } } else { heading };
     put32(&mut r, 0x000, x);
     put32(&mut r, 0x004, y0);
     put32(&mut r, 0x008, z);

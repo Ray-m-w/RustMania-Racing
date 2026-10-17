@@ -336,6 +336,12 @@ fn finished_player_is_driven_by_the_ai() {
     }
     assert_eq!(s.kart.flags & 1, 1);
     assert!(matches!(s.phase(), RacePhase::Finished { .. }));
+    // phase 11: the finish voice (FUN_80060580(character, 3 if first else
+    // 2)) and, for a win, the results taunt (FUN_800606D0)
+    use mr_sim::sound::XaReq;
+    let won = s.kart.race_pos == 1;
+    let want = if won { vec![XaReq::Clip { character: 0, n: 3 }, XaReq::Taunt] } else { vec![XaReq::Clip { character: 0, n: 2 }] };
+    assert_eq!(s.globals.sound.xa, want);
     let p0 = (s.kart.x, s.kart.z);
     for _ in 0..300 {
         s.tick(0).unwrap();
@@ -378,4 +384,30 @@ fn ten_minute_limit_ends_the_race() {
         }
         assert_ne!((s.kart.x, s.kart.z), p0, "{hz} Hz: the AI drives the kart on");
     }
+}
+
+/// Phase 11: alone on DOCK the player wins: the finish clip 3, then the
+/// results taunt (oracle: tools/oracle/xa_probe.py slot2 + the
+/// routes/tri_finish.json route and poke, the player first over the line
+/// at VB 2670: queue 0x8053, then 0xC0D0 = VOICES/WIN.XA channel 0 from
+/// LBA 202254, then the course track 0x10; the two faces over the results
+/// while it plays).
+#[test]
+fn a_win_queues_the_finish_clip_and_the_taunt() {
+    std::env::set_current_dir(oracle::repo_root()).unwrap();
+    let Ok(mut disc) = mr_disc::Disc::open_default() else {
+        eprintln!("skip: no disc");
+        return;
+    };
+    let mut s = mr_sim::session::Session::with_config(&mut disc, mr_sim::session::SessionConfig::dock_solo()).unwrap();
+    s.autopilot = true;
+    let mut t = 0;
+    while s.globals.mode != 10 {
+        s.tick(0).unwrap();
+        t += 1;
+        assert!(t < 9000, "the player did not finish");
+    }
+    use mr_sim::sound::XaReq;
+    assert_eq!(s.kart.race_pos, 1);
+    assert_eq!(s.globals.sound.xa, vec![XaReq::Clip { character: 0, n: 3 }, XaReq::Taunt]);
 }

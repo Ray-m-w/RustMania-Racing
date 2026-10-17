@@ -566,6 +566,22 @@ impl XaQueue {
         }
     }
 
+    /// A raw entry (flags included) after the last pending one-shot, then
+    /// the course track: FUN_800606D0's taunt (0xC000 | 0xD0 + n) and
+    /// FUN_8008C4AC's boss clip in game mode 7 (0x8000 | base).
+    pub fn request_entry(&mut self, entry: u16, course_music: Option<u16>) {
+        let i = self.free_slot();
+        if i == 3 {
+            return;
+        }
+        self.q[i] = Some(entry);
+        if i + 1 < 3 {
+            if let Some(m) = course_music {
+                self.q[i + 1] = Some(m);
+            }
+        }
+    }
+
     /// The race-load part of FUN_8008C4AC for a race entered from the menus
     /// (mode 0): a clip in progress is dropped with the queue; the course
     /// intro clip (once per course per power-on: the caller passes None

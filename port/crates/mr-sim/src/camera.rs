@@ -442,6 +442,10 @@ pub struct CameraKart {
     pub path_backward: u8,
     /// +0x490: the stunt course's strip quad (mode 3).
     pub strip: i16,
+    /// +0x438 / +0x43A: the ground probe's top and bottom (mode 7).
+    pub probe: [i16; 2],
+    /// +0x4F8: an object the kart is on (-1 none; mode 7).
+    pub on_object: i8,
 }
 
 impl CameraKart {
@@ -471,6 +475,8 @@ impl CameraKart {
             path_pt: g_i16(rec, 0x49A),
             path_backward: rec[0x4DF],
             strip: g_i16(rec, 0x490),
+            probe: [g_i16(rec, 0x438), g_i16(rec, 0x43A)],
+            on_object: rec[0x4F8] as i8,
         }
     }
 }
@@ -510,6 +516,26 @@ pub struct CameraGlobals {
     /// select (event 0x1E, game state 0xC: camera mode 5) looks at that
     /// world's film strip.
     pub menu_row: i8,
+    /// Phase 11: MEET THE MUPPETS (event 0x1E, game state 0xD: camera
+    /// mode 6), see `Gallery`.
+    pub gallery: Option<GalleryCam>,
+    /// Phase 11: TEST DRIVE (event 0x1E, game state 0xE: camera mode 7):
+    /// the course's grid slot 5 (DAT chunk 1, DAT units) when the grid has
+    /// at least 3 slots (*0x800D1C4C >= 6).
+    pub test_drive_slot: Option<[i32; 3]>,
+}
+
+/// What camera mode 6 (MEET THE MUPPETS, 0x80070F14) reads: the cursor
+/// (0x800B0E24 row, 0x800B0E25 column), the half sum of the two heights of
+/// the character under it (0x800AC038 + 4 c, two i16) and whether that
+/// character's voice clip is playing (0x800B0760 bit 0 and 0x800B074A ==
+/// the character: the eye moves in).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GalleryCam {
+    pub row: i8,
+    pub col: i8,
+    pub height: i32,
+    pub near: bool,
 }
 
 impl CameraGlobals {
@@ -530,6 +556,8 @@ impl CameraGlobals {
             num_karts: 6,
             cutscene_sync: false,
             menu_row: 0,
+            gallery: None,
+            test_drive_slot: None,
             scene_center: [0; 3],
         }
     }
@@ -555,6 +583,8 @@ impl CameraGlobals {
             num_karts: i16_at(0x800B_0DFE),
             cutscene_sync,
             menu_row: 0,
+            gallery: None,
+            test_drive_slot: None,
             scene_center: [
                 i32_at(0x800B_0B6C).wrapping_add(i32_at(0x800B_0B74)).wrapping_mul(16),
                 i32_at(0x800B_0B78).wrapping_add(i32_at(0x800B_0B7C)).wrapping_mul(16),
@@ -820,6 +850,14 @@ fn select_mode(cam: &mut CameraState, inp: &CameraInput) -> i16 {
     // (Session 7, menus).
     if g.event == 0x1E && g.game_state == 0xC {
         return 5;
+    }
+    // Phase 11: MEET THE MUPPETS (game state 0xD) is mode 6, its TEST
+    // DRIVE (0xE) mode 7 (0x800705D8..0x80070600).
+    if g.event == 0x1E && g.game_state == 0xD {
+        return 6;
+    }
+    if g.event == 0x1E && g.game_state == 0xE {
+        return 7;
     }
     // LAB_80070554 (phase 8): THE END (course 0x1D, game mode 0x15) orbits.
     if g.event == 0x1D && g.game_state == 0x15 {
@@ -1146,6 +1184,40 @@ pub fn tick(cam: &mut CameraState, inp: &CameraInput, t: &CameraTables, env: &mu
             let y = (g.menu_row as i32 * 10000 - 25000) * 0x20;
             goal = [0xA000, y, -0x28000];
             aim_at = [0xA000, y, 0x20000];
+            pitch_div = 8;
+            yaw_div = 8;
+        }
+        6 => {
+            // MEET THE MUPPETS (0x80070F14): in front of the character
+            // under the cursor, x = (col * 600 + 50000) * 32, y = (row *
+            // 750 - 750 - height) * 32, z -49856 (-41664 while its clip
+            // plays), looking along +z at (x, y, 0x20000); sp+0x48 = 8.
+            let gc = g.gallery.unwrap_or_default();
+            let x = (gc.col as i32 * 600 + 50000) * 0x20;
+            let y = (gc.row as i32 * 0x2EE - 0x2EE - gc.height) << 5;
+            goal = [x, y, if gc.near { -41664 } else { -49856 }];
+            aim_at = [x, y, 0x20000];
+            pitch_div = 8;
+            yaw_div = 8;
+        }
+        7 => {
+            // TEST DRIVE (0x80070FCC): looking at the kart (y raised by
+            // half its ground probe's span; past grid slot 5 the slot's
+            // height, lowered by 4 * the z distance short of it), the eye
+            // 3 * 0x1000 above and 3 * 0x4000 behind along -z (1 on an
+            // object); sp+0x48 = 8.
+            let half = (k.probe[0] as i32 - k.probe[1] as i32) / 2;
+            let y = match g.test_drive_slot {
+                None => k.pos[1].wrapping_add(half),
+                Some(p) => {
+                    let dz = (k.pos[2] >> 5).wrapping_sub(p[2]);
+                    let low = if dz > 0 { 0 } else { dz.wrapping_mul(4) };
+                    p[1].wrapping_mul(0x20).wrapping_add(half).wrapping_add(low)
+                }
+            };
+            let m = if k.on_object != -1 { 1 } else { 3 };
+            goal = [k.pos[0], y.wrapping_sub(m * 0x1000), k.pos[2].wrapping_sub(m * 0x4000)];
+            aim_at = [k.pos[0], y, k.pos[2]];
             pitch_div = 8;
             yaw_div = 8;
         }

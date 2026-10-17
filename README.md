@@ -1,9 +1,10 @@
 <div align="center">
 
-# Muppet RaceMania, in Rust
+# RustMania Racing
 
-**A from-scratch PC reimplementation of the 2000 PlayStation kart racer,
-written in Rust with the Bevy engine, checked tick for tick against the original.**
+**A from-scratch Rust reimplementation of *Muppet RaceMania*, the 2000
+PlayStation kart racer, built with the Bevy engine and checked tick for tick
+against the original.**
 
 <img src="docs/images/title.jpg" alt="The Muppet RaceMania title screen running in the port" width="860">
 

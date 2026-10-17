@@ -1,4 +1,4 @@
-# Muppet RaceMania: Rust + Bevy reimplementation
+# RustMania Racing: a Rust + Bevy reimplementation of Muppet RaceMania
 
 WHAT THIS IS (final state, 2026-10-17)
 A complete reimplementation of Muppet RaceMania (PS1, SLUS-01237) in Rust +

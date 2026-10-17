@@ -58,7 +58,8 @@ enum Rows {
 /// dv, rows), every FUN_8005E38C call of the case in order. Phase 14: every
 /// case (before: GALLERY, ISLAND, NEW_YORK, DISCO only): the arenas CANYON
 /// (5), LAB (0xE), T_SQUARE (0x13), the stunt courses
-/// 0xC, 0x16, 0x17 (its lifts' strips), 0x18, 0x19, and THE END (0x1D:
+/// MOUNTAIN (0xC), FUN (0x16), REST (0x17: its lifts' strips), DINER (0x18),
+/// MLABS (0x19), and THE END (0x1D:
 /// texture slot 2, the source below the rectangle).
 fn scrolls(course: u32) -> Vec<(usize, i32, i32, i32, i32, i32, i32, Rows)> {
     fn up(f: i32) -> usize {
@@ -189,15 +190,21 @@ fn step(
     let Some(mut tex) = tex else { return };
     // an fx capture replay carries the game's frame counter
     let captured = match (cap, rows) {
-        (Some(c), Some(mut r)) => r.u32_at(c.vb, 0x800B_0D90).map(|v| v as i32),
+        // (phase 14: less the captured dt, 3 in DISCO's heavy frames)
+        (Some(c), Some(mut r)) => r.u32_at(c.vb, 0x800B_0D90).map(|v| v as i32 - r.u32_at(c.vb, 0x800B_0AEC).map_or(2, |d| (d as i32).clamp(1, 4))),
         _ => None,
     };
     // The counter steps after the frame's draw (S4 HUD timing): the frame
     // on screen was textured with the value one race frame (dt) earlier.
+    // Phase 14 (DISCO's scrolls): FUN_8007916C's FUN_8007A9DC reads it
+    // before main()'s FUN_8005C2EC adds dt (0x80078B1C / 0x80078B24); oracle
+    // VRAM samples of DISCO's scrolled block = rows(counter before the step)
+    // on 10 of 15 reads, the other 5 one step either way where the counter
+    // and VRAM reads straddle a frame (tools/oracle/scroll_phase.py).
     // Side-by-sides against the oracle (VB 2510, 3010) put the item-box star
     // within one strip frame with this (two frames ahead without it).
     let f = match (&p.driver, captured) {
-        (_, Some(f)) => f - 2,
+        (_, Some(f)) => f,
         (crate::Driver::Sim(run), None) => run.session.globals.frame - run.session.globals.dt.max(1) as i32,
         // trace replays: the frame counter advances 2 per tick
         _ => (p.tick * 2) as i32 - 2,

@@ -2,7 +2,7 @@
 chosen VBlanks (the same run as capture_course.py, so the port can replay
 analysis/oracle/courses/NAME at the same moments).
 
-    python tools/oracle/visual_shots.py NAME OUTDIR VB[,VB...] [--gp0 VB]
+    python tools/oracle/visual_shots.py NAME OUTDIR VB[,VB...] [--gp0 VB] [--hold SPEC VB]
 
 Under capture.OracleLock: installs analysis/states/courses/NAME_menu.pst in
 the scratch slot 11 (DOCK: slot 1, read only, = analysis/oracle/start_probe's
@@ -34,7 +34,7 @@ def fwd(p):
     return os.path.abspath(p).replace("\\", "/")
 
 
-def run(name, outdir, vbs, gp0=()):
+def run(name, outdir, vbs, gp0=(), steps=None):
     os.makedirs(outdir, exist_ok=True)
     vbs = sorted(set(vbs) | set(gp0))
     log = []
@@ -42,7 +42,7 @@ def run(name, outdir, vbs, gp0=()):
         o, b = Oracle(), Bridge()
         slot = 1 if name == "DOCK" else gc.install(name, "menu", gc.SCRATCH)
         warm_up(o, b, slot)
-        b.arm_route([(s[0], active_high(s[1]), 0x80, 0x80, 0x80, 0x80) for s in ROUTE_STEPS],
+        b.arm_route([(s[0], active_high(s[1]), 0x80, 0x80, 0x80, 0x80) for s in (steps or ROUTE_STEPS)],
                     end_vb=max(vbs) + 60)
         g = b.restore_gen
         o.load_state(slot)
@@ -77,4 +77,10 @@ if __name__ == "__main__":
     a = sys.argv[1:]
     gp = [int(v) for i, x in enumerate(a) if x == "--gp0" for v in a[i + 1].split(",")]
     a = [x for i, x in enumerate(a) if x != "--gp0" and (i == 0 or a[i - 1] != "--gp0")]
-    run(a[0].upper(), a[1], [int(v) for v in a[2].split(",")] if len(a) > 2 else [], gp)
+    # phase 14: --hold SPEC VB as capture_course.py (the stunt courses' drive)
+    steps = None
+    if "--hold" in a:
+        i = a.index("--hold")
+        steps = ROUTE_STEPS + [[int(a[i + 2]), a[i + 1]]]
+        a = a[:i] + a[i + 3:]
+    run(a[0].upper(), a[1], [int(v) for v in a[2].split(",")] if len(a) > 2 else [], gp, steps)

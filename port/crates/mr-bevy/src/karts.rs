@@ -181,9 +181,11 @@ pub fn sync_rigs(
     mut mats: ResMut<Assets<StandardMaterial>>,
     mut tmats: ResMut<Assets<KartMaterial>>,
     roots: Query<(Entity, &KartRigRoot)>,
+    track: Option<Res<crate::TrackVis>>,
     mut commands: Commands,
 ) {
     let Some(mut tex) = tex else { return };
+    let mirror_course = track.is_some_and(|t| t.dat.chunks.iter().any(|c| c.id == 0x08));
     for (e, r) in roots.iter() {
         if !feed.now.iter().any(|k| k.slot == r.slot && k.character == r.character && k.vehicle == r.vehicle) {
             commands.entity(e).despawn();
@@ -200,10 +202,16 @@ pub fn sync_rigs(
         let parts: Vec<_> = t.parts.iter().map(|(id, m, s)| (*id, m.clone(), s.clone())).collect();
         let necks: Vec<Vec<PsxPoly>> = t.necks.clone();
         let slot = k.slot;
-        commands
-            .spawn((Transform::default(), Visibility::default(), KartRigRoot { slot, character: k.character, vehicle: k.vehicle }, crate::eyes::EyeMask::default()))
-            .with_children(|c| {
-                for ((model, part), ms, semi) in parts {
+        // phase 14: on a course with mirror walls (DAT chunk 0x08, the stunt
+        // courses) a second rig, the reflection FUN_8002976C draws
+        let mirrored = mirror_course.then_some(true).into_iter().chain(std::iter::once(false));
+        for mirror in mirrored {
+            let mut root = commands.spawn((Transform::default(), Visibility::default(), KartRigRoot { slot, character: k.character, vehicle: k.vehicle }, crate::eyes::EyeMask::default()));
+            if mirror {
+                root.insert((KartMirror, Visibility::Hidden));
+            }
+            root.with_children(|c| {
+                for ((model, part), ms, semi) in parts.iter().cloned() {
                     c.spawn((Transform::default(), Visibility::default(), RigPart { slot, model, part })).with_children(|c| {
                         for (mesh, mat) in ms {
                             let mat = own_material(&mats, &mut tmats, &mat);
@@ -232,6 +240,30 @@ pub fn sync_rigs(
                     }
                 }
             });
+        }
+    }
+}
+
+/// Phase 14: the root of a kart's reflection in a stunt course's mirror wall
+/// (FUN_80029F40 -> FUN_8002976C while +0x4F8 != -1): the kart drawn again
+/// with x (+0x4C2 = 2) or z (+0x4C2 = 0) mirrored about +0x39C and its
+/// matrices reflected; a floor plane (+0x4C2 = 1) draws nothing. Only near
+/// (the mirrored kart's LOD (|d| >> 10)^2 / 0x1200 < 0x10) and in view.
+#[derive(Component)]
+pub struct KartMirror;
+
+/// The reflection transform of a kart record (None: no reflection drawn),
+/// and the mirrored position (world units) for the LOD test.
+pub fn mirror_of(rec: &[u8]) -> Option<(Transform, [i32; 3])> {
+    if rec.len() < KART_LEN || rec[0x4F8] as i8 == -1 {
+        return None;
+    }
+    let at = i32::from_le_bytes(rec[0x39C..0x3A0].try_into().ok()?);
+    let p = [0, 4, 8].map(|o| i32::from_le_bytes(rec[o..o + 4].try_into().unwrap()));
+    match rec[0x4C2] {
+        0 => Some((Transform { translation: Vec3::new(0.0, 0.0, -2.0 * at as f32 / crate::UNITS), rotation: Quat::IDENTITY, scale: Vec3::new(1.0, 1.0, -1.0) }, [p[0], p[1], at.wrapping_mul(2).wrapping_sub(p[2])])),
+        2 => Some((Transform { translation: Vec3::new(2.0 * at as f32 / crate::UNITS, 0.0, 0.0), rotation: Quat::IDENTITY, scale: Vec3::new(-1.0, 1.0, 1.0) }, [at.wrapping_mul(2).wrapping_sub(p[0]), p[1], p[2]])),
+        _ => None,
     }
 }
 
@@ -357,7 +389,10 @@ pub fn place_rigs(
     feed: Res<KartFeed>,
     lib: Res<ModelLib>,
     time: Res<Time<Fixed>>,
-    mut parts: Query<(&RigPart, &mut Transform, &mut Visibility)>,
+    mut parts: Query<(&RigPart, &mut Transform, &mut Visibility), Without<KartMirror>>,
+    mut mirrors: Query<(&KartRigRoot, &mut Transform, &mut Visibility), (With<KartMirror>, Without<RigPart>)>,
+    cam: Query<&GlobalTransform, With<crate::ChaseCamera>>,
+    settings: Res<crate::settings::Settings>,
     necks: Query<&RigNeck>,
     mut meshes: ResMut<Assets<Mesh>>,
     lod: Option<Res<crate::effects::KartLodHidden>>,
@@ -374,6 +409,31 @@ pub fn place_rigs(
         let bit = |h: u8| (h as u32).checked_shr(r.slot as u32).unwrap_or(0) & 1 == 0;
         let want = crate::eyes::EyeMask(if bit(h1) && bit(h2) || !(bit(h1) || bit(h2)) { 3 } else if bit(h1) { 1 } else { 2 });
         m.set_if_neq(want);
+    }
+    // phase 14: the reflections (KartMirror), with the game's LOD test
+    // (faithful draw distance) against the chase camera's eye
+    let eye = cam.iter().next().map(|g| {
+        let t = g.translation() * crate::UNITS;
+        [t.x as i32, -t.y as i32, -t.z as i32]
+    });
+    let faithful = settings.faithful_draw_distance();
+    for (r, mut tr, mut vis) in mirrors.iter_mut() {
+        let m = feed.now.iter().find(|k| k.slot == r.slot).and_then(|k| mirror_of(&k.record));
+        let near = |p: [i32; 3]| {
+            !faithful
+                || eye.is_some_and(|e| {
+                    let d: [i64; 3] = std::array::from_fn(|i| (p[i].wrapping_sub(e[i]) >> 10) as i64);
+                    d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < 0x10 * 0x1200
+                })
+        };
+        let want = match m {
+            Some((t, p)) if near(p) => {
+                tr.set_if_neq(t);
+                Visibility::Inherited
+            }
+            _ => Visibility::Hidden,
+        };
+        vis.set_if_neq(want);
     }
     let mut xs: HashMap<u8, (Vec<kartmodel::PartXform>, Vec<kartmodel::PartXform>, &RigTemplate)> = HashMap::new();
     for k in &feed.now {

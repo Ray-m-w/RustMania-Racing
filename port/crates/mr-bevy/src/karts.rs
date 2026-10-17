@@ -201,7 +201,7 @@ pub fn sync_rigs(
         let necks: Vec<Vec<PsxPoly>> = t.necks.clone();
         let slot = k.slot;
         commands
-            .spawn((Transform::default(), Visibility::default(), KartRigRoot { slot, character: k.character, vehicle: k.vehicle }))
+            .spawn((Transform::default(), Visibility::default(), KartRigRoot { slot, character: k.character, vehicle: k.vehicle }, crate::eyes::EyeMask::default()))
             .with_children(|c| {
                 for ((model, part), ms, semi) in parts {
                     c.spawn((Transform::default(), Visibility::default(), RigPart { slot, model, part })).with_children(|c| {
@@ -361,10 +361,20 @@ pub fn place_rigs(
     necks: Query<&RigNeck>,
     mut meshes: ResMut<Assets<Mesh>>,
     lod: Option<Res<crate::effects::KartLodHidden>>,
+    mut roots: Query<(&KartRigRoot, &mut crate::eyes::EyeMask)>,
 ) {
     let a = time.overstep_fraction();
-    // the game's far-kart impostor replaces the model (effects / kartfx.rs)
-    let lod_hidden = lod.map(|l| l.0).unwrap_or(0);
+    // the game's far-kart impostor replaces the model (effects / kartfx.rs);
+    // phase 13: per eye in split screen (FUN_8002669C before each pass):
+    // hidden where both eyes draw the impostor, else shown in the eyes
+    // whose LOD is near (eyes.rs)
+    let (h1, h2) = lod.map(|l| (l.0, l.1)).unwrap_or((0, 0));
+    let lod_hidden = h1 & h2;
+    for (r, mut m) in roots.iter_mut() {
+        let bit = |h: u8| (h as u32).checked_shr(r.slot as u32).unwrap_or(0) & 1 == 0;
+        let want = crate::eyes::EyeMask(if bit(h1) && bit(h2) || !(bit(h1) || bit(h2)) { 3 } else if bit(h1) { 1 } else { 2 });
+        m.set_if_neq(want);
+    }
     let mut xs: HashMap<u8, (Vec<kartmodel::PartXform>, Vec<kartmodel::PartXform>, &RigTemplate)> = HashMap::new();
     for k in &feed.now {
         let Some(t) = lib.templates.get(&(k.character, k.vehicle)) else { continue };

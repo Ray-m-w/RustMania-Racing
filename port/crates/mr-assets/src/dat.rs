@@ -1398,6 +1398,23 @@ impl DrawParams {
         DrawParams { cd0: cd4, de8: cd4 - 0x180, b00: 1139 }
     }
 
+    /// FUN_8002E2F0(split) in full (phase 13): in a stunt course's race
+    /// (race type 3, game mode != 0) 0x952 with two players, else 5000 but
+    /// MOUNTAIN (0xC) and REST (0x17) 0x952; elsewhere flag 4: 0x952 / 0x600
+    /// split, else 5000 / 4000 split. cd0 = cd4, de8 = cd4 - 0x180.
+    pub fn race(flags: u16, course: u8, stunt_race: bool, split: bool) -> DrawParams {
+        let cd4 = if stunt_race {
+            if split || course == 0xC || course == 0x17 { 0x952 } else { 5000 }
+        } else if flags & 4 != 0 {
+            if split { 0x600 } else { 0x952 }
+        } else if split {
+            4000
+        } else {
+            5000
+        };
+        DrawParams { cd0: cd4, de8: cd4 - 0x180, b00: 1139 }
+    }
+
     /// The course flags u16 at 0x800ACB3A + 12 * course from the executable.
     pub fn course_flags(exe: &[u8], course: usize) -> Option<u16> {
         if exe.len() < 0x800 || &exe[0..8] != b"PS-X EXE" {

@@ -405,6 +405,24 @@ pub struct MapKart {
     pub character: u8,
     /// Kart +0x440: damage (race flag 8: a kart at 1000 is not shown).
     pub damage: i16,
+    /// Phase 13: the kart's place along a stunt strip, +0x490 * 0x80 +
+    /// +0x4A8 (FUN_80047F1C's progress bar draws every kart's).
+    pub strip: i32,
+}
+
+impl MapKart {
+    /// The fields from a 0x504-byte kart record.
+    pub fn from_record(r: &[u8]) -> MapKart {
+        MapKart {
+            x: le::i32(r, 0),
+            z: le::i32(r, 8),
+            heading: le::i16(r, 0xE),
+            flags: r[0x496],
+            character: r[0x4B2],
+            damage: le::i16(r, 0x440),
+            strip: le::i16(r, 0x490) as i32 * 0x80 + r[0x4A8] as i32,
+        }
+    }
 }
 
 /// Everything the item HUD reads, for one player kart.
@@ -444,6 +462,11 @@ pub struct ItemHud {
     /// The colour FUN_80049FD8 drew the damage gauge's heart with (three
     /// random bytes while +0x43E is 0x321..0x3E7); None = 0x80.
     pub gauge_rgb: Option<[u8; 3]>,
+    /// Phase 13: CHICKEN CHASE (game mode 0x14): the chicken's position
+    /// (0x800CB658 / 0x800CB660, world units) and its strip place
+    /// (0x800CB67C, -1 off a stunt course) for its icon on the minimap /
+    /// progress bar.
+    pub chicken: Option<([i32; 2], i32)>,
 }
 
 /// Kart record offsets the item HUD reads.
@@ -805,6 +828,15 @@ pub fn minimap(t: &ItemTables, s: &ItemHud) -> Vec<Prim> {
 /// target's point (DAT units x, z) and the course (its icon 0x800AC9C0 +
 /// 6 * course, sized with sin(frame % 0x21 * 0x40)), drawn after the karts.
 pub fn minimap_marked(t: &ItemTables, s: &ItemHud, target: Option<(i32, i32)>) -> Vec<Prim> {
+    minimap_full(t, s, target, false)
+}
+
+/// FUN_80048A0C in full (phase 13): `split` (0x800B0CA6, two players) puts
+/// the map at the split, its top at 0x78 - h / 2 (once, for both
+/// players); in CHICKEN CHASE (mode 0x14) the chicken's icon (9 x 9, slot
+/// 0x14 at (0xE0, 0x60) 0x1F x 0x1F, CLUT + 7, turning with sin(frame &
+/// 0x3F) / 0x60) after the karts and the target.
+pub fn minimap_full(t: &ItemTables, s: &ItemHud, target: Option<(i32, i32)>, split: bool) -> Vec<Prim> {
     let mut out = Vec::new();
     let c = s.course as usize;
     let use_table = t.course_flags.get(c).is_some_and(|f| f & 2 != 0);
@@ -820,7 +852,7 @@ pub fn minimap_marked(t: &ItemTables, s: &ItemHud, target: Option<(i32, i32)>) -
     let dx = (le::i32(m, 12) - x0).abs();
     let dz = (le::i32(m, 16) - z0).abs();
     let ox = 0x1E0 - w;
-    let oy = 0xE1 - h;
+    let oy = if split { 0x78 - (h >> 1) } else { 0xE1 - h };
     for (i, k) in s.karts.iter().enumerate() {
         // knocked out (race flag 8, battles): off the map
         if (s.mode == 2 || s.mode == 7 || s.race_flags & 8 != 0) && k.damage >= 1000 {
@@ -853,8 +885,18 @@ pub fn minimap_marked(t: &ItemTables, s: &ItemHud, target: Option<(i32, i32)>) -
         let my = oy - h * (pz - z0) / dz;
         out.extend(target_icon(t, s, mx, my));
     }
+    if let (0x14, Some((p, _))) = (s.mode, s.chicken) {
+        let mx = ox + w * ((p[0] >> 5) - x0) / dx;
+        let my = oy - h * ((p[1] >> 5) - z0) / dz;
+        out.extend(quad(t, s16(mx), s16(my), 9, 9, chicken_angle(t, s), 0xE0, 0x60, 0x1F, 0x1F, [0x80; 3], 0x14, 7, 0x60).map(Prim::Ft4));
+    }
     out.push(Prim::Sprt(sprt(ox, oy, u, v, w, h, [0x80; 3], 5, ((v >> 6) as u16) * 4 + (u >> 6) as u16, 0x60)));
     out
+}
+
+/// The chicken icon's turn: sin[(frame & 0x3F) * 0x40] / 0x60 (12 bits).
+fn chicken_angle(t: &ItemTables, s: &ItemHud) -> i32 {
+    ((t.sin((s.frame & 0x3F) * 0x40) as i16 as i32) / 0x60) & 0xFFF
 }
 
 /// ADVENTURE's target marker (FUN_80048A0C / FUN_80047F1C): the course's
@@ -943,23 +985,47 @@ pub fn progress_bar(t: &ItemTables, s: &ItemHud, sh: &crate::hud::StuntHud) -> V
 /// FUN_80047F1C with ADVENTURE's target marker (phase 6b): `marker` = the
 /// target's place on the strip, drawn after the kart's face.
 pub fn progress_bar_marked(t: &ItemTables, s: &ItemHud, sh: &crate::hud::StuntHud, marker: Option<i32>) -> Vec<Prim> {
-    let y = 0x1E;
+    progress_bar_full(t, s, sh, marker, false)
+}
+
+/// FUN_80047F1C in full (phase 13): every kart before 0x800B0DFE
+/// (`s.karts`; a human's face while not spinning, a kart with flags 0x60
+/// spinning: ADVENTURE's parked Doozer), `split` (two players) at y 0x78
+/// with player 1's face above the bar (anchor 4) and player 2's below
+/// (anchor 1, y - 1); CHICKEN CHASE's chicken at its strip place.
+pub fn progress_bar_full(t: &ItemTables, s: &ItemHud, sh: &crate::hud::StuntHud, marker: Option<i32>, split: bool) -> Vec<Prim> {
+    let y = if split { 0x78 } else { 0x1E };
     let mut out = Vec::new();
     let span = (sh.quads as i32) << 7;
-    let c = sh.character;
-    if sh.kart_flags & 0x60 == 0 {
-        if sh.quads != 0 && s.race_time % 0x96 <= 0x4A && span != 0 {
-            let x = (sh.progress * 0x100) / span + 0x80;
-            out.extend(quad_f(t, x, y, 8, 8, 0, 0, t.chr(c, 0x12), t.chr(c, 0x13), 0x2F, 0x2F, [0x80; 3], t.chr(c, 0x14), 0, 0x60).map(Prim::Ft4));
+    let karts: Vec<(i32, u8, u8, i16)> = if s.karts.is_empty() {
+        vec![(sh.progress, sh.kart_flags as u8, sh.character, 0)]
+    } else {
+        s.karts.iter().map(|k| (k.strip, k.flags, k.character, k.damage)).collect()
+    };
+    for (i, &(prog, flags, c, damage)) in karts.iter().enumerate() {
+        if (s.mode == 2 && damage >= 1000) || span == 0 {
+            continue;
         }
-    } else if span != 0 {
-        let a = (t.sin((s.frame & 0x3F) * 0x40) as i16 as i32) / 0x60;
-        let ang = (if sh.kart_flags & 0x20 == 0 { -a } else { a }) & 0xFFF;
-        let x = (sh.progress * 0x100) / span + 0x80;
-        out.extend(quad_f(t, x, y, 10, 10, 0, ang, t.chr(c, 0x12), t.chr(c, 0x13), 0x2F, 0x2F, [0x80; 3], t.chr(c, 0x14), 0, 0x60).map(Prim::Ft4));
+        let x = (prog * 0x100) / span + 0x80;
+        if flags & 0x60 == 0 {
+            if i >= s.players.max(1) || sh.quads == 0 || s.race_time % 0x96 > 0x4A {
+                continue;
+            }
+            let (f, yy) = if !split { (0, y) } else if i == 0 { (4, y) } else { (1, y - 1) };
+            out.extend(quad_f(t, x, yy, 8, 8, f, 0, t.chr(c, 0x12), t.chr(c, 0x13), 0x2F, 0x2F, [0x80; 3], t.chr(c, 0x14), 0, 0x60).map(Prim::Ft4));
+        } else {
+            let a = (t.sin((s.frame & 0x3F) * 0x40) as i16 as i32) / 0x60;
+            let ang = (if flags & 0x20 == 0 { -a } else { a }) & 0xFFF;
+            out.extend(quad_f(t, x, y, 10, 10, 0, ang, t.chr(c, 0x12), t.chr(c, 0x13), 0x2F, 0x2F, [0x80; 3], t.chr(c, 0x14), 0, 0x60).map(Prim::Ft4));
+        }
     }
     if let (Some(p), true) = (marker, span != 0) {
         out.extend(target_icon(t, s, (p << 8) / span + 0x80, y));
+    }
+    if let (0x14, Some((_, place)), true) = (s.mode, s.chicken, span != 0) {
+        if place != -1 {
+            out.extend(quad(t, s16((place << 8) / span) + 0x80, y, 9, 9, chicken_angle(t, s), 0xE0, 0x60, 0x1F, 0x1F, [0x80; 3], 0x14, 7, 0x60).map(Prim::Ft4));
+        }
     }
     let mark = |i: usize| if (i as u8) < sh.n_marks && span != 0 { Some((sh.marks[i] << 8) / span + 0x80) } else { None };
     let rev = sh.race_flags & 4 != 0;
@@ -1292,10 +1358,9 @@ pub fn race_hud(ht: &HudTables, t: &ItemTables, st: &crate::hud::HudState, s: &I
 /// the half's edge at the split), "LAP n/m" (x 0x68), the weapon slots, the
 /// damage gauge (battles / race flag 8), CHICKEN CHASE's count and its
 /// WINNER / LOSER result, and the result panels around the half's centre.
-/// Not ported for split screen (deferred, docs/spec/hud.md): FUN_80049440
-/// (SPECIAL MOVE, the direction arrow, banners), the turbo meter
-/// FUN_8004A310, the chicken icon FUN_8002FD04, the minimap. `chicken`:
-/// 0x800B0EBD in mode 0x14.
+/// Phase 13: the minimap at the split with the chicken's icon (FUN_80048A0C
+/// with 0x800B0CA6) or a stunt course's progress bar at y 0x78
+/// (FUN_80047F1C). `chicken`: 0x800B0EBD in mode 0x14.
 pub fn two_hud(ht: &HudTables, t: &ItemTables, st: [&crate::hud::HudState; 2], s: [&ItemHud; 2], chicken: u8, press_start: Option<i32>) -> Vec<Prim> {
     let mut out = Vec::new();
     let sprites = |v: Vec<crate::hud::Sprite>| v.into_iter().map(Prim::Sprt);
@@ -1389,6 +1454,18 @@ pub fn two_hud(ht: &HudTables, t: &ItemTables, st: [&crate::hud::HudState; 2], s
                 out.extend(sprites(ht.text(ht.fmt_count.replacen("%i", &n.to_string(), 1).as_bytes(), 0x50, y, 2, Size::Large, if n == 0 { 7 } else { 5 }, 0x60)));
             }
             _ => {}
+        }
+    }
+    // FUN_80051698 (phase 13): once racing, the minimap at the split, or
+    // on a stunt course with a strip the progress bar at y 0x78
+    if c70 == 0 && !matches!(st0.mode, 0 | 10 | 0x11 | 0x12) {
+        match &st0.stunt {
+            Some(sh) => {
+                if sh.quads != 0 {
+                    out.extend(progress_bar_full(t, s[0], sh, None, true));
+                }
+            }
+            None => out.extend(minimap_full(t, s[0], None, true)),
         }
     }
     // FUN_80050F64 (split screen: y 0x78)

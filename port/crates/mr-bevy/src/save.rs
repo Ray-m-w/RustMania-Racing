@@ -31,6 +31,9 @@ pub struct SaveState {
     pub tables: SaveTables,
     /// Where the block came from: "file", "card", "new".
     pub source: &'static str,
+    /// Phase 13: the game mode at the last race tick (the race end's
+    /// difficulty step runs once, on the change to the results).
+    last_mode: i16,
 }
 
 fn may_write() -> bool {
@@ -48,13 +51,13 @@ fn load() -> SaveState {
         SaveBlock::new_game(tables, &mut rand)
     };
     if cfg!(test) {
-        return SaveState { block: new_game(&tables), written: None, path: None, tables, source: "new" };
+        return SaveState { block: new_game(&tables), written: None, path: None, tables, source: "new", last_mode: 0 };
     }
     if let Some(p) = path.as_ref().filter(|p| p.exists()) {
         match std::fs::read(p).map_err(|e| e.to_string()).and_then(|b| SaveBlock::from_file(&b)) {
             Ok(block) => {
                 info!("save: loaded {}", p.display());
-                return SaveState { written: Some(block.clone()), block, path, tables, source: "file" };
+                return SaveState { written: Some(block.clone()), block, path, tables, source: "file", last_mode: 0 };
             }
             Err(e) => {
                 let bad = p.with_extension("bin.bad");
@@ -69,10 +72,10 @@ fn load() -> SaveState {
     for c in cards {
         if let Some(block) = std::fs::read(&c).ok().and_then(|b| SaveBlock::from_card(&b)) {
             info!("save: imported this game's save from the memory card {} (read only)", c.display());
-            return SaveState { block, written: None, path, tables, source: "card" };
+            return SaveState { block, written: None, path, tables, source: "card", last_mode: 0 };
         }
     }
-    SaveState { block: new_game(&tables), written: None, path, tables, source: "new" }
+    SaveState { block: new_game(&tables), written: None, path, tables, source: "new", last_mode: 0 }
 }
 
 fn state() -> &'static Mutex<SaveState> {
@@ -188,22 +191,35 @@ pub fn between_courses() -> Option<u8> {
 pub fn race_tick(s: &mr_sim::session::Session, place: Option<(usize, usize)>, plain_race: bool) -> bool {
     with(|st| {
         let before = st.block.clone();
+        // Every won bit and the battle record need one player
+        // (0x800B0CA6 == 0: FUN_80082708, FUN_80081DD8, FUN_8007916C).
+        let solo = s.config().players < 2;
+        // FUN_8007916C as the last human goes out (game mode 1 -> 10): a
+        // 1-player plain race steps the AI catch-up scale (FUN_800823D4)
+        if st.last_mode == 1 && s.globals.mode == 10 && solo && s.globals.race_flags == 0 && s.globals.challenge == 0 && !s.config().demo {
+            st.block.race_end_difficulty(s.kart.race_pos as u8);
+            info!("save: AI catch-up scale {}", st.block.difficulty());
+        }
+        st.last_mode = s.globals.mode;
         if let Some((w, t)) = place {
-            st.block.lap_record(w, t, s.globals.lap_record, s.kart.character, s.kart.vehicle);
+            // the holder: the kart that set it (0x800B0816; player 2 in a
+            // split-screen race)
+            let holder = if s.globals.record_kart == 1 { s.others.first().map(|o| &o.kart).unwrap_or(&s.kart) } else { &s.kart };
+            st.block.lap_record(w, t, s.globals.lap_record, holder.character, holder.vehicle);
             // 0x800832EC: player 1 first over the line; the bit is set as the
             // kart finishes (race flags 0, or DISCO's 8)
-            if plain_race && s.globals.challenge == 0 && s.kart.finished == 1 && s.kart.race_pos == 1 && s.world.course.length.is_some() && st.block.race_won(w, t) {
+            if solo && plain_race && s.globals.challenge == 0 && s.kart.finished == 1 && s.kart.race_pos == 1 && s.world.course.length.is_some() && st.block.race_won(w, t) {
                 info!("save: course {w}/{t} won");
             }
             // The stunt trial (FUN_80081DD8 @0x8008209C): through the last
             // gate with no race flags (not out of time): the won bit
-            if s.globals.race_type == 3 && s.globals.race_flags == 0 && s.globals.challenge == 0 && s.kart.finished == 2 && s.world.course.gates.as_ref().is_some_and(|g| g.len() >= 4 && s.kart.gate as usize == g.len() / 2) && st.block.race_won(w, t) {
+            if solo && s.globals.race_type == 3 && s.globals.race_flags == 0 && s.globals.challenge == 0 && s.kart.finished == 2 && s.world.course.gates.as_ref().is_some_and(|g| g.len() >= 4 && s.kart.gate as usize == g.len() / 2) && st.block.race_won(w, t) {
                 info!("save: stunt course {w}/{t} finished");
             }
             // A battle won (FUN_8007916C @0x80079398): a 1-player battle
             // with no race flags, the player the last kart standing
             // (not a BOSS CHALLENGE: game mode 7 sets flag 0x100 instead)
-            if s.globals.race_type == 2 && s.globals.race_flags == 0 && s.globals.challenge == 0 && !s.config().boss_challenge && s.kart.finished == 1 && s.kart.race_pos == 1 && st.block.race_won(w, t) {
+            if solo && s.globals.race_type == 2 && s.globals.race_flags == 0 && s.globals.challenge == 0 && !s.config().boss_challenge && s.kart.finished == 1 && s.kart.race_pos == 1 && st.block.race_won(w, t) {
                 info!("save: arena {w}/{t} won");
             }
         }

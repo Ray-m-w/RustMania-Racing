@@ -111,6 +111,9 @@ pub struct HudOverlay {
     /// Phase 11: TEST DRIVE: the item HUD (FUN_8004F688 case 0xE) under
     /// the overlay.
     pub test_drive: bool,
+    /// Phase 13: no widescreen anchoring (the two-player character
+    /// select's columns keep their 4:3 places, centred).
+    pub centred: bool,
 }
 
 #[derive(Resource)]
@@ -392,14 +395,7 @@ fn items_from_player(
     }
     let karts = s
         .kart_records()
-        .map(|(_, _, _, r)| MapKart {
-            x: i32::from_le_bytes([r[0], r[1], r[2], r[3]]),
-            z: i32::from_le_bytes([r[8], r[9], r[10], r[11]]),
-            heading: i16::from_le_bytes([r[0xE], r[0xF]]),
-            flags: r[0x496],
-            character: r[0x4B2],
-            damage: i16::from_le_bytes([r[0x440], r[0x441]]),
-        })
+        .map(|(_, _, _, r)| MapKart::from_record(r))
         .collect();
     let mut cam = [[0i16; 3]; 3];
     for (r, row) in s.camera.matrix.iter().enumerate() {
@@ -423,6 +419,7 @@ fn items_from_player(
         players: g.humans.max(1) as usize,
         race_flags: g.race_flags,
         gauge_rgb: g.hud_gauge_rgb,
+        chicken: (g.race_flags & 0x40 != 0).then(|| ([g.chicken.pos[0], g.chicken.pos[2]], g.chicken.strip)),
     });
 }
 
@@ -481,7 +478,7 @@ fn capture_items(m: &mr_sim::mem::Mem) -> ItemHud {
     let karts = (0..n)
         .map(|k| {
             let a = k0 + 0x504 * k;
-            MapKart { x: m.i32(a), z: m.i32(a + 8), heading: m.i16(a + 0xE), flags: m.u8(a + 0x496), character: m.u8(a + 0x4B2), damage: m.i16(a + 0x440) }
+            MapKart::from_record(m.slice(a, 0x504))
         })
         .collect();
     let mut cam = [[0i16; 3]; 3];
@@ -504,6 +501,7 @@ fn capture_items(m: &mr_sim::mem::Mem) -> ItemHud {
         players: m.i16(0x800B_0E28).max(1) as usize,
         race_flags: m.u16(0x800B_07E2),
         gauge_rgb: None,
+        chicken: (m.u16(0x800B_07E2) & 0x40 != 0).then(|| ([m.i32(0x800C_B658), m.i32(0x800C_B660)], m.i32(0x800C_B67C))),
     }
 }
 
@@ -539,17 +537,11 @@ fn replay_items(p: &crate::Player, pulse: &mut (HudPulse, i32)) -> Option<ItemHu
         special: (-1, 0, 0),
         cam,
         kart: rec.clone(),
-        karts: vec![MapKart {
-            x: i32::from_le_bytes([r[0], r[1], r[2], r[3]]),
-            z: i32::from_le_bytes([r[8], r[9], r[10], r[11]]),
-            heading: i16::from_le_bytes([r[0xE], r[0xF]]),
-            flags: r[0x496],
-            character: r[0x4B2],
-            damage: i16::from_le_bytes([r[0x440], r[0x441]]),
-        }],
+        karts: vec![MapKart::from_record(r)],
         players: 1,
         race_flags: 0,
         gauge_rgb: None,
+        chicken: None,
     })
 }
 
@@ -841,7 +833,7 @@ fn draw(
         return;
     }
     let n = prims.len();
-    let shifts = anchor_shifts(&prims, res.extra);
+    let shifts = if overlay.centred && overlay.prims.is_some() { vec![0.0; n] } else { anchor_shifts(&prims, res.extra) };
     res.fx.clear();
     for (i, p) in prims.iter().enumerate() {
         let z = (n - i) as f32 * 0.01;

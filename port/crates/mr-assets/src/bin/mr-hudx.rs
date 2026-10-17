@@ -127,7 +127,7 @@ pub fn states_of(c: &Cap, vb: u32, slot: u32) -> (HudState, ItemHud, [(u16, u16)
     let karts = (0..n)
         .map(|k| {
             let r = c.read(vb, KART0 + k * 0x504, 0x504);
-            MapKart { x: le::i32(&r, 0), z: le::i32(&r, 8), heading: le::i16(&r, 0xE), flags: r[0x496], character: r[0x4B2], damage: le::i16(&r, 0x440) }
+            MapKart::from_record(&r)
         })
         .collect();
     let cm = c.read(vb, 0x800C_4F40 + 0x70 * slot, 0x12);
@@ -151,6 +151,8 @@ pub fn states_of(c: &Cap, vb: u32, slot: u32) -> (HudState, ItemHud, [(u16, u16)
         players: i16at(0x800B_0E28).max(0) as usize,
         race_flags: if slot > 0 || i16at(0x800B_0E28) > 1 { le::u16(&c.read(vb, 0x800B_07E2, 2), 0) } else { 0 },
         gauge_rgb: None,
+        // phase 13: the chicken's icon (0x800CB658 / 0x800CB660 / 0x800CB67C)
+        chicken: (le::u16(&c.read(vb, 0x800B_07E2, 2), 0) & 0x40 != 0 && c.has(0x800C_B658, 0x28)).then(|| (le::i32(&c.read(vb, 0x800C_B658, 4), 0), le::i32(&c.read(vb, 0x800C_B660, 4), 0), le::i32(&c.read(vb, 0x800C_B67C, 4), 0))).map(|(x, z, p)| ([x, z], p)),
     };
     // The stunt trial (race type 3): its HUD state (the course record from
     // MR_HUDX_RECORD: the captures do not hold the save block).
@@ -244,6 +246,23 @@ pub fn states_of(c: &Cap, vb: u32, slot: u32) -> (HudState, ItemHud, [(u16, u16)
             let f88 = c.read(vb, 0x800B_0F88, 1)[0] != 0 || c.read(vb, 0x800B_0EBE, 1)[0] != 0;
             st.results = Some(mr_assets::hud::Results { press_start: f88, frame: i32at(0x800B_0AF0), ..Default::default() });
         }
+    }
+    // Phase 13: a race's results (mode 10, race type 1, no other result
+    // kind above): FUN_8004CEA0's inputs from the kart record and the
+    // winner's (the place-1 kart; the record flash needs the save block:
+    // MR_HUDX_RECORD as above, else off)
+    let rec = &it.kart;
+    if st.mode == 10 && st.results.is_none() && st.stunt.is_none() && st.battle.is_none() && st.adventure.is_none() && rec[0x4C7] != 0 {
+        let laps = st.laps.clamp(1, 99);
+        let n = (i16at(0x800B_0DFE) + i16at(0x800B_0C98)).clamp(1, 6) as u32;
+        let leader = (0..n).map(|k| c.read(vb, KART0 + k * 0x504, 0x504)).find(|r| r[0x4BE] == 1).unwrap_or_else(|| rec.clone());
+        let mut r = mr_assets::hud::Results::from_records(rec, &leader, laps);
+        let f88 = c.read(vb, 0x800B_0F88, 1)[0] != 0 || c.read(vb, 0x800B_0EBE, 1)[0] != 0;
+        r.press_start = f88;
+        r.frame = i32at(0x800B_0AF0);
+        let record: i32 = std::env::var("MR_HUDX_RECORD").ok().and_then(|v| v.parse().ok()).unwrap_or(i32::MIN);
+        r.best_lap_record = r.best_lap > 0 && r.best_lap <= record && le::u16(&c.read(vb, 0x800B_07E2, 2), 0) & 2 == 0;
+        st.results = Some(r);
     }
     let tab = c.read(vb, 0x800D_FF00, 0x160);
     let mut slots = [(0u16, 0u16); 32];

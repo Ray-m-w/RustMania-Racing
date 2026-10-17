@@ -156,10 +156,25 @@ pub fn session_config(logic_hz: u8, character: u8, vehicle: u8) -> mr_sim::sessi
                 cfg.lap_record = s.block.record(w, t);
             }
             cfg.laps = s.block.laps(0).max(1) as i16;
+            // phase 13: the AI catch-up scale 0x800E039A (FUN_800823D4
+            // steps it after each 1-player race)
+            cfg.difficulty = s.block.difficulty();
             if let Some(l) = crate::league::League::load().filter(|l| l.started) {
                 cfg.lineup = Some(l.lineup());
                 // row 12: the tie-break race's field
                 cfg.opponents = l.opponents();
+                // phase 13: TOURNAMENT - 2 PLAYERS: both players (split
+                // screen) and the league's third kart; a tie-break the
+                // tied players only (a tie with player 2 alone: player 2
+                // drives kart 0 with its pad, input.rs)
+                let humans: Vec<u8> = if l.tie_break() { l.tie_humans() } else { (0..l.players.max(1)).collect() };
+                if let Some(&h0) = humans.first() {
+                    (cfg.character, cfg.vehicle) = l.karts[h0 as usize];
+                }
+                if humans.len() == 2 {
+                    cfg.players = 2;
+                    (cfg.p2_character, cfg.p2_vehicle) = l.karts[humans[1] as usize];
+                }
                 cfg.draw_grid = true;
                 // 0x800B07E4 (a BATTLE LEAGUE battle ends with FUN_80082450)
                 cfg.league = true;

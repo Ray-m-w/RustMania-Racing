@@ -115,6 +115,10 @@ pub struct FxPrim {
     pub smooth: bool,
     /// A triangle (v[0..3]); v[3] is ignored.
     pub tri: bool,
+    /// Phase 13 (split screen): drawn in its own `view` only (one eye's
+    /// selection, eyes.rs); else a `VIEW_MAIN` / `VIEW_FAR` primitive is
+    /// drawn by player 2's view too.
+    pub eye_only: bool,
     /// Not drawn when the triangle v0, v1, v2 faces away from the eye (the
     /// game's NCLIP test: front = counter-clockwise seen from a y-up view).
     pub cull_back: bool,
@@ -137,6 +141,7 @@ impl Default for FxPrim {
             smooth: false,
             tri: false,
             cull_back: false,
+            eye_only: false,
         }
     }
 }
@@ -146,8 +151,9 @@ pub const VIEW_MAIN: u8 = 0;
 pub const VIEW_FAR: u8 = 1;
 pub const VIEW_HUD: u8 = 2;
 /// Phase 7: player 2's view and far pass (split screen): they draw the
-/// primitives queued for `VIEW_MAIN` / `VIEW_FAR`, sorted from their own
-/// eye. Camera-facing billboards keep player 1's orientation (deferred).
+/// primitives queued for `VIEW_MAIN` / `VIEW_FAR` (unless `eye_only`) and
+/// their own, sorted from their own eye; phase 13: the effects of each eye
+/// are its own (effects.rs `FxFrame::second`, facing its camera).
 pub const VIEW_MAIN2: u8 = 3;
 pub const VIEW_FAR2: u8 = 4;
 const VIEWS: usize = 5;
@@ -370,11 +376,13 @@ fn mark_camera(
 
 /// Semi-transparent scene / model polygons (psxmesh::FxSemi) of every
 /// visible entity, placed by its transform.
-fn push_semi(q: Query<(&crate::psxmesh::FxSemi, &GlobalTransform, &InheritedVisibility)>, mut prims: ResMut<FxPrims>) {
-    for (semi, gt, vis) in q.iter() {
+fn push_semi(q: Query<(&crate::psxmesh::FxSemi, &GlobalTransform, &InheritedVisibility, Option<&crate::eyes::EyeMask>)>, mut prims: ResMut<FxPrims>) {
+    for (semi, gt, vis, eye) in q.iter() {
         if !vis.get() {
             continue;
         }
+        // phase 13: one eye's selection (eyes.rs) in that view alone
+        let eye = eye.map_or(3, |e| e.0 & 3);
         let a = gt.affine();
         let identity = a == bevy::math::Affine3A::IDENTITY;
         for p in semi.0.iter() {
@@ -384,6 +392,12 @@ fn push_semi(q: Query<(&crate::psxmesh::FxSemi, &GlobalTransform, &InheritedVisi
                     v.pos = a.transform_point3(v.pos);
                 }
                 q.center = a.transform_point3(q.center);
+            }
+            if eye != 3 {
+                q.eye_only = true;
+                if eye == 2 {
+                    q.view = if q.view == VIEW_FAR { VIEW_FAR2 } else { VIEW_MAIN2 };
+                }
             }
             prims.list.push(q);
         }
@@ -436,7 +450,10 @@ fn build_frame(
         let mut order: Vec<(i8, f32, usize)> = list
             .iter()
             .enumerate()
-            .filter(|(_, p)| p.view as usize == if vi == VIEW_MAIN2 as usize { VIEW_MAIN as usize } else if vi == VIEW_FAR2 as usize { VIEW_FAR as usize } else { vi })
+            .filter(|(_, p)| {
+                let v = p.view as usize;
+                v == vi || (!p.eye_only && ((vi == VIEW_MAIN2 as usize && v == VIEW_MAIN as usize) || (vi == VIEW_FAR2 as usize && v == VIEW_FAR as usize)))
+            })
             .filter(|(_, p)| !p.cull_back || (p.v[1].pos - p.v[0].pos).cross(p.v[2].pos - p.v[0].pos).dot(eye - p.v[0].pos) >= 0.0)
             .map(|(i, p)| (p.bucket, (p.center - eye).dot(fwd) - p.depth_pull, i))
             .collect();

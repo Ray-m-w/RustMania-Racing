@@ -215,18 +215,30 @@ pub fn update_shadows(
     }
     let karts = kart_records(&feed);
     let a = time.overstep_fraction();
-    for (k, prev) in &karts {
-        let Some(rec) = shadow_record(k, &st.sin).filter(|r| r.visible(eye)) else { continue };
-        // Display interpolation like the kart model: lerp the corners from
-        // the previous tick's record.
-        let prev = prev.and_then(|k| shadow_record(k, &st.sin)).unwrap_or(rec);
-        let corners = record_corners;
-        let (c0, c1) = (corners(&prev), corners(&rec));
-        let pos: [Vec3; 4] = std::array::from_fn(|i| c0[i].lerp(c1[i], a));
-        let Some((prim, z, colour)) = shadow_prim(&rec, pos, eye, cm, &st.slot) else { continue };
-        prims.list.push(prim);
-        if std::env::var("MRM_SHADOW_DEBUG").is_ok() {
-            eprintln!("shadow tick {} rec {:?} z {} colour {}", p.tick, rec, z, colour);
+    // phase 13: split screen: FUN_8002ADA8 runs in each eye's pass (its
+    // cull, fade and facing from that camera; eyes.rs)
+    let eyes: Vec<(([i32; 3], [i32; 9]), Option<u8>)> = match p.pose.cam2 {
+        Some(c2) => vec![((eye, cm), Some(crate::psxfx::VIEW_MAIN)), (c2, Some(crate::psxfx::VIEW_MAIN2))],
+        None => vec![((eye, cm), None)],
+    };
+    for ((eye, cm), view) in eyes {
+        for (k, prev) in &karts {
+            let Some(rec) = shadow_record(k, &st.sin).filter(|r| r.visible(eye)) else { continue };
+            // Display interpolation like the kart model: lerp the corners from
+            // the previous tick's record.
+            let prev = prev.and_then(|k| shadow_record(k, &st.sin)).unwrap_or(rec);
+            let corners = record_corners;
+            let (c0, c1) = (corners(&prev), corners(&rec));
+            let pos: [Vec3; 4] = std::array::from_fn(|i| c0[i].lerp(c1[i], a));
+            let Some((mut prim, z, colour)) = shadow_prim(&rec, pos, eye, cm, &st.slot) else { continue };
+            if let Some(v) = view {
+                prim.view = v;
+                prim.eye_only = true;
+            }
+            prims.list.push(prim);
+            if std::env::var("MRM_SHADOW_DEBUG").is_ok() {
+                eprintln!("shadow tick {} rec {:?} z {} colour {}", p.tick, rec, z, colour);
+            }
         }
     }
 }

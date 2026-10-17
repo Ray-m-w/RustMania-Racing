@@ -51,19 +51,35 @@ pub fn far_cut(flags: u8, draw: &mr_assets::dat::DrawParams) -> f32 {
 
 /// One pushed copy of each (StandardMaterial, push) pair.
 #[derive(Default)]
-pub struct PushCache(HashMap<(AssetId<StandardMaterial>, u32, u32), Handle<PushMaterial>>);
+pub struct PushCache(HashMap<(AssetId<StandardMaterial>, u32, u32, u32), Handle<PushMaterial>>);
 
 impl PushCache {
-    pub fn get(&mut self, std: &Assets<StandardMaterial>, push: &mut Assets<PushMaterial>, h: &Handle<StandardMaterial>, units: f32, far: f32) -> Handle<PushMaterial> {
+    /// `far` / `far2`: the cut with one player / in split screen (phase
+    /// 13: FUN_8002E2F0(1)'s distances; `split_far` switches them).
+    pub fn get(&mut self, std: &Assets<StandardMaterial>, push: &mut Assets<PushMaterial>, h: &Handle<StandardMaterial>, units: f32, far: f32, far2: f32) -> Handle<PushMaterial> {
         self.0
-            .entry((h.id(), units.to_bits(), far.to_bits()))
+            .entry((h.id(), units.to_bits(), far.to_bits(), far2.to_bits()))
             .or_insert_with(|| {
                 let mut base = std.get(h).cloned().unwrap_or_default();
                 // the push replaces the ground list's constant depth bias
                 base.depth_bias = 0.0;
-                push.add(ExtendedMaterial { base, extension: OtPush { p: Vec4::new(units, far, 0.0, 0.0) } })
+                // p = (push, active cut, split cut, one-player cut)
+                push.add(ExtendedMaterial { base, extension: OtPush { p: Vec4::new(units, far, far2, far) } })
             })
             .clone()
+    }
+}
+
+/// Phase 13: the far cut of every pushed material follows split screen
+/// (`Split`): the split distances while two players race.
+fn split_far(split: Res<crate::Split>, mut mats: ResMut<Assets<PushMaterial>>, mut last: Local<bool>) {
+    if split.0 == *last {
+        return;
+    }
+    *last = split.0;
+    for (_, m) in mats.iter_mut() {
+        let p = &mut m.extension.p;
+        p.y = if split.0 { p.z } else { p.w };
     }
 }
 
@@ -72,6 +88,6 @@ pub struct ScenePushPlugin;
 impl Plugin for ScenePushPlugin {
     fn build(&self, app: &mut App) {
         bevy::asset::load_internal_asset!(app, OT_PUSH_SHADER, "ot_push.wgsl", Shader::from_wgsl);
-        app.add_plugins(MaterialPlugin::<PushMaterial>::default());
+        app.add_plugins(MaterialPlugin::<PushMaterial>::default()).add_systems(Update, split_far);
     }
 }

@@ -27,6 +27,7 @@ mod paths;
 mod sfx;
 mod animtex;
 mod effects;
+mod eyes;
 mod psxfx;
 mod kartfx;
 mod pickupshadow;
@@ -185,13 +186,17 @@ pub struct TrackVis {
     pub info: scene::LayerInfo,
     /// The course's draw distances (FUN_8002e2f0, 1-player race).
     pub draw: mr_assets::dat::DrawParams,
+    /// Phase 13: player 2's visibility zone and the split screen's draw
+    /// distances (FUN_8002E2F0(1)).
+    pub zone2: usize,
+    pub draw2: mr_assets::dat::DrawParams,
 }
 
 fn select_objects(
     p: Res<Player>,
     settings: Res<settings::Settings>,
     mut vis: ResMut<TrackVis>,
-    mut q: Query<(&TrackObject, &mut Visibility)>,
+    mut q: Query<(&TrackObject, &mut Visibility, &mut eyes::EyeMask)>,
     mut cams: Query<(Entity, &mut Camera, &Projection, &Msaa), With<ChaseCamera>>,
     mut commands: Commands,
     mut far_done: Local<bool>,
@@ -219,8 +224,9 @@ fn select_objects(
     let frontend = title || ending::on();
     if !settings.faithful_draw_distance() && !frontend {
         if !*full_done {
-            for (o, mut v) in q.iter_mut() {
+            for (o, mut v, mut m) in q.iter_mut() {
                 *v = if scene::full_view_object(&vis.dat, &vis.info, o.0) { Visibility::Inherited } else { Visibility::Hidden };
+                m.set_if_neq(eyes::EyeMask(3));
             }
             *full_done = true;
         }
@@ -230,26 +236,44 @@ fn select_objects(
     if !p.is_changed() {
         return;
     }
+    // phase 13: split screen: each eye selects as the game's own pass does
+    // (FUN_80029F40 after FUN_8002E2F0(1): the split distances, the
+    // frustum's vertical row x 3/2; eyes.rs)
+    let split = p.pose.cam2.filter(|_| !frontend);
     // DAT units = world >> 5 toward zero (the game's scratch copy of eye / 32).
-    let eye = [eye_w[0] / 32, eye_w[1] / 32, eye_w[2] / 32];
-    let cam = [
-        [cm[0] as i16, cm[1] as i16, cm[2] as i16],
-        [cm[3] as i16, cm[4] as i16, cm[5] as i16],
-        [cm[6] as i16, cm[7] as i16, cm[8] as i16],
-    ];
-    let prev = vis.zone;
-    let zone = vis.dat.vis_zone(eye, prev);
-    vis.zone = zone;
-    let mask = match vis.dat.vis_node(zone, eye) {
-        Some(node) => vis.dat.vis[zone].mask_at(node),
-        None => vec![0xFF; 256],
+    let eye_of = |eye_w: [i32; 3]| [eye_w[0] / 32, eye_w[1] / 32, eye_w[2] / 32];
+    let cam_of = |cm: [i32; 9], split: bool| {
+        let mut c = [
+            [cm[0] as i16, cm[1] as i16, cm[2] as i16],
+            [cm[3] as i16, cm[4] as i16, cm[5] as i16],
+            [cm[6] as i16, cm[7] as i16, cm[8] as i16],
+        ];
+        if split {
+            for v in c[1].iter_mut() {
+                *v = ((*v as i32 * 3) / 2) as i16;
+            }
+        }
+        c
     };
-    let mut drawn: std::collections::HashSet<usize> = vis
-        .dat
-        .drawn(eye, cam, &mask, if frontend { title::TITLE_DRAW } else { vis.draw })
-        .iter()
-        .map(|d| d.object)
-        .collect();
+    let select = |vis: &mut TrackVis, eye: [i32; 3], cam: [[i16; 3]; 3], second: bool| -> std::collections::HashSet<usize> {
+        let prev = if second { vis.zone2 } else { vis.zone };
+        let zone = vis.dat.vis_zone(eye, prev);
+        if second {
+            vis.zone2 = zone;
+        } else {
+            vis.zone = zone;
+        }
+        let mask = match vis.dat.vis_node(zone, eye) {
+            Some(node) => vis.dat.vis[zone].mask_at(node),
+            None => vec![0xFF; 256],
+        };
+        let draw = if frontend { title::TITLE_DRAW } else if split.is_some() { vis.draw2 } else { vis.draw };
+        vis.dat.drawn(eye, cam, &mask, draw).iter().map(|d| d.object).collect()
+    };
+    let eye = eye_of(eye_w);
+    let mut drawn = select(&mut vis, eye, cam_of(cm, split.is_some()), false);
+    let zone = vis.zone;
+    let mut drawn2 = split.map(|(e2, cm2)| select(&mut vis, eye_of(e2), cam_of(cm2, true), true));
     // row 12: the course select's props and "?" marks (FUN_80091B8C places
     // and scales them; the game draws its special-slot objects wherever
     // they are put)
@@ -257,6 +281,9 @@ fn select_objects(
         for m in run.session.menu_slots.iter().filter(|m| m.scale != 0) {
             if let Some(Some(o)) = vis.dat.special.get(m.slot as usize) {
                 drawn.insert(*o);
+                if let Some(d2) = drawn2.as_mut() {
+                    d2.insert(*o);
+                }
             }
         }
     }
@@ -264,11 +291,15 @@ fn select_objects(
         let n = q.iter().count();
         eprintln!("tick {} eye {:?} zone {} node {:?} drawn {} of {} entities", p.tick, eye, zone, vis.dat.vis_node(zone, eye), drawn.len(), n);
     }
-    for (o, mut v) in q.iter_mut() {
-        let want = if drawn.contains(&o.0) { Visibility::Inherited } else { Visibility::Hidden };
+    for (o, mut v, mut m) in q.iter_mut() {
+        let (want, mask) = match &drawn2 {
+            Some(d2) => crate::eyes::split_vis(drawn.contains(&o.0), d2.contains(&o.0)),
+            None => (if drawn.contains(&o.0) { Visibility::Inherited } else { Visibility::Hidden }, 3),
+        };
         if *v != want {
             *v = want;
         }
+        m.set_if_neq(crate::eyes::EyeMask(mask));
     }
 }
 
@@ -531,6 +562,7 @@ fn main() {
     app
         .insert_resource(Time::<Fixed>::from_hz(tick_hz as f64))
         .add_plugins(scene::ObjectsPlugin)
+        .add_plugins(eyes::EyesPlugin)
         // The game's frame clear on DOCK: GP0 fill 0x025F1300 = rgb (0, 19, 95)
         // at the start of every race frame (oracle GP0 capture, VB 2500); seen
         // wherever no polygon covers the screen, under the additive water.
@@ -620,6 +652,8 @@ fn setup_camera(mut c: Commands, settings: Res<settings::Settings>, mut meshes: 
         settings.msaa(),
         Transform::from_xyz(0.0, 3.0, 8.0),
         ChaseCamera,
+        // (phase 13: + what player 1's view alone shows, eyes.rs)
+        bevy::camera::visibility::RenderLayers::from_layers(&[0, scene::EYE1_LAYER]),
     ));
     // Phase 7: player 2's view (split screen), off until a two-player
     // session: its chase camera (order 3) over its own far pass (order 2:
@@ -634,6 +668,7 @@ fn setup_camera(mut c: Commands, settings: Res<settings::Settings>, mut meshes: 
         Transform::from_xyz(0.0, 3.0, 8.0),
         ChaseCamera2,
         View2,
+        bevy::camera::visibility::RenderLayers::from_layers(&[0, scene::EYE2_LAYER]),
     ))
     .with_children(|ch| {
         ch.spawn((
@@ -643,7 +678,7 @@ fn setup_camera(mut c: Commands, settings: Res<settings::Settings>, mut meshes: 
             Tonemapping::None,
             settings.msaa(),
             Transform::default(),
-            bevy::camera::visibility::RenderLayers::from_layers(&[scene::FAR_LAYER, scene::SKY2_LAYER]),
+            bevy::camera::visibility::RenderLayers::from_layers(&[scene::FAR_LAYER, scene::SKY2_LAYER, scene::FAR_EYE2_LAYER]),
             View2,
             scene::FarCamera2,
         ));
@@ -931,6 +966,9 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
     let buttons = latch.take_for_tick();
     // phase 7: player 2's pad (split screen)
     let buttons2 = latch.take2_for_tick();
+    // phase 13: a 2-player league's tie-break with player 2 alone tied:
+    // player 2 drives kart 0
+    let (buttons, buttons2) = if front.page == menus::Page::None && front.league.as_ref().is_some_and(|l| l.tie_break() && l.tie_humans() == [1]) { (buttons2, 0) } else { (buttons, buttons2) };
     p.prev = p.pose;
     let tick = p.tick;
     let mut pose = p.pose;
@@ -1018,7 +1056,8 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
                     // phase 7: two players (split screen): player 2's pick,
                     // the 2-player laps (0x800E038D)
                     let mut cfg = cfg;
-                    if front.players == 2 {
+                    // (a league's players come from the league: courses.rs)
+                    if front.players == 2 && !cfg.league {
                         cfg.players = 2;
                         cfg.p2_character = front.p2_character;
                         cfg.p2_vehicle = front.p2_vehicle;
@@ -1091,8 +1130,14 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
                     // row 12: the standings' line-up (menus.rs)
                     let recs = menus::lineup_records(lg, page, s, front.vb);
                     feed.set_records(recs.iter().enumerate().map(|(i, r)| (32 + i as u8, &r[..])));
+                } else if show {
+                    // phase 13: FUN_8006B1C8's karts in front of the camera
+                    // (both pickers' with two players)
+                    let p2 = (front.players == 2).then(|| menus::p2_record(s, front.p2_character, front.p2_vehicle)).flatten();
+                    let recs = menus::char_select_records(&front, s, p2.as_deref());
+                    feed.set_records(recs.iter().map(|(slot, r)| (*slot, &r[..])));
                 } else {
-                    feed.set_records(s.kart_records().filter(|_| show).map(|(slot, _, _, r)| (slot as u8, r)));
+                    feed.set_records(std::iter::empty());
                 }
                 hud_g.results = None;
                 pose = pacing::session_pose(s);

@@ -18,7 +18,14 @@ use bevy::camera::visibility::RenderLayers;
 pub const FAR_LAYER: usize = 1;
 /// The sky dome (player 1's far pass) and player 2's copy (phase 7).
 pub const SKY_LAYER: usize = 6;
-pub const SKY2_LAYER: usize = 7;
+/// (phase 13: 12, not 7 = loading.rs's card layer)
+pub const SKY2_LAYER: usize = 12;
+/// Phase 13 (split screen, eyes.rs): what one player's view alone shows,
+/// near (the chase cameras) and in the far pass.
+pub const EYE1_LAYER: usize = 13;
+pub const EYE2_LAYER: usize = 14;
+pub const FAR_EYE1_LAYER: usize = 15;
+pub const FAR_EYE2_LAYER: usize = 16;
 
 /// Phase 7: player 2's sky copy and far-pass camera.
 #[derive(Component)]
@@ -44,7 +51,7 @@ pub fn setup_far_pass(commands: &mut Commands, main: Entity, cam: &mut Camera, p
             proj.clone(),
             bevy::core_pipeline::tonemapping::Tonemapping::None,
             Transform::default(),
-            RenderLayers::from_layers(&[FAR_LAYER, SKY_LAYER]),
+            RenderLayers::from_layers(&[FAR_LAYER, SKY_LAYER, FAR_EYE1_LAYER]),
             // same sample count as the main camera: they share the target
             msaa,
             FarCamera,
@@ -163,7 +170,11 @@ pub fn setup(
     let info = classify_layers(&dat, &sin, &dslots);
     let course_bias = dat::course_depth_bias(&exe, course.id as usize).unwrap_or(0);
     let mut push_cache = crate::scenepush::PushCache::default();
-    let draw = dat::DrawParams::course_flags(&exe, course.id as usize).map(dat::DrawParams::race_1p).unwrap_or(dat::DrawParams::DOCK_1P);
+    // FUN_8002E2F0 (phase 13: a stunt course's own rule; split screen in
+    // select_objects)
+    let flags = dat::DrawParams::course_flags(&exe, course.id as usize);
+    let draw = flags.map(|f| dat::DrawParams::race(f, course.id, course.race_type == 3, false)).unwrap_or(dat::DrawParams::DOCK_1P);
+    let draw2 = flags.map(|f| dat::DrawParams::race(f, course.id, course.race_type == 3, true)).unwrap_or(draw);
     if let Some(path) = crate::settings::arg_value("--layer-report") {
         let _ = std::fs::write(&path, layer_report(&dat, &sin, &dslots, &info));
     }
@@ -180,7 +191,7 @@ pub fn setup(
             let far = i >= dat.layer0_count;
             let push = if !far && crate::scenepush::enabled() { crate::scenepush::push_units(dat::lod_bias(course_bias, dat.desc(o).b_lo)) } else { 0.0 };
             if let Some(p) = crate::parts::build(&dat, o, &sin, &dslots, push) {
-                commands.spawn((Transform::default(), Visibility::default(), crate::TrackObject(i), p));
+                commands.spawn((Transform::default(), Visibility::default(), crate::TrackObject(i), crate::eyes::EyeMask::default(), p));
             }
             continue;
         }
@@ -207,17 +218,15 @@ pub fn setup(
         let push = (!far && crate::scenepush::enabled())
             .then(|| crate::scenepush::push_units(dat::lod_bias(course_bias, dat.desc(o).b_lo)) + if ground { 0.02 } else { 0.0 });
         // faithful draw distance: the layer-0 renderer's per-polygon far cut
-        let far_cut = if crate::settings::Settings::global().faithful_draw_distance() && !crate::title::on_title() {
-            crate::scenepush::far_cut(o.loaded_flags(), &draw)
-        } else {
-            0.0
-        };
+        let faithful = crate::settings::Settings::global().faithful_draw_distance() && !crate::title::on_title();
+        let far_cut = if faithful { crate::scenepush::far_cut(o.loaded_flags(), &draw) } else { 0.0 };
+        let far_cut2 = if faithful { crate::scenepush::far_cut(o.loaded_flags(), &draw2) } else { 0.0 };
         let semi = psxmesh::semi_prims_pulled(&polys, view, if ground { -1 } else { 0 }, 0.01 - push.unwrap_or(0.0), world);
         let parts: Vec<_> = parts
             .into_iter()
-            .map(|(mesh, mat)| (mesh, push.map(|u| push_cache.get(&mats, &mut pmats, &mat, u, far_cut)).ok_or(mat)))
+            .map(|(mesh, mat)| (mesh, push.map(|u| push_cache.get(&mats, &mut pmats, &mat, u, far_cut, far_cut2)).ok_or(mat)))
             .collect();
-        let mut e = commands.spawn((Transform::default(), Visibility::default(), crate::TrackObject(i)));
+        let mut e = commands.spawn((Transform::default(), Visibility::default(), crate::TrackObject(i), crate::eyes::EyeMask::default()));
         if let Some(m) = mover {
             e.insert((crate::movers::pose_transform(&m, None).unwrap_or_default(), m));
         }
@@ -252,7 +261,7 @@ pub fn setup(
                 let polys = banner_polys(&b, i, &sin, BANNER_PHASE_ROW0, tex_key);
                 let parts = psxmesh::build_cached(&polys, &mut tex, &mut images, &mut meshes, &mut mats, &mut cache, world);
                 for (mesh, mat) in parts {
-                    commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mat), Transform::default(), Visibility::Hidden, BannerMesh(i)));
+                    commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mat), Transform::default(), Visibility::Hidden, BannerMesh(i), crate::eyes::EyeMask::default()));
                     mesh_handles.push((i, mesh));
                 }
             }
@@ -265,7 +274,7 @@ pub fn setup(
         commands.insert_resource(crate::kartshadow::ShadowState::new(SinTable(sin.0.clone()), slot));
     }
 
-    commands.insert_resource(crate::TrackVis { dat, zone: 0, info, draw });
+    commands.insert_resource(crate::TrackVis { dat, zone: 0, zone2: 0, info, draw, draw2 });
 
     // Sky dome (DOCK.AXE): gouraud quads drawn around the eye with zero
     // translation (FUN_80034AE4), i.e. directions only. Rendered as a big
@@ -484,7 +493,7 @@ pub fn update_banners(
     settings: Res<crate::settings::Settings>,
     st: Option<ResMut<BannerState>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut q: Query<(&BannerMesh, &mut Visibility)>,
+    mut q: Query<(&BannerMesh, &mut Visibility, &mut crate::eyes::EyeMask)>,
 ) {
     // (no banner on the frontend course: the title, title.rs)
     let Some(mut st) = st else { return };
@@ -507,13 +516,20 @@ pub fn update_banners(
         }
     }
     let eye = p.pose.cam.map(|(e, _)| [e[0] / 32, e[1] / 32, e[2] / 32]);
+    // phase 13: player 2's eye in split screen (eyes.rs)
+    let eye2 = p.pose.cam2.map(|(e, _)| [e[0] / 32, e[1] / 32, e[2] / 32]);
     let full = !settings.faithful_draw_distance();
-    for (b, mut v) in q.iter_mut() {
-        let show = full || eye.is_some_and(|e| st.banners.visible(b.0, e));
-        let want = if show { Visibility::Inherited } else { Visibility::Hidden };
+    for (b, mut v, mut m) in q.iter_mut() {
+        let s1 = full || eye.is_some_and(|e| st.banners.visible(b.0, e));
+        let s2 = eye2.map(|e| full || st.banners.visible(b.0, e));
+        let (want, mask) = match s2 {
+            Some(s2) => crate::eyes::split_vis(s1, s2),
+            None => (if s1 { Visibility::Inherited } else { Visibility::Hidden }, 3),
+        };
         if *v != want {
             *v = want;
         }
+        m.set_if_neq(crate::eyes::EyeMask(mask));
     }
 }
 

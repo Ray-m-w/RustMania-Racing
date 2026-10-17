@@ -115,12 +115,41 @@ fn prims(p: &PartsObj, right: Vec3, up: Vec3, fwd: Vec3, out: &mut Vec<FxPrim>) 
     }
 }
 
-fn draw(q: Query<(&PartsObj, &InheritedVisibility)>, cam: Query<&Transform, With<crate::ChaseCamera>>, mut fx: ResMut<FxPrims>) {
+#[allow(clippy::type_complexity)]
+fn draw(
+    q: Query<(&PartsObj, &InheritedVisibility, Option<&crate::eyes::EyeMask>)>,
+    cam: Query<&Transform, With<crate::ChaseCamera>>,
+    cam2: Query<(&Transform, &Camera), (With<crate::ChaseCamera2>, Without<crate::ChaseCamera>)>,
+    mut fx: ResMut<FxPrims>,
+) {
     let Ok(ct) = cam.single() else { return };
-    let (right, up, fwd) = (ct.rotation * Vec3::X, ct.rotation * Vec3::Y, ct.rotation * -Vec3::Z);
-    for (p, vis) in q.iter() {
-        if vis.get() {
+    // phase 13: split screen: each eye's selection, facing its own camera
+    // (the game's pass per camera; eyes.rs)
+    let c2 = cam2.single().ok().filter(|(_, c)| c.is_active).map(|(t, _)| *t);
+    let axes = |t: &Transform| (t.rotation * Vec3::X, t.rotation * Vec3::Y, t.rotation * -Vec3::Z);
+    for (p, vis, eye) in q.iter() {
+        if !vis.get() {
+            continue;
+        }
+        let mask = eye.map_or(3, |e| e.0 & 3);
+        let Some(t2) = c2.as_ref() else {
+            let (right, up, fwd) = axes(ct);
             prims(p, right, up, fwd, &mut fx.list);
+            continue;
+        };
+        for (t, bit, two) in [(ct, 1u8, false), (t2, 2, true)] {
+            if mask & bit == 0 {
+                continue;
+            }
+            let (right, up, fwd) = axes(t);
+            let n = fx.list.len();
+            prims(p, right, up, fwd, &mut fx.list);
+            for q in fx.list[n..].iter_mut() {
+                q.eye_only = true;
+                if two {
+                    q.view = if q.view == crate::psxfx::VIEW_FAR { crate::psxfx::VIEW_FAR2 } else { crate::psxfx::VIEW_MAIN2 };
+                }
+            }
         }
     }
 }

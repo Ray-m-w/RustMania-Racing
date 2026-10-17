@@ -122,17 +122,28 @@ pub fn draw(
         let Some(s) = scales(&p, cap.as_deref(), rows.as_deref_mut()) else { return };
         *cache = (key, s);
     }
-    for ps in &sh.0 {
-        let mut rec = ps.rec;
-        rec.scale = cache.1.get(ps.pickup).copied().unwrap_or(0);
-        if !rec.visible(eye) {
-            continue;
-        }
-        if let Some((prim, z, c)) = shadow_prim(&rec, record_corners(&rec), eye, cm, &st.slot) {
-            if std::env::var("MRM_SHADOW_DEBUG").is_ok() {
-                eprintln!("pickup shadow {} key {} {:?} z {} colour {}", ps.pickup, key, rec, z, c);
+    // phase 13: per eye in split screen (eyes.rs)
+    let eyes: Vec<(([i32; 3], [i32; 9]), Option<u8>)> = match p.pose.cam2 {
+        Some(c2) => vec![((eye, cm), Some(crate::psxfx::VIEW_MAIN)), (c2, Some(crate::psxfx::VIEW_MAIN2))],
+        None => vec![((eye, cm), None)],
+    };
+    for ((eye, cm), view) in eyes {
+        for ps in &sh.0 {
+            let mut rec = ps.rec;
+            rec.scale = cache.1.get(ps.pickup).copied().unwrap_or(0);
+            if !rec.visible(eye) {
+                continue;
             }
-            prims.list.push(prim);
+            if let Some((mut prim, z, c)) = shadow_prim(&rec, record_corners(&rec), eye, cm, &st.slot) {
+                if std::env::var("MRM_SHADOW_DEBUG").is_ok() {
+                    eprintln!("pickup shadow {} key {} {:?} z {} colour {}", ps.pickup, key, rec, z, c);
+                }
+                if let Some(v) = view {
+                    prim.view = v;
+                    prim.eye_only = true;
+                }
+                prims.list.push(prim);
+            }
         }
     }
 }

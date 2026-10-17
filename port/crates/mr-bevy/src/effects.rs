@@ -82,6 +82,11 @@ pub struct FxFrame {
     /// The eye (world units) the flats are culled against.
     pub eye: [i32; 3],
     pub manual: bool,
+    /// Phase 13 (split screen): player 2's eye, selected and drawn as the
+    /// game's second pass does (eyes.rs): the shared particles and sparks,
+    /// its own pickups / chicken / Doozer goals / kart effects and
+    /// impostors, flats culled at its eye; drawn facing camera 2.
+    pub second: Option<Box<FxFrame>>,
 }
 
 /// A particle sprite definition (exe 0x800ACF40 -> 12+ bytes each).
@@ -209,7 +214,7 @@ pub struct FxCamera {
 /// (bit = slot), with `faithful_draw_distance`: kart LOD +0x4B4 >= 0x10
 /// (karts.rs hides those models).
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
-pub struct KartLodHidden(pub u8);
+pub struct KartLodHidden(pub u8, pub u8);
 
 /// Everything drawn from one kart record: the special glow and the inline
 /// status billboards (kart_effects), the status shapes (FUN_80037B80's
@@ -579,8 +584,8 @@ pub(crate) fn capture_source(
             eprintln!("decal vb {} {:?}", cap.vb, d);
         }
     }
-    if hidden.0 != h {
-        hidden.0 = h;
+    if (hidden.0, hidden.1) != (h, h) {
+        *hidden = KartLodHidden(h, h);
     }
     if std::env::var("MRM_FX_DEBUG").is_ok() {
         for b in &out.billboards {
@@ -594,7 +599,7 @@ pub(crate) fn capture_source(
 /// with the parked Doozer still in the race (kart 1, +0x496 bit 0x40), each
 /// Doozer goal (challenge objects 0x800B0EBC.. 0x800B0B98 of them) within
 /// 20000 view units of the camera shows two additive quads 0x100 x 0x100
-/// (texture slot 0x15 at 0, 0, 0x3F x 0x3F; tpage abr 1), red and blue,
+/// (texture slot 0x15 at 0, 0, 0x3F x 0x3F; tpage abr 1), red and green,
 /// turning with the camera roll and the frame counter, 0x200 apart.
 fn doozer_goals(t: &FxTables, s: &mr_sim::session::Session, cam: FxCamera, frame: i32, out: &mut Vec<Billboard>) {
     let g = &s.globals;
@@ -613,7 +618,36 @@ fn doozer_goals(t: &FxTables, s: &mr_sim::session::Session, cam: FxCamera, frame
         if !(near(pt[0], cam.eye[0]) && near(pt[2], cam.eye[2]) && near(pt[1], cam.eye[1])) {
             continue;
         }
-        for (rgb, ang) in [([0x80, 0, 0], a), ([0, 0, 0x80], (a + 0x200) & 0xFFF)] {
+        // (red, then green: FUN_800362D4(x, y, z, 0x80, 0, 0, 0, 0x80, 0);
+        // phase 13, oracle adventure/goal GP0)
+        for (rgb, ang) in [([0x80, 0, 0], a), ([0, 0x80, 0], (a + 0x200) & 0xFFF)] {
+            out.push(Billboard { pos: [pt[0] << 5, pt[1] << 5, pt[2] << 5], hw: 0x100, hh: 0x100, angle: ang, anchor: 0, flat: false, u: 0, v: 0, uw: 0x3F, vh: 0x3F, tpage: tp, clut: cl, rgb, semi: true, abr: 1, bias: 0 });
+        }
+    }
+}
+
+/// Phase 13: FUN_8007E21C's second FUN_800362D4 list: the stunt courses'
+/// paired triggers (chunk 0x0D, 0x800D1C7C; 0x800B0C68 = count / 2 when the
+/// count is a multiple of 4: MOUNTAIN, DINER): at each pair's first point
+/// within 20000 view units of the eye the same two turning additive quads
+/// as the Doozer's goal, blue (0, 0, 0x80) and yellow (0x80, 0x80, 0).
+/// Then the third list: the one-way triggers (0x800D1C9C, count
+/// 0x800B0DC6; DOCK's warps), at each record's first point, the same
+/// colours.
+fn trigger_marks(t: &FxTables, s: &mr_sim::session::Session, cam: FxCamera, frame: i32, out: &mut Vec<Billboard>) {
+    let paired: Vec<[i32; 3]> = match s.world.course.paired.as_ref().filter(|l| l.len() & 3 == 0 && l.len() >= 4) {
+        Some(l) => (0..l.len() / 2).map(|i| l[2 * i]).collect(),
+        None => Vec::new(),
+    };
+    let pts = paired.into_iter().chain(s.world.course.triggers.iter().map(|tr| tr.pos));
+    let near = |p: i32, c: i32| (p.wrapping_sub(c >> 5) as u32).wrapping_add(20000) < 0x9C41;
+    let a = (cam.roll - (frame & 0x7F) * 0x20) & 0xFFF;
+    let (tp, cl) = t.slot_attr(0x15, 0, 0x20);
+    for pt in pts {
+        if !(near(pt[0], cam.eye[0]) && near(pt[2], cam.eye[2]) && near(pt[1], cam.eye[1])) {
+            continue;
+        }
+        for (rgb, ang) in [([0, 0, 0x80], a), ([0x80, 0x80, 0], (a + 0x200) & 0xFFF)] {
             out.push(Billboard { pos: [pt[0] << 5, pt[1] << 5, pt[2] << 5], hw: 0x100, hh: 0x100, angle: ang, anchor: 0, flat: false, u: 0, v: 0, uw: 0x3F, vh: 0x3F, tpage: tp, clut: cl, rgb, semi: true, abr: 1, bias: 0 });
         }
     }
@@ -632,6 +666,8 @@ pub struct FxSource {
     recs: Vec<(usize, Vec<u8>)>,
     frame: i32,
     cam: FxCamera,
+    /// Phase 13: player 2's camera (split screen).
+    cam2: Option<FxCamera>,
     /// The courses' moving scenery and weather (movers.rs).
     scenery: crate::movers::SceneryFrame,
 }
@@ -647,6 +683,7 @@ impl FxSource {
             recs: s.kart_records().map(|(slot, _, _, r)| (slot, r.to_vec())).collect(),
             frame: s.globals.frame,
             cam: FxCamera { roll: s.camera.roll as i32, yaw: s.camera.yaw as i32, eye: s.camera.pos },
+            cam2: s.camera2.as_ref().filter(|_| s.globals.split_screen != 0).map(|c| FxCamera { roll: c.roll as i32, yaw: c.yaw as i32, eye: c.pos }),
             scenery: crate::movers::SceneryFrame::of(s),
         }
     }
@@ -718,6 +755,9 @@ fn interp_source(a: &FxSource, b: &FxSource, t: f32, ma: &mut Mem, mb: &mut Mem)
         }
     }
     out.cam.eye = lerp3(a.cam.eye, b.cam.eye, t);
+    if let (Some(ca), Some(cb), Some(co)) = (a.cam2, b.cam2, out.cam2.as_mut()) {
+        co.eye = lerp3(ca.eye, cb.eye, t);
+    }
     // items: written to game memory; projectiles in flight in both move
     a.items.write(ma);
     b.items.write(mb);
@@ -821,24 +861,39 @@ pub(crate) fn session_source(
         out.flats = f.list.iter().filter(|f| f.life != 0).copied().collect();
     }
     out.eye = cam.eye;
-    items_from_mem(&t, m, cam, src.frame, Some(s.globals.split_screen != 0 || s.globals.race_type == 3), &mut out.billboards);
-    doozer_goals(&t, s, cam, src.frame, &mut out.billboards);
-    chicken(&t, s, cam, &mut out.billboards);
-    let mut h = 0u8;
-    for (slot, rec) in &src.recs {
-        let w = &s.world;
-        let face = |p: u32| w.face_index(p).and_then(|i| w.ter.faces.get(i)).map(|f| f.normal);
-        if kart_all(&t, rec, cam, src.frame, settings.faithful_draw_distance(), &face, &mut out) {
-            h |= 1 << slot;
+    // (phase 13: the split screen's second eye shares the particle and
+    // spark lists; what each pass selects from its own eye follows)
+    let shared = (out.billboards.clone(), out.streaks.clone(), out.flats.clone());
+    let w = &s.world;
+    let face = |p: u32| w.face_index(p).and_then(|i| w.ter.faces.get(i)).map(|f| f.normal);
+    let narrow = Some(s.globals.split_screen != 0 || s.globals.race_type == 3);
+    let faithful = settings.faithful_draw_distance();
+    let eye_pass = |cam: FxCamera, m: &Mem, out: &mut FxFrame| -> u8 {
+        items_from_mem(&t, m, cam, src.frame, narrow, &mut out.billboards);
+        doozer_goals(&t, s, cam, src.frame, &mut out.billboards);
+        trigger_marks(&t, s, cam, src.frame, &mut out.billboards);
+        chicken(&t, s, cam, &mut out.billboards);
+        let mut h = 0u8;
+        for (slot, rec) in &src.recs {
+            if kart_all(&t, rec, cam, src.frame, faithful, &face, out) {
+                h |= 1 << slot;
+            }
         }
+        h
+    };
+    let h = eye_pass(cam, m, &mut out);
+    let mut h2 = h;
+    if let Some(cam2) = src.cam2 {
+        let mut o2 = FxFrame { billboards: shared.0, streaks: shared.1, flats: shared.2, eye: cam2.eye, ..Default::default() };
+        h2 = eye_pass(cam2, m, &mut o2);
+        out.second = Some(Box::new(o2));
     }
-    {
-        let w = &s.world;
-        let face = |p: u32| w.face_index(p).and_then(|i| w.ter.faces.get(i)).map(|f| f.normal);
-        crate::kartfx::projectile_decals(&t.kart, m, &face, &mut out.decals);
+    crate::kartfx::projectile_decals(&t.kart, m, &face, &mut out.decals);
+    if let Some(o2) = out.second.as_mut() {
+        crate::kartfx::projectile_decals(&t.kart, m, &face, &mut o2.decals);
     }
-    if hidden.0 != h {
-        hidden.0 = h;
+    if (hidden.0, hidden.1) != (h, h2) {
+        *hidden = KartLodHidden(h, h2);
     }
     // MRM_FX_LAG: per frame, the player kart's displayed position (karts.rs:
     // the feed endpoints at the overstep) minus the position the effects use
@@ -870,10 +925,38 @@ const S: f32 = 1.0 / crate::UNITS;
 
 /// Billboards and streaks -> PS1 primitives for the effects pass (psxfx.rs:
 /// blending in the game's colour space, depth-tested against the scene).
-pub(crate) fn draw(fx: Res<FxFrame>, t: Option<Res<FxTables>>, p: Res<crate::Player>, mut prims: ResMut<FxPrims>, cam: Query<&Transform, With<crate::ChaseCamera>>) {
+#[allow(clippy::type_complexity)]
+pub(crate) fn draw(
+    fx: Res<FxFrame>,
+    t: Option<Res<FxTables>>,
+    p: Res<crate::Player>,
+    mut prims: ResMut<FxPrims>,
+    cam: Query<&Transform, With<crate::ChaseCamera>>,
+    cam2: Query<&Transform, (With<crate::ChaseCamera2>, Without<crate::ChaseCamera>)>,
+) {
     let Ok(ct) = cam.single() else { return };
+    let t = t.as_deref();
+    let n0 = prims.list.len();
+    draw_eye(&fx, t, p.pose.cam, ct, &mut prims.list);
+    // phase 13: split screen: each eye's own primitives in its own view
+    if let (Some(f2), Ok(ct2)) = (fx.second.as_deref(), cam2.single()) {
+        for q in prims.list[n0..].iter_mut() {
+            q.eye_only = true;
+        }
+        let n1 = prims.list.len();
+        draw_eye(f2, t, p.pose.cam2, ct2, &mut prims.list);
+        for q in prims.list[n1..].iter_mut() {
+            q.view = crate::psxfx::VIEW_MAIN2;
+            q.eye_only = true;
+        }
+    }
+}
+
+/// One eye's billboards, streaks, list quads, flats and decals, facing the
+/// camera at `ct` (`pose`: that camera's eye and matrix, for the decals).
+fn draw_eye(fx: &FxFrame, t: Option<&FxTables>, pose: Option<([i32; 3], [i32; 9])>, ct: &Transform, list: &mut Vec<FxPrim>) {
     // the specials' ground decals: FUN_8002ADA8 as for the kart shadows
-    if let (Some(t), Some((eye, cm))) = (t.as_ref(), p.pose.cam) {
+    if let (Some(t), Some((eye, cm))) = (t, pose) {
         for d in &fx.decals {
             let Some(rs) = t.slots.get(d.slot as usize).copied().flatten() else { continue };
             let Some(tpage) = rs.tpage else { continue };
@@ -890,22 +973,22 @@ pub(crate) fn draw(fx: Res<FxFrame>, t: Option<Res<FxTables>>, p: Res<crate::Pla
                 eprintln!("decal drawn {} at {:?}", r.is_some(), d.origin);
             }
             if let Some((prim, _, _)) = r {
-                prims.list.push(prim);
+                list.push(prim);
             }
         }
     }
     let right = ct.rotation * Vec3::X;
     let up = ct.rotation * Vec3::Y;
     for b in &fx.billboards {
-        prims.list.push(billboard_prim(b, right, up));
+        list.push(billboard_prim(b, right, up));
     }
     for s in &fx.streaks {
-        prims.list.push(streak_prim(s, ct.translation));
+        list.push(streak_prim(s, ct.translation));
     }
     if let Some(t) = t {
-        prims.list.extend(fx.quads.iter().filter_map(|q| crate::kartfx::quad_prim(&t, q, ct.translation, ct.rotation)));
+        list.extend(fx.quads.iter().filter_map(|q| crate::kartfx::quad_prim(t, q, ct.translation, ct.rotation)));
         for f in &fx.flats {
-            flat_prims(&t, f, fx.eye, &mut prims.list);
+            flat_prims(t, f, fx.eye, list);
         }
     }
 }

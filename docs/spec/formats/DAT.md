@@ -138,7 +138,7 @@ the packet colour is (R<<3, G<<3, B<<3), 0x80 = neutral modulation [GPU].
 Group: u16 header, i16 count, count records.
 | header bits | meaning | tag |
 |---|---|---|
-| 0-4 | kind: bit0 triangle; bit1 no back-face cull; bit2 quad culled only if both halves face away (layer-1 renderer); bit3 two packet slots (subdivided path in layer 0); bit4 untextured | [CODE 8001a304, 80012620] |
+| 0-4 | kind: bit0 triangle; bit1 no back-face cull; bit2 quad culled only if both halves face away (layer-1 renderer); bit3 two packet slots: the primitive is drawn twice (FUN_800152C4): opaque with its slot and UVs, then semi-transparent on texture slot 0x0E with UVs from the vertex normal and screen position (phase 14, render-ledger.md "Environment-mapped primitives"); bit4 untextured | [CODE 8001a304, 80012620] |
 | 5-6 | added to the tpage ABR bits; 3 = opaque, 0-2 = semi-transparent | [CODE][GPU] |
 | 7, 13, 14 | unused (0 on DOCK) | |
 | 8-12 | texture slot: index into the 16-byte table at 0x800DFF00 (tpage u16, clut u16, +8 u16 "fixed CLUT"; filled by the RAW loader) | [CODE][GPU] |
@@ -432,7 +432,7 @@ Numbers from the last run (frames 19499/19540):
 - Meaning of each point-list id (paths for AI / camera / items?).
 - block128 (empty on DOCK), descriptor b_lo/b_hi/b_extra,
   object byte +0x0F, zone +0x02, flag bits 0x10/0x40.
-- Kind 2/3 parts-model record layout; 12-byte-vertex meshes (negative count).
+- Kind 2/3 parts-model record layout; 12-byte-vertex meshes (negative count). Phase 14: after the 8-byte positions come one word, then one 4-byte record per vertex: the vertex normal (x, y, z signed bytes, << 5 for the GTE; [GPU] THE END's reflection UVs, envmap.rs).
 - The layer-0 renderer's subdivision/clipping rules (needed for pixel-exact
   rendering, not for the data); the LOD rule is decoded.
 - The object centre is the bbox centre only approximately (up to 77 units).

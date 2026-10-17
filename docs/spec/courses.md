@@ -157,7 +157,17 @@ and breakable-group states over teacher-forced reloads (neither the lifts
 nor the TER are captured). Particles compare without the render pass's
 on-screen bit (flags 0x200). All 18 courses run exact to the end of the
 capture, random state included; the two teacher-forced random-state frames
-left are weather spawns (GRAVE 273, BOG 1056).
+left are weather spawns (GRAVE 273, BOG 1056). Phase 14 recheck: both now
+teacher-force with 0 random-state frames and the drops (MR_WEATHER) equal
+every free-run frame on GRAVE, BOG, LONDON, GLACIER (fixed by phase 7's
+weather camera / nearest-camera search; not re-bisected).
+
+Phase 14, GRAVE's "far star" (SESSION-6-visual-check): not a port
+difference. The oracle's GP0 frame at VB 3380 (analysis/s8/grave_star)
+puts the two nearest pickup stars at native x 26..70 (OT 2800, the HUD's
+slot) where the port draws them; the oracle's window shows them further
+left because the recomp's widescreen package (auto_ui_squash) pins
+front-of-OT primitives as HUD. The far three match in both.
 
 ## Render notes (Session 6, track R)
 What the courses move or animate and how mr-bevy draws it (render-ledger.md

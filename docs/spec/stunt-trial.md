@@ -189,8 +189,13 @@ In add order (the GPU draws the last-added first):
   result FUN_8004E2A8: no COURSE FINISHED, the place above the centre);
   not checked against the oracle. <COURSE> SECRETS: phase
   6b (adventure.md; REVERSE and BATTLE on the stunt courses).
-- The banners' animation and the mirror reflections (render side); the
-  pipes / gates have no extra drawing of their own beyond the course DAT.
+- (Phase 14: the mirror walls' reflections are drawn, render-ledger.md
+  "Mirror walls"; oracle REST VB 545 / 600. The banners: FUN_80034CE0 sets
+  the same cloth (11 x 3, banner 0's spacing, the others scaled, phase step
+  0x37 / 0x3E) for every course with chunk 9, stunt courses' two banners
+  included; scene.rs draws them by those rules, REST's start / finish in
+  the VB 880 side by side.) The pipes / gates have no extra drawing of
+  their own beyond the course DAT.
 - Race flag 4 (reversed trial): ported from the code (gates, progress, the
   bar's marks, phase 6b the grid + 3); COURSE SECRETS' REVERSE row sets it;
   tests / fuzz only, no oracle check.

@@ -159,11 +159,23 @@ dt = 4 in the oracle (the load's long frame).
   the 35 token colours; with the oracle's water-animation state too
   (`--title-oracle`) the first 4 ticks are exact, then one extra random byte
   of the first frame (not located) shifts the random stream.
+- Phase 14: the extra byte was FUN_8007A9DC's blink timers 0x800B07B0..B3
+  (never reset by the loader; the oracle's load has (0, 1, 0, 0x0F): only
+  one timer fires in frame 1, 17 bytes; zeros fired both). With them, the
+  projectile table 0x800DDC50 and its slot 0x800B07E0 (a launch keeps the
+  fields it does not write: +0x33, the random hop's grounded flag) and the
+  3-kart round robin 0x800C305B (0) from the oracle's load
+  (mr_sim::title::oracle_history, ORACLE_ROUND_ROBIN; `--title-oracle` sets
+  them) a new title session runs exact for the whole title: `mr-title
+  --fresh-vs analysis/s8/title_fresh` 918 / 918 ticks (three karts + camera
+  eye), the random pointer equal up to the attract demo's own draws at VB
+  2207 (FUN_80074A94, outside the title session). Found with the oracle's
+  write trace of 0x800B0BCC (`wtrace_range`, return addresses per byte).
 
 ## Not ported (open)
 - The menus listed under "Menus" as not ported (the attract demo and the
   cheat codes: phase 8, below).
-- The first frame's extra random byte of a new title session (above).
+- (The first frame's extra random byte: phase 14, above.)
 
 
 # Menus (Session 7, phase 1)
@@ -583,8 +595,10 @@ Port: port/crates/mr-bevy/src/league.rs, menus.rs (`Leagues`, `LeagueMenu`,
   2 / 1 / 0): row y from 0xF0 - c / 2, FUN_800474E8(text, 0x100, y, 1,
   size, 0, 0x60) with the blend colour v = clamp(y * 256 / 0xF0, 0, 255):
   size 0 (v, 0x60, !v), size 1 (!v, 0x30, v), size 2 (v, 0x90, !v). A "?"
-  row is a picture when 0x800E02B9 = 3 (FUN_8002FD04; not ported, left
-  blank). Then "PRESS START" (c >= (h + 0x10E) / 30 * 60, c % 60 < 45).
+  row is a picture when 0x800E02B9 = 3 (phase 14: the trophy,
+  FUN_8002FD04(0x100, y + 6 / 0xC / 8 for size 2 / 1 / 0, 0x1C, 0x1C, ...,
+  u 0xC0, v 0x80, 0x37 x 0x37, slot 0x15, CLUT + 0xB, abr 0x60 / 0 behind
+  the menu), drawn after the lines; `ending::credits_picture`). Then "PRESS START" (c >= (h + 0x10E) / 30 * 60, c % 60 < 45).
   START (the confirm while 0x800B0F60 = 0) -> sub-state 1 (0x800B07DA =
   0x3C).
 - Sub-state 1: "t BACK" (0x100, 0x1E), "x SELECT" (0x100, 0xD2), 7 rows:
@@ -604,12 +618,17 @@ Port: port/crates/mr-bevy/src/league.rs, menus.rs (`Leagues`, `LeagueMenu`,
   sprites of a GP0 frame equal the port's (position, UV, CLUT, blend
   colour; test ending::gp0_credits, frame 922); the orbit's speed equals
   the oracle's camera angle steps (16 a VBlank).
-- Known wrong (render, deferred): the scene's floor draws as blue / green
-  streaks instead of the oracle's chequered disc fading to black, and some
-  kart faces semi-transparent (THE_END.DAT: one object spans the world,
-  281 primitives with blend bits 0; not explained: the frontend's
-  OPTIONS.RAW under THE_END.RAW and skipping the texel reduction both leave
-  it unchanged). The sub-state 1 menu is not checked against the oracle
+- Phase 14 (render): the kart's semi-transparent faces were THE_END.DAT's
+  environment-mapped primitives (kinds 8 / 9 / 0xC, the 281 blend-0
+  primitives of objects 0, 1, 4, 5): drawn twice by the game, opaque and
+  as a reflection on texture slot 0x0E (render-ledger.md
+  "Environment-mapped primitives"; GP0 UVs 129 / 129 and 149 / 150). The
+  floor (object 15, texture slot 2) draws as the chequered disc in the
+  current build (a phase-14 run with and without the new scroll: both
+  chequered; the streaks were gone before phase 14, cause not
+  re-identified); FUN_8007A9DC's case 0x1D scrolls its (0xE0, 0) block
+  every frame, now ported (animtex.rs). Picture: GP0 frame g800 (end_gp0.py)
+  trophy quad equal at frame counter 198 (test gp0_credits_picture). The sub-state 1 menu is not checked against the oracle
   (its items and hints are the checked menu drawing). Where CRDIT_01.XA
   plays is not located (not course 0x1D's row, not FUN_8008C4AC).
 
@@ -653,8 +672,8 @@ Port: port/crates/mr-bevy/src/league.rs, menus.rs (`Leagues`, `LeagueMenu`,
 
 ## Not ported (phase 8, listed)
 - (MEET THE MUPPETS: phase 11.)
-- THE END's floor rendering, its "?" picture (FUN_8002FD04). (CRDIT_01.XA
-  is played by no code: audio.md "Phase 11".)
+- (THE END's kart, floor and "?" picture: phase 14, "THE END" above.)
+  (CRDIT_01.XA is played by no code: audio.md "Phase 11".)
 - (Row 12: the fades and LOADING screen, the course select's backdrop and
   props.)
 
@@ -984,9 +1003,15 @@ audio.rs (the clips, the music), karts.rs (a driver without a vehicle).
 - Port: league.rs (`League::players`, `karts_n`, `draw_karts_for`,
   `tie_humans`); courses.rs (the league's players into the session);
   mr-sim session.rs (two players + a league: 2 + opponents karts). A tie
-  with player 2 alone: the game keeps split screen with player 1's view
-  off (0x800B0CBC / CBD, FUN_80078538); the port runs that tie-break as a
-  one-player race driven by pad 2. Tests `two_player_league` (league.rs),
+  with player 2 alone (phase 14, corrected from the code): the game runs it
+  full screen as a one-player race: FUN_8008C4AC sets 0x800B07CA =
+  (0x800C1E4A == 2) and 0x800B0CA6 = 0x800B07CA, so one tied human means no
+  split screen; kart 0 is player 2's league kart (the tied karts in order)
+  and FUN_8007916C reads pad 2 for it (its kart loop: kart 0 with 0x800C1E39
+  set uses 0x800B0CEA); FUN_80078538 sets 0x800B0CBC = -1 so pad 1 neither
+  pauses nor drives the menus. The port does the same (pad 2 drives kart 0,
+  pad 1 ignored); the earlier "split screen with player 1's half blank"
+  note was wrong. Tests `two_player_league` (league.rs),
   `two_player_league_race` (mr-sim).
 
 ## Saves with two players [CODE 8007916c, 80082708, 80081dd8, 800823d4]

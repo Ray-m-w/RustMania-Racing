@@ -3177,6 +3177,14 @@ fn adjust_screen_prims(t: &MenuTables, (x, y): (i32, i32), f: i32) -> Vec<Prim> 
 /// (FUN_8002FD04(0x100, 0xB4, 0x10, 0x10, ..., u 0xC0, v 0x80, 0x37 x 0x37,
 /// slot 0x15, clut + 0xB)).
 fn presentation_prims(t: &MenuTables, fr: &Front, f: i32) -> Vec<Prim> {
+    // the league's best points so far, from the save block (0x121 + 2 n)
+    let best = |league: usize| crate::save::with(|s| s.block.u8(0x121 + 2 * league));
+    presentation_prims_with(t, fr, f, &best)
+}
+
+/// `presentation_prims` with the save's best points passed in (the tests
+/// must not read the process-wide save, which other tests change).
+fn presentation_prims_with(t: &MenuTables, fr: &Front, f: i32, best: &dyn Fn(usize) -> u8) -> Vec<Prim> {
     let txt = |s: u32| t.st(s).to_string();
     let mut sp = t.hud.text(txt(sp::TOURNAMENT_CHAMPION).as_bytes(), 0x100, 0x1E, 0, Size::from_arg(0), 4, 0x60);
     let mut v = Vec::new();
@@ -3188,7 +3196,7 @@ fn presentation_prims(t: &MenuTables, fr: &Front, f: i32) -> Vec<Prim> {
         sp.extend(t.hud.text(name.as_bytes(), 0x100, 0x36, 0, Size::from_arg(1), 5, 0x60));
         if (l.league as usize) < 3 && champ == 0 {
             let target = if l.league as usize == mr_sim::save::LEAGUE_BATTLE { 20 } else { 30 };
-            let best = crate::save::with(|s| s.block.u8(0x121 + 2 * l.league as usize));
+            let best = best(l.league as usize);
             if best < target {
                 let s = txt(sp::CAN_YOU_GET).replace("%i", &target.to_string());
                 sp.extend(t.hud.text(s.as_bytes(), 0x100, 0xB4, 0, Size::from_arg(1), 6, 0x60));
@@ -3723,7 +3731,8 @@ mod tests {
         f.page = Page::Presentation;
         // a frame with PRESS START off (f % 60 >= 45)
         f.vb = 50;
-        let ours: Vec<_> = presentation_prims(&t, &f, 50)
+        // a new game's best points (0): CAN YOU GET n POINTS?
+        let ours: Vec<_> = presentation_prims_with(&t, &f, 50, &|_| 0)
             .into_iter()
             .filter_map(|p| if let Prim::Sprt(s) = p { Some(s) } else { None })
             .map(|s| (s.x, s.y, s.u, s.v, s.w, s.h, s.attrs(&slots).1, s.raw))

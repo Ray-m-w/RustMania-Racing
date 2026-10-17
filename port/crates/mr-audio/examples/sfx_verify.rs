@@ -14,6 +14,12 @@
 //! 3. End to end: the calls through mr-audio's driver (seeded from the RAM at
 //!    the first tick), key-ons per VBlank against the oracle's SPU KEYON
 //!    events: sample address, VBlank (+-1), pitch, volumes, ADSR, voice.
+//!
+//! `--session` (phase 13): step 1 runs the whole race frame instead
+//! (mr_sim::session::Session::load_mem from the oracle's state, then one
+//! tick with the oracle's pad words and dt): every kart, the items
+//! (pickups, projectiles, specials), the objects, the cameras' listeners.
+//! Needs a capture with the course regions (`capture_sfx.py --course`).
 
 use std::collections::BTreeMap;
 
@@ -79,7 +85,35 @@ fn main() {
     let mut frames: Vec<(u32, u32, SoundFrame)> = Vec::new(); // (vb start, vb end, calls)
     let mut rng_known: Vec<bool> = Vec::new();
     let mut panics = 0;
+    let session_mode = a.iter().any(|x| x == "--session");
+    let mut sess = session_mode.then(|| {
+        let mut d = mr_disc::Disc::open_default().expect("disc");
+        let mut cfg = mr_sim::session::SessionConfig::dock_default();
+        cfg.logic_hz = 30;
+        let m = cap.mem_at(run.ticks[0], Some(&base));
+        cfg.faces = Some(m.u32(0x800B_0FA4));
+        let cv = |i: u32| (m.u8(KART_ARRAY + 0x504 * i + 0x4B2), m.u8(KART_ARRAY + 0x504 * i + 0x4B1));
+        (cfg.character, cfg.vehicle) = cv(0);
+        cfg.lineup = Some([cv(1), cv(2), cv(3), cv(4), cv(5)]);
+        mr_sim::session::Session::with_config(&mut d, cfg).expect("session")
+    });
     for i in 0..n {
+        if let Some(s) = sess.as_mut() {
+            let (va, vb) = (run.ticks[i], run.ticks[i + 1]);
+            let ma = cap.mem_at(va, Some(&base));
+            let mb = cap.mem_at(vb, Some(&base));
+            s.load_mem(&ma);
+            s.pad2 = mb.u16(0x800B_0CEA);
+            let dt = mb.i32(0x800B_0AEC);
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| s.tick_dt(mb.u16(0x800B_0CE8), dt).is_ok()));
+            if !matches!(r, Ok(true)) {
+                panics += 1;
+            }
+            let calls: Vec<SoundCall> = s.globals.sound.drain().into_iter().flat_map(|f| f.calls).collect();
+            frames.push((va, vb, SoundFrame { dt, calls }));
+            rng_known.push(true);
+            continue;
+        }
         let (va, vb) = (run.ticks[i], run.ticks[i + 1]);
         let ma = cap.mem_at(va, Some(&base));
         let mb = cap.mem_at(vb, Some(&base));
@@ -258,7 +292,7 @@ fn main() {
                 vol_ok += vo as usize;
                 adsr_ok += (k.adsr1 == e.adsr1 && k.adsr2 == e.adsr2) as usize;
                 voice_ok += (k.voice == e.voice) as usize;
-                if a.iter().any(|x| x == "--voices") && matched <= 40 {
+                if a.iter().any(|x| x == "--voices") && k.voice != e.voice {
                     println!("  vb {} addr {:#x} voice port {} oracle {}", e.vb, e.addr, k.voice, e.voice);
                 }
                 if (k.pitch != e.pitch || !vo) && examples.len() < 12 {
@@ -276,6 +310,9 @@ fn main() {
     let mut extra: BTreeMap<u32, usize> = BTreeMap::new();
     for (j, (_, k)) in ours.iter().enumerate() {
         if !used[j] {
+            if a.iter().any(|x| x == "--show-extra") {
+                println!("  extra {:#x} at vb {} voice {} pitch {:#x} vol {:#x}", k.addr, ours[j].0, k.voice, k.pitch, k.vol_l);
+            }
             *extra.entry(k.addr).or_default() += 1;
         }
     }

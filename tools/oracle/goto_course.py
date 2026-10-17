@@ -83,6 +83,8 @@ COURSES = {
     "LAGOON": (21, 4, 2, "MUPPET TREASURE ISLAND / BATTLE"),
     # Session 7, phase 6b (COURSE SECRETS: DOGFIGHT / DOOZER BATTLE).
     "BATTLE": (27, 6, 1, "SECRET COURSES / BATTLE"),
+    # Session 8, phase 13: a second stunt course (world 3's).
+    "ROOFTOPS": (11, 3, 3, "THE MUPPET CHRISTMAS CAROL / STUNT"),
 }
 GRID_SLOTS = {n: 3 + i for i, n in enumerate(list(COURSES)[:8])}
 

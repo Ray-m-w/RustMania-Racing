@@ -1,0 +1,5 @@
+{"name": "two_lagoon_battle", "state": "LAGOON_menu.pst", "end_vb": 2400,
+ "steps": [[0, ""], [20, "down"], [26, ""], [60, "cross"], [66, ""], [150, "cross"], [156, ""], [400, "cross"], [700, "cross+left"], [760, "cross"], [1000, "cross+l1"], [1010, "cross"], [1400, "cross+right"], [1460, "cross"], [1800, "cross+l1"], [1810, "cross"]],
+ "pad2": [[150, "cross"], [156, ""]],
+ "chase2": 450, "chase2_target": "kart0", "chase2_fire": "l1",
+ "note": "phase 13: LAGOON course menu (scratch slot 11) -> 2 PLAYER BATTLE (row 1), both pads CROSS at the character select; pad 1 CROSS with some steering and L1, pad 2 steered live at kart 0 with L1 every other second from VB 450"}

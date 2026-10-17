@@ -19,6 +19,17 @@ steered live toward CHICKEN CHASE's chicken (0x800CB658; heading kart
 sign of the angle; a plain closed loop over TCP, so the pad words are
 whatever it sent (the capture holds them).
 
+Phase 13: "pokes" as capture.py's (armed before the restore); "save":
+true adds the save block 0x800E0190 (0x140); "chase2_target": "kart0"
+steers pad 2 at kart 0 instead of the chicken (2 PLAYER BATTLE contact),
+"chase2_fire": SPEC adds that button (e.g. "square") every other second;
+"chase2_aim": true fires only when kart 0 is within 80 / 4096 of a
+turn ahead and 0x60000 away; "chase2_target": "kart0_then_chicken" chases kart 0 until its CHICKEN
+CHASE count (+0x4AC) drops (a projectile hit), then the chicken.
+"writes": [[vb, addr, byte], ...]: TCP `write_ram` (one byte each) once the
+run reaches that VBlank (within a VBlank or two; the capture holds what the
+game had: check from a later VBlank, mr-course-check --dir --from).
+
 --hud VB,VB,...: a HUD check run instead (HUD_REGIONS, the runtime's
 VBlank counter per row as fx_capture.py, and the GP0 packets of the frames
 drawn around each VBlank in gpu/<VB>.json) for tools/oracle/hudx_check.py.
@@ -59,7 +70,9 @@ def main():
     slot = route.get("slot", gc.SCRATCH)
     pad2 = sorted([tuple(p) for p in route.get("pad2", [])])
     hud = sorted(int(x) for x in sys.argv[sys.argv.index("--hud") + 1].split(",")) if "--hud" in sys.argv else []
-    regions = HUD_REGIONS if hud else REGIONS
+    regions = list(HUD_REGIONS if hud else REGIONS)
+    if route.get("save"):
+        regions.append((0x800E0190, 0x140))
     vbts = {}
     if hud:
         os.makedirs(os.path.join(outdir, "gpu"), exist_ok=True)
@@ -72,6 +85,8 @@ def main():
             slot = gc.SCRATCH
         b.set_regions(regions)
         b.arm_route([(s[0], active_high(s[1]), 0x80, 0x80, 0x80, 0x80) for s in route["steps"]], end_vb=end_vb)
+        if route.get("pokes"):
+            b.arm_pokes([tuple(p) for p in route["pokes"]])
         # pad 2 plugged in, nothing pressed, before the restore
         o.q("set_input", port=2, buttons=0xFFFF)
         gen0, seq0 = b.restore_gen, b.seq
@@ -88,6 +103,10 @@ def main():
         i = 0
         chase = route.get("chase2")
         last_cmd = None
+        writes = sorted([tuple(w) for w in route.get("writes", [])])
+        wi = 0
+        hit_seen = False
+        k0_count = None
         try:
             while True:
                 vb = b.vb_since_restore
@@ -95,14 +114,28 @@ def main():
                     o.q("set_input", port=2, buttons=mask(pad2[i][1]))
                     sent.append([pad2[i][0], vb, pad2[i][1]])
                     i += 1
+                while wi < len(writes) and vb >= writes[wi][0]:
+                    o.q("write_ram", addr=writes[wi][1], val=writes[wi][2])
+                    sent.append([writes[wi][0], vb, "write %08X=%02X" % (writes[wi][1], writes[wi][2])])
+                    wi += 1
                 if chase is not None and vb >= chase and i >= len(pad2):
                     k1 = 0x800C30A8 + 0x504
                     kx, kz = (int.from_bytes(o.read(k1 + a, 4), "little", signed=True) for a in (0, 8))
                     h = int.from_bytes(o.read(k1 + 0xE, 2), "little", signed=True)
-                    cx, cz = (int.from_bytes(o.read(0x800CB658 + a, 4), "little", signed=True) for a in (0, 8))
+                    tgt = 0x800C30A8 if route.get("chase2_target") == "kart0" else 0x800CB658
+                    if route.get("chase2_target") == "kart0_then_chicken":
+                        c0 = o.read(0x800C30A8 + 0x4AC, 1)[0]
+                        if k0_count is not None and c0 < k0_count:
+                            hit_seen = True
+                        k0_count = c0
+                        tgt = 0x800CB658 if hit_seen else 0x800C30A8
+                    cx, cz = (int.from_bytes(o.read(tgt + a, 4), "little", signed=True) for a in (0, 8))
                     want = math.atan2(cx - kx, cz - kz) * 4096 / (2 * math.pi)
                     d = (want - h + 2048) % 4096 - 2048
                     cmd = "cross+right" if d > 96 else "cross+left" if d < -96 else "cross"
+                    aimed = abs(d) < 80 and math.hypot(cx - kx, cz - kz) < 0x60000
+                    if route.get("chase2_fire") and not hit_seen and (aimed if route.get("chase2_aim") else (vb // 60) % 2):
+                        cmd += "+" + route["chase2_fire"]
                     if cmd != last_cmd:
                         o.q("set_input", port=2, buttons=mask(cmd))
                         last_cmd = cmd
@@ -130,12 +163,16 @@ def main():
                                 dumps[f] = compact(d["prims"])
                     json.dump({"vbr": t, "vbt": base, "frames": dumps}, open(os.path.join(outdir, "gpu", "%d.json" % t), "w"))
                     print("vb", t, "frames", {k: len(v) for k, v in dumps.items()}, flush=True)
+                # "until_out": N: end N VBlanks after player 2 is out
+                # (+0x4C7; a CHICKEN CHASE win), end_vb being the limit
+                if route.get("until_out") and vb % 30 == 0 and o.read(0x800C30A8 + 0x504 + 0x4C7, 1)[0] and end_vb > vb + route["until_out"]:
+                    end_vb = vb + route["until_out"]
                 if rows and max(rows) >= end_vb + 30:
                     break
                 time.sleep(0.002)
         finally:
             o.q("clear_input", port=2)
-        o.q("screenshot", path=os.path.join(outdir, "end.png").replace("\\", "/"))
+        o.q("screenshot", path=os.path.abspath(os.path.join(outdir, "end.png")).replace("\\", "/"))
     keys = sorted(rows)
     with open(os.path.join(outdir, "frames.bin"), "wb") as f:
         for k in keys:

@@ -226,6 +226,16 @@ pub fn session_at_load(disc: &mut mr_disc::Disc, info: &CourseInfo, cap: &Captur
     let o = mr_sim::objects::ObjectState::read(&m);
     // The phases (render side) run on through the menus: from RAM.
     s.globals.objects.turntable_phase = o.turntable_phase;
+    // (phase 13: the jets' on / off state, FUN_80063A98 run by the course
+    // menu's frames: MOUNTAIN's 2 PLAYER STUNT RACE load)
+    for (j, oj) in s.globals.objects.jets.iter_mut().zip(o.jets.iter()) {
+        j.active = oj.active;
+    }
+    // (and the camera's random picks +0x6B / +0x6E: the race load keeps
+    // the course menu camera's; a stunt course's mode 3 never redraws
+    // them: ROOFTOPS)
+    let oc = mr_sim::camera::CameraState::from_bytes(m.slice(0x800C_4F40, mr_sim::camera::CAMERA_SIZE));
+    (s.camera.rand_a, s.camera.rand_b) = (oc.rand_a, oc.rand_b);
     if !use_model {
         s.globals.objects.turntable_spin = o.turntable_spin;
     }
@@ -410,7 +420,7 @@ fn main() {
         // the race clock stops, the frame counter runs on).
         let key = |vb: u32| (cap.i32(vb, 0x800B_0C70).unwrap(), cap.i32(vb, 0x800B_0A94).unwrap(), cap.i32(vb, 0x800B_0D90).unwrap());
         let mode = |v: u32| cap.read(v, 0x800B_0D46, 2).unwrap().to_vec();
-        let vbs: Vec<u32> = cap.vbs.iter().copied().filter(|&v| v >= from_vb).filter(|&v| mode(v) == [1, 0] || mode(v) == [2, 0] || mode(v) == [3, 0] || mode(v) == [10, 0] || mode(v) == [11, 0]).collect();
+        let vbs: Vec<u32> = cap.vbs.iter().copied().filter(|&v| v >= from_vb).filter(|&v| mode(v) == [1, 0] || mode(v) == [2, 0] || mode(v) == [3, 0] || mode(v) == [10, 0] || mode(v) == [11, 0] || mode(v) == [20, 0]).collect();
         let mut ends: Vec<u32> = vbs.windows(2).filter(|w| key(w[0]) != key(w[1])).map(|w| w[0]).collect();
         // A stunt-trial capture (mode 3): its samples hold the next frame's
         // clock step (mode3_ends; the first sample taken as frame 0 with
@@ -444,6 +454,15 @@ fn main() {
             let cv = |i: u32| (m.u8(KART_ARRAY + 0x504 * i + 0x4B2), m.u8(KART_ARRAY + 0x504 * i + 0x4B1));
             (cfg.character, cfg.vehicle) = cv(0);
             cfg.lineup = Some([cv(1), cv(2), cv(3), cv(4), cv(5)]);
+            // Phase 13: a split-screen capture taken on mid-race (CHICKEN
+            // CHASE after TCP writes: two/chicken_win --from).
+            if m.u8(0x800B_0CA6) != 0 {
+                cfg.players = 2;
+                (cfg.p2_character, cfg.p2_vehicle) = cv(1);
+                cfg.race_flags = m.u16(0x800B_07E2);
+                cfg.alt_controls = m.u8(0x800E_0392) != 0;
+                cfg.p2_alt_controls = m.u8(0x800E_0393) != 0;
+            }
             let mut s = Session::with_config(disc, cfg).expect("session");
             // A capture with the kart count poked down (0x800B0DFE, e.g.
             // tools/oracle/routes/tri_solo_*.json): the race frame runs
@@ -516,6 +535,9 @@ fn main() {
         // 2. Free run.
         let n = f.ends.len().min(nframes);
         let mut s = session_at_load(&mut disc, &info, &cap, f.load);
+        // (phase 13: the stale leader index until GO, as --dir does: the
+        // DOCK 2 PLAYER RACE's player 2 catch-up +0x4C3 in the countdown)
+        s.leader_progress_override = stale_leader(&cap.mem_at(f.load, None), 1 + s.others.len());
         free_run(&mut s, &cap, &f.ends, n, show_fields);
         // 3. Teacher forced.
         let mut s = session_at_load(&mut disc, &info, &cap, f.load);
@@ -557,6 +579,17 @@ fn free_run(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_fields:
             // load frame (dt 2), 298 -> 294 after the 4-VBlank frame).
             if cap.read(vb, 0x800B_0D46, 2) == Some(&[7, 0][..]) {
                 s.clock_end_dt = Some(dt);
+            }
+            // Phase 13 (a 2 PLAYER STUNT RACE, two/stunt VB 194: the end
+            // sample already holds the next frame's dt 3, the step 300 ->
+            // 298 used 2): a mode-3 frame whose only clock step is its
+            // sampled end steps by the frame counter's own change.
+            if p == (false, true) && cap.read(vb, 0x800B_0D46, 2) == Some(&[3, 0][..]) && ends.get(j + 1).is_some_and(|&nv| cap.read(nv, 0x800B_0D46, 2) == Some(&[3, 0][..])) {
+                if let Some(pv) = prev {
+                    let d = m.i32(0x800B_0D90) - cap.mem_at(pv, None).i32(0x800B_0D90);
+                    if std::env::var("MR_DTDBG").is_ok() && Some(d) != s.clock_end_dt { println!("      dt {j} VB {vb}: {:?} -> {d}", s.clock_end_dt); }
+                    s.clock_end_dt = Some(d);
+                }
             }
         }
         s.pad2 = m.u16(0x800B_0CEA);
@@ -733,7 +766,7 @@ fn free_run(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_fields:
             }
         }
         // Phase 7: CHICKEN CHASE's chicken (0x800CB658.., 0x800B0EBD).
-        if chick_first.is_none() && s.globals.mode == 0x14 && cap.read(vb, mr_sim::chicken::ADDR, 0x28).is_some() {
+        if chick_first.is_none() && s.globals.race_flags & 0x40 != 0 && cap.read(vb, mr_sim::chicken::ADDR, 0x28).is_some() {
             let o = mr_sim::chicken::Chicken::read(&m);
             if o != s.globals.chicken {
                 chick_first = Some((j, format!("{:?} vs {:?}", s.globals.chicken, o)));

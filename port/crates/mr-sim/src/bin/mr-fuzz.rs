@@ -232,6 +232,16 @@ fn run(info: &CourseInfo, title: bool, hz: u8, seed: u32, long: bool, kind: Kind
                 cfg.p2_alt_controls = r.chance(30);
                 if r.chance(40) {
                     cfg.race_flags = 0x40;
+                } else if r.chance(40) {
+                    // phase 13: COURSE SECRETS' "- 2 PLAYERS" modes
+                    cfg.race_flags = [2u16, 1, 8, 4, 0x80, 0x100][r.below(6) as usize];
+                } else if r.chance(30) {
+                    // phase 13: TOURNAMENT - 2 PLAYERS (three karts)
+                    cfg.league = true;
+                    cfg.opponents = 1;
+                    cfg.draw_grid = true;
+                    let c = (8 + r.below(16)) as u8;
+                    cfg.lineup = Some([(c, 0xFF), (c, mr_sim::ai::character_entry(&exe, c).1.min(30)), (0, 0), (0, 0), (0, 0)]);
                 }
             }
             Kind::Beat => {

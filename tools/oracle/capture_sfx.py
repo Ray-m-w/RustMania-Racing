@@ -32,14 +32,15 @@ from bridge import Bridge  # noqa: E402
 SFX_REGIONS = PHYSICS_REGIONS + [(0x800C1E50, 0x20)]
 
 
-def run(route, outdir, wav_at=5000):
+def run(route, outdir, wav_at=5000, regions=None):
+    regions = regions or SFX_REGIONS
     os.makedirs(outdir, exist_ok=True)
     with OracleLock():
         o = Oracle()
         b = Bridge()
         slot = route.get("slot", 2)
         warm_up(o, b, slot)
-        b.set_regions(SFX_REGIONS)
+        b.set_regions(regions)
         steps = []
         for st in route["steps"]:
             vb, spec = st[0], st[1]
@@ -103,7 +104,7 @@ def run(route, outdir, wav_at=5000):
     with open(os.path.join(outdir, "frames.bin"), "wb") as f:
         for k in keys:
             f.write(rows[k])
-    meta = {"route": route, "regions": [[a, n] for a, n in SFX_REGIONS], "vb": keys,
+    meta = {"route": route, "regions": [[a, n] for a, n in regions], "vb": keys,
             "restore_gen": gen, "first_vb": keys[0], "last_vb": keys[-1],
             "missing": [v for v in range(keys[0], keys[-1] + 1) if v not in rows],
             "wav": wav}
@@ -124,6 +125,15 @@ if __name__ == "__main__":
     wav_at = 5000
     if "--wav-at" in sys.argv:
         wav_at = int(sys.argv[sys.argv.index("--wav-at") + 1])
-    m, n, gaps = run(route, sys.argv[2], wav_at)
+    # Phase 13: --course: capture_route's course regions (every kart, the
+    # items, particles, cameras) + the voice dirty flags, for sfx_verify
+    # --session (the full race frame teacher forced)
+    regs = None
+    if "--course" in sys.argv:
+        import capture_route
+        regs = capture_route.REGIONS + [(0x800C1E50, 0x20)]
+    if "--end" in sys.argv:
+        route = dict(route, end_vb=int(sys.argv[sys.argv.index("--end") + 1]))
+    m, n, gaps = run(route, sys.argv[2], wav_at, regs)
     print("captured vb", m["first_vb"], "..", m["last_vb"], "missing", len(m["missing"]),
           "events", n, "seq gaps", gaps[:5], "wav", m["wav"])

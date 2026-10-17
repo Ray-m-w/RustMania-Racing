@@ -1,0 +1,4 @@
+{"name": "two_charsel_probe", "slot": 1, "end_vb": 200,
+ "steps": [[0, ""], [20, "down"], [26, ""], [40, "cross"], [46, ""], [100, "down"], [106, ""], [140, "cross"], [146, ""]],
+ "pad2": [[110, "right"], [116, ""]],
+ "note": "phase 13: DOCK course menu (slot 1, loaded only) -> 2 PLAYER RACE: the simultaneous character select; pad 1 DOWN at 100 and CROSS (ready) at 140, pad 2 RIGHT (vehicle) at 110; screenshot at the end (VB 200)"}

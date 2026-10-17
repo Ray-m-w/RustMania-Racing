@@ -597,8 +597,16 @@ impl Session {
                 cfg.character = crate::secrets::DOOZER;
                 cfg.vehicle = crate::secrets::doozer_vehicle(&world.exe, doozer_turn);
                 doozer_turn = (doozer_turn + 1) % 3;
+                // phase 13: DOOZER BATTLE - 2 PLAYERS: player 2 a Doozer
+                // too, on the next turn's vehicle
+                if cfg.players >= 2 {
+                    cfg.p2_character = crate::secrets::DOOZER;
+                    cfg.p2_vehicle = crate::secrets::doozer_vehicle(&world.exe, doozer_turn);
+                    doozer_turn = (doozer_turn + 1) % 3;
+                }
             } else if cfg.race_flags & 0x80 != 0 {
                 cfg.vehicle = crate::secrets::PLANE;
+                cfg.p2_vehicle = crate::secrets::PLANE;
             }
         }
         if let Some(f) = cfg.faces {
@@ -673,8 +681,9 @@ impl Session {
         } else {
             n
         };
-        // Split screen: 2 karts, the two humans (3 in a league: not ported).
-        let n = if two { 2 } else { n };
+        // Split screen: 2 karts, the two humans; phase 13: a 2-player
+        // league adds its opponent (0x800B0DFE = 0x800C1E4B = 3).
+        let n = if two { if cfg.league { 2 + cfg.opponents as usize } else { 2 } } else { n };
         let humans: i16 = if two { 2 } else { 1 };
         let bosses = if boss { crate::secrets::boss_count(&world.exe, cfg.course) as usize } else { 0 };
         // FUN_8008C4AC @0x8008DE48: the grid draw's modulus (6 in modes 2 /
@@ -729,6 +738,7 @@ impl Session {
             end_mode: if battle { (n + bosses) as u8 } else { 1 },
             lap_threshold: 0,
             lap_record: cfg.lap_record,
+            record_kart: 0,
             karts: n as i16,
             field: [(0, 0); 8],
             difficulty: cfg.difficulty,
@@ -1161,6 +1171,31 @@ impl Session {
         self.ticks += 1;
     }
 
+    /// Phase 13: a kart record of (`c`, `v`) for the character select's
+    /// second kart (FUN_80072D8C: FUN_800609F4(kart p, c, v, 0, 0), then
+    /// FUN_8006B1C8 places it in front of the camera): the vehicle's
+    /// template with its wheels and the character's pivot, as player 2's
+    /// kart is built for a split-screen race (no random draws kept).
+    pub fn menu_kart_record(&self, disc: &mut mr_disc::Disc, slot: u8, c: u8, v: u8) -> Result<Vec<u8>, SessionError> {
+        let world = &self.world;
+        let read_mdl = |disc: &mut mr_disc::Disc, p: &str| -> Result<Mdl, SessionError> {
+            let b = disc.read(p).map_err(|e| SessionError::Disc(format!("{p}: {e:?}")))?;
+            Mdl::parse(&b).map_err(|e| SessionError::Disc(format!("{p}: {e:?}")))
+        };
+        let tpl = crate::ai::vehicle_templates(&world.exe, &world.tables).map_err(|e| SessionError::Disc(e.0))?;
+        let vpath = crate::ai::model_path(&world.exe, crate::ai::addr::VEHICLE_PATHS, v, "MDL").ok_or_else(|| SessionError::Disc(format!("vehicle {v}: no model")))?;
+        let cpath = crate::ai::model_path(&world.exe, crate::ai::addr::CHARACTER_PATHS, c, "MDL").ok_or_else(|| SessionError::Disc(format!("character {c}: no model")))?;
+        let mut t = *tpl.get(v as usize).ok_or_else(|| SessionError::Disc(format!("vehicle {v}: no template")))?;
+        crate::ai::place_wheels(&mut t, &read_mdl(disc, &vpath)?);
+        let cm = read_mdl(disc, &cpath)?;
+        let g = &self.globals;
+        let setup = RaceSetup { mode: g.mode, race_type: g.race_type, race_flags: g.race_flags, challenge: g.challenge, humans: 1, karts: 1 };
+        let (mut rng, mut seed) = (g.rng, self.rand_state);
+        let mut rand = || bios_rand(&mut seed);
+        let (rec, _) = init_kart(&KartInit { world, template: &t, setup, slot, character: c, vehicle: v, grid: 0, flags: 0, character_pivot_y: cm.parts[0].record.pivot[1] }, &mut rng, &mut rand);
+        Ok(rec)
+    }
+
     /// Phase 11: TEST DRIVE's vehicle change (FUN_8008B644 swaps the
     /// vehicle's template into the kart where it stands): the player's
     /// position, angles and velocity taken over from the kart before.
@@ -1375,6 +1410,7 @@ impl Session {
                 // (SaveBlock::lap_record from `lap_record`).
                 if g.race_type == 2 && g.mode == 2 && g.race_flags == 0 && g.split_screen == 0 && k.flags & 1 == 0 && k.race_time < g.lap_record {
                     g.lap_record = k.race_time;
+                    g.record_kart = k.player_index as u8;
                 }
                 // 0x800793E0 (phase 6b): a BOSS CHALLENGE won (mode 7, a
                 // human in place 1) sets the course's flag 0x100 (BATTLE
@@ -1447,8 +1483,11 @@ impl Session {
         for k in ks.iter_mut() {
             crate::render::aim_at_course(k, g, w);
         }
+        // (each kart's own camera +0x4F2: player 2's in split screen,
+        // phase 13; oracle two/chicken_win kart 1 +0x2C0)
         for k in ks.iter_mut() {
-            crate::render::aim_camera_override(k, g, self.camera.mode, self.camera.pos);
+            let c = if k.camera == 1 { self.camera2.as_ref().unwrap_or(&self.camera) } else { &self.camera };
+            crate::render::aim_camera_override(k, g, c.mode, c.pos);
         }
         // 3. Path position (FUN_8009004C): this frame's kart of the round
         //    robin 0x800C3058[n]. None while the countdown runs (oracle
@@ -1601,8 +1640,9 @@ impl Session {
             crate::items::after_lifts(ks, g, w, &cams, self.cfg.items, &mut rand);
             // FUN_8006EC4C (race flag 0x40, CHICKEN CHASE; phase 7). 60 Hz
             // mode: once per pair with the pair's dt (its draws at the
-            // game's rate).
-            if g.race_flags & 0x40 != 0 && g.mode == 0x14 && g.hz60.beat() {
+            // game's rate). The race frame runs it in the results too
+            // (mode 10 after the win: oracle two/chicken_win, phase 13).
+            if g.race_flags & 0x40 != 0 && g.hz60.beat() {
                 let dt = g.dt;
                 if g.hz60.on {
                     g.dt = 2;
@@ -1993,6 +2033,10 @@ impl Session {
         let types = self.globals.fx.as_ref().map(|f| f.particles.types.clone()).unwrap_or_default();
         self.globals = RaceGlobals::read(m);
         self.globals.stack = stack;
+        // The character voices' timers (kart +0x4F5, FUN_8007A7F4).
+        for i in 0..n.min(8) {
+            self.globals.sound.voice_timer[i] = m.u8(crate::kart::KART_ARRAY + 0x504 * i as u32 + 0x4F5);
+        }
         self.globals.fx = Some(Box::new(crate::items::Fx { particles: crate::particles::Particles::read(m, types), sparks: crate::particles::Sparks::read(m), flats: crate::particles::Flats::read(m) }));
         self.water = WaterAnim::from_bytes(m.slice(crate::water::STATE_ADDR, 0x1C));
         self.camera = CameraState::from_bytes(m.slice(0x800C_4F40, camera::CAMERA_SIZE));

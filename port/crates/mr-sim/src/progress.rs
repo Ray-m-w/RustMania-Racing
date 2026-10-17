@@ -313,6 +313,7 @@ fn lap_completed(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
         // block outside the simulation: SaveBlock::lap_record from
         // `lap_record`, mr-bevy save.rs).
         g.lap_record = lt;
+        g.record_kart = k.player_index as u8;
     }
     if k.best_lap == 0 || lt < k.best_lap {
         k.best_lap = lt;

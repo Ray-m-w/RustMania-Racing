@@ -1,0 +1,4 @@
+{"name": "two_mountain_stunt", "state": "MOUNTAIN_menu.pst", "end_vb": 2400,
+ "steps": [[0, ""], [20, "down"], [26, ""], [60, "cross"], [66, ""], [150, "cross"], [156, ""], [400, "cross"], [900, "cross+left"], [930, "cross"], [1500, "cross+right"], [1530, "cross"]],
+ "pad2": [[150, "cross"], [156, ""], [400, "cross"], [700, "cross+right"], [730, "cross"], [1300, "cross+square"], [1310, "cross"]],
+ "note": "phase 13: MOUNTAIN course menu (scratch slot 11) -> 2 PLAYER STUNT RACE (row 1), both pads CROSS at the character select, both CROSS from VB 400 with some steering"}

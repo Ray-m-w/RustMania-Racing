@@ -315,6 +315,15 @@ impl SaveBlock {
     pub fn difficulty(&self) -> u8 {
         self.u8(0x20A)
     }
+    /// FUN_800823D4 (FUN_8007916C as the last human goes out of a
+    /// 1-player race, game mode 1, race flags 0, not the demo): first
+    /// place raises the AI catch-up scale by 3 (at most 16), place p
+    /// lowers it by p - 1 (at least 0).
+    pub fn race_end_difficulty(&mut self, place: u8) {
+        let d = self.u8(0x20A) as i8;
+        let n = if place == 1 { (d + 3).min(16) } else { (d as i32 + 1 - place as i32).max(0) as i8 };
+        self.set_u8(0x20A, n as u8);
+    }
 
     // ------------------------------------------------------------ new game
 

@@ -75,3 +75,53 @@ fn chicken_chase_catches() {
     s.tick(0).unwrap();
     assert_eq!(s.globals.mode, 10);
 }
+
+/// Phase 13: COURSE SECRETS' "- 2 PLAYERS" choices (FUN_80074A94 sub-states
+/// 8 / 9 / 0xA: 0x800B07CA = 0x800B07F0[row] - 1): REVERSE RACE, BATTLE
+/// and BATTLE RACE on a race course, the reversed stunt race, DOGFIGHT
+/// (both on the PLANE) and DOOZER BATTLE (both Doozers, the vehicle turn
+/// stepped per kart) load split screen with two human karts and race.
+#[test]
+fn two_player_secret_modes() {
+    let mut d = disc();
+    let exe = ExeImage::parse(&d.read("SLUS_012.37").unwrap()).unwrap();
+    for (course, flags, mode) in [("DOCK", 2u16, 1i16), ("DOCK", 1, 2), ("DOCK", 8, 1), ("MOUNTAIN", 4, 3), ("BATTLE", 0x80, 2), ("BATTLE", 0x100, 2)] {
+        let info = CourseInfo::find(&exe, course).unwrap();
+        let mut s = Session::with_config(&mut d, SessionConfig { race_flags: flags, ..two(&info) }).unwrap();
+        let g = &s.globals;
+        assert_eq!((g.mode, g.humans, g.split_screen, g.karts, s.others.len()), (mode, 2, 1, 2, 1), "{course} flags {flags:#x}");
+        if flags == 0x80 {
+            assert_eq!((s.kart.vehicle, s.others[0].kart.vehicle), (mr_sim::secrets::PLANE, mr_sim::secrets::PLANE));
+        }
+        if flags == 0x100 {
+            assert_eq!((s.kart.character, s.others[0].kart.character), (mr_sim::secrets::DOOZER, mr_sim::secrets::DOOZER));
+            assert_ne!(s.kart.vehicle, s.others[0].kart.vehicle, "the turn steps per kart");
+        }
+        for _ in 0..600 {
+            s.pad2 = 0x4000 | 0x20;
+            s.tick(0x4000 | 0x80).unwrap();
+        }
+        assert!(s.camera2.is_some());
+    }
+}
+
+/// Phase 13: TOURNAMENT - 2 PLAYERS (0x800C1DEF = 2, 0x800C1E4B = 3): a
+/// league race is split screen with the two players and the league's third
+/// kart (AI, its character / vehicle from the league).
+#[test]
+fn two_player_league_race() {
+    let mut d = disc();
+    let exe = ExeImage::parse(&d.read("SLUS_012.37").unwrap()).unwrap();
+    let info = CourseInfo::find(&exe, "LONDON").unwrap();
+    let cfg = SessionConfig { league: true, opponents: 1, draw_grid: true, lineup: Some([(5, 0xFF), (13, 12), (17, 16), (23, 18), (1, 1)]), ..two(&info) };
+    let mut s = Session::with_config(&mut d, cfg).unwrap();
+    let g = &s.globals;
+    assert_eq!((g.mode, g.humans, g.split_screen, g.karts, s.others.len()), (1, 2, 1, 3, 2));
+    assert_eq!((s.others[0].kart.flags & 1, s.others[1].kart.flags & 1), (0, 1), "kart 1 human, kart 2 AI");
+    assert_eq!((s.others[1].kart.character, s.others[1].kart.vehicle), (13, 12));
+    for _ in 0..900 {
+        s.pad2 = 0x4000;
+        s.tick(0x4000).unwrap();
+    }
+    assert!(s.others[1].kart.progress > 0, "the AI kart races");
+}

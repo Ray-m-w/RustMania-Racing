@@ -185,6 +185,7 @@ pub fn gates(k: &mut KartState, g: &mut RaceGlobals, w: &World) {
         // (mr_sim::save::SaveBlock::lap_record, mr-bevy save.rs), as a
         // race's lap record.
         g.lap_record = k.race_time;
+        g.record_kart = k.player_index as u8;
     }
     g.end_mode = g.end_mode.wrapping_add(1);
     // 0x8008209C: no split screen, no race flags: the course's "won" bit

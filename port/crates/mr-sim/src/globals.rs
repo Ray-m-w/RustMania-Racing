@@ -51,6 +51,9 @@ pub struct RaceGlobals {
     /// The course lap record compared at each lap end:
     /// 0x800E0190 + 8 * (s8)0x800B0E32 + 0x20 * (s8)0x800B0E38.
     pub lap_record: i32,
+    /// 0x800B0816: the player index (+0x4D7) of the kart that lowered
+    /// `lap_record` (the record's holder: its +0x4B1 / +0x4B2).
+    pub record_kart: u8,
     /// 0x800B0DFE: karts in the race (humans + AI).
     pub karts: i16,
     /// Every kart's (finished +0x4C7, lap +0x4BF), slot order, as the kart
@@ -281,6 +284,7 @@ impl RaceGlobals {
             },
             chicken: crate::chicken::Chicken::read(m),
             first_finish: m.i32(0x800B_0C20),
+            record_kart: m.u8(0x800B_0816),
             lap_record: m.i32(0x800E_0190u32.wrapping_add((8 * m.i8(0x800B_0E32) as i32 + 0x20 * m.i8(0x800B_0E38) as i32) as u32)),
         }
     }

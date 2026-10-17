@@ -209,7 +209,7 @@ local, not committed).
 ## Screens [CODE][SHOT][GPU]
 | screen | where (0x800B0FAC / 0x800B0D46 / sub-state) | items | port |
 |---|---|---|---|
-| main menu | 0x1E / 0x10 / 0x800B0E8A = 1 | MEET THE MUPPETS, GAME STATUS, SELECT COURSE, TOURNAMENT - 1 PLAYER, OPTIONS (+ GAME STATUS CHANGED - SAVE GAME while 0x800B07DC: 6 rows); BACK = title | yes (1, 2 greyed; the port autosaves: no 6th row) |
+| main menu | 0x1E / 0x10 / 0x800B0E8A = 1 | MEET THE MUPPETS, GAME STATUS, SELECT COURSE, TOURNAMENT - 1 PLAYER, OPTIONS (+ GAME STATUS CHANGED - SAVE GAME while 0x800B07DC: 6 rows); BACK = title | yes (the port autosaves: no 6th row); MEET THE MUPPETS since phase 11 ("MEET THE MUPPETS" below) |
 | options | 0x1E / 0x10 / 3 (5 rows, 4 drawn) | ADJUST SOUND, SET CONTROLLERS, ADJUST SCREEN (sub-state 4), MEMORY CARD | yes; 3, 4 greyed; 5th row = the port's PORT SETTINGS |
 | adjust sound | 0x800B07CD | MUSIC VOLUME - n, SOUND VOLUME - n (0..15; levels 0x800AC118 / 0x800AC138, default 12 = 0x6C / 0x60; FUN_80074850: LEFT / RIGHT, CROSS keeps, TRIANGLE restores) | yes (settings music_volume / sound_volume; bus gains level / level(12)) |
 | set controllers | 0x800B07CC | CONTROLLER 1, s JUMP / BRAKE o, CONFIGURATION - A/B, VIBRATION - ON/OFF | configuration only (settings controller_config -> SessionConfig::alt_controls); one controller |
@@ -244,8 +244,7 @@ game's everything code applied to a copy.
   vehicles.
 
 ## Not ported (listed)
-MEET THE MUPPETS (game mode 0xD, camera mode 6: the 5 x 5 character
-gallery, TEST DRIVE, voice clips FUN_80060580), 2 PLAYER RACE / STUNT
+(MEET THE MUPPETS: phase 11, "MEET THE MUPPETS" below.) 2 PLAYER RACE / STUNT
 RACE (phase 7), 2 PLAYER BATTLE / CHICKEN CHASE (phase 7; battle.md), MEMORY CARD and GAME STATUS CHANGED - SAVE
 GAME (the port autosaves), ADJUST SCREEN, VIBRATION, MUSIC in the
 course select (MOVIE: phase 9, fmv.md), the fades and LOADING screen between screens.
@@ -649,18 +648,12 @@ Port: port/crates/mr-bevy/src/league.rs, menus.rs (`Leagues`, `LeagueMenu`,
 
 ## Voice clips in the menus
 - FUN_80060580 in the front end is called only by MEET THE MUPPETS (game
-  mode 0xD: the confirmed character's clip, and a random character clip
-  every 0x3C VBlanks while the cursor rests; FUN_80074A94 game mode 0xD): not
-  ported with the gallery. The race's other calls (FUN_80082708's two
-  other calls, FUN_80081DD8, the battle win in FUN_8007916C,
-  the CHICKEN CHASE catch FUN_8006EC4C, the league standings FUN_8008C4AC
-  in game mode 0x12) are not ported; the finish clip is (audio.md).
+  mode 0xD; phase 11, below). The race's calls are in audio.md "Phase 11".
 
 ## Not ported (phase 8, listed)
-- MEET THE MUPPETS (game mode 0xD: the 5 x 5 gallery, camera mode 6, TEST
-  DRIVE, the voice clips).
-- THE END's floor rendering, its "?" picture (FUN_8002FD04), the
-  CRDIT_01.XA voice.
+- (MEET THE MUPPETS: phase 11.)
+- THE END's floor rendering, its "?" picture (FUN_8002FD04). (CRDIT_01.XA
+  is played by no code: audio.md "Phase 11".)
 - The fades and LOADING screen between screens; the course select's sky
   backdrop and world props (leftovers).
 
@@ -675,3 +668,106 @@ the front end:
   (the label bright then); COURSE SECRETS: PLAY MOVIE (row 3, the same
   bit) plays the course's movie; both return to the same page (the game
   reloads it).
+
+# MEET THE MUPPETS (Session 8, phase 11)
+
+Main menu row 0 -> game mode 0xD on the frontend course 0x1E (FUN_80074A94
+title sub-state 1: 0x800B0F10 = 0xD, 0x800B074A = -1, 0x800B074B = 0x3C,
+0x800B0BD2 = 0). Port: mr_sim::gallery (records, logic, scratch record),
+camera.rs mode 6 / 7, mr-bevy main.rs `gallery_tick` / `test_drive_tick`,
+menus.rs `gallery_prims` / `test_drive_prims` (Page::Gallery, TestDrive),
+audio.rs (the clips, the music), karts.rs (a driver without a vehicle).
+
+## The gallery [CODE 8008c4ac, 80026920, 80026a50, 80070418, 80074a94, 80073138, 80051698] [RAM][SHOT][GPU]
+- Load (FUN_8008C4AC, mode 0xD): no karts (0x800B0DFE = 0); the music
+  stops (FUN_8005FA18); the cursor from the save (0x800E038E / F, block
+  0x1FE / 0x1FF); FUN_80026920 fills 25 records at 0x800B3B78 (0x64 bytes,
+  5 x 5): position ((col * 600 + 50000) * 32, row * 24000 - 24000,
+  -0x72C0), sway springs 0, each a look timer = a random byte + 0x3C.
+- Every frame FUN_80026A50 (from the scene draw FUN_80029F40, course 0x1E
+  and mode 0xD) steps all 25: the timer (- dt); at 0 a new look (random
+  byte / 0x56, not the current one, not 1 in column 4 nor 2 in column 0)
+  and a new timer; FUN_80064738 on the record's springs (+0xC, target 0 /
+  -0xC000 / 0xC000 by the look, gain 0, effect -1); FUN_80064428 /
+  FUN_800644EC smooth five outputs (+0x54..+0x5C) toward springs 1, 7, 2,
+  14, 8 (/ 64) by a quarter per VBlank. The characters within one row and
+  one column of the cursor are drawn: the scratch kart record 0x800C49BC
+  gets the position (also the driver position +0x330..), colour factors
+  +0x414.. = 0x1000 (0 when the character is not collected: black), the
+  outputs at +0x454.., +0x4A4 = -1 (no vehicle), +0x4A5 = the model;
+  +0x1CC = FUN_800252A4(out1 / 2, out0 / 2), then FUN_80086DF0 (+0x29C
+  from out2..4) and FUN_800276E8 (the driver alone). Oracle RAM (VB 300):
+  the 25 positions and the scratch record's matrices equal the port's
+  (mr-sim tests/gallery.rs).
+- Camera mode 6 (FUN_80070418 @0x80070F14): eye ((col * 600 + 50000) *
+  32, (row * 0x2EE - 0x2EE - h) * 32, -49856), looking along +z at
+  (x, y, 0x20000); h = half the sum of the character's two heights
+  (0x800AC038 + 4 c; the first is |part 0 pivot y| of its model, written
+  when the model loads); the eye moves to z -41664 while that character's
+  clip plays (0x800B0760 bit 0 and 0x800B074A = it). Angles fixed (event
+  0x1E).
+- Input (FUN_80073138, game mode 0xD): UP / DOWN rows 0..4 (sound 0xE),
+  LEFT / RIGHT the column (clamped 0..4 by FUN_80074A94, sound 0xE when it
+  changed against the saved one), CROSS accept / TRIANGLE back (sound 0xF);
+  presses zero 0x800B0AF0. The logic waits for the fade-in (0x800B0F88).
+- Logic (FUN_80074A94 mode 0xD): 0x800B0AF0 >= 0x708 or TRIANGLE ->
+  game mode 0x10 sub-state 0 (the title's PRESS START). CROSS on a
+  collected character (0x800E02BC): 0x800B0B28 = it, FUN_8008B36C (its
+  vehicle list), TEST DRIVE (0xE); with nothing playing its clip: 1 for
+  character 0xD, 0 for 0xE / 0x17, none for the others. Then the idle
+  clip: while nothing plays 0x800B074B counts down by dt; at 0 with
+  0x800B0AF0 > 0x3C, the character under the cursor (collected, not
+  0x800B074A) speaks: FUN_80060580(c, n), n = 0 for 0xD, 1 for 0xE /
+  0x17, else a random byte >> 7; 0x800B074B = 0x3C, 0x800B074A = c. In game
+  mode 0xD FUN_80060580 queues no course track behind the clip.
+- 2D (FUN_80051698 game mode 0xD): "t BACK" (0x100, 0x1E); the full name
+  (0x800AB124[2 c]) at (0x100, 0xB4), medium, colour 5, or "?" in colour
+  7 when not collected; after the fade "x TEST DRIVE" (0x100, 0xD2) in
+  (0x68, 0x84, 0xDC), greyed (abr 0) for a character not collected. No
+  arrows.
+
+## TEST DRIVE (game mode 0xE) [CODE 8008c4ac, 800609f4, 8008b36c, 8008b644, 80070418, 80074a94, 80073138, 80051698, 800514ac, 80087d10, 8004f688, 8005fb4c] [SHOT][GPU]
+- Load: kart 0 = the character in its own vehicle (0x800AC22F[c * 0x14];
+  a random loaded selectable one if none), FUN_800609F4(kart, c, v, 5, 0):
+  grid point 5, heading 0x600 or 0xA00 by the sign of a random byte; no
+  countdown; race flag 8 (course 0x1E); camera mode 7 (@0x80070FCC):
+  looking at the kart (y raised by half its probe span; past grid point 5
+  the point's height, lowered by 4 * the z distance short of it), the eye
+  3 * 0x1000 above and 3 * 0x4000 behind along -z (1 * on an object).
+- The player drives round the frontend room (the title's world). START /
+  SELECT: the next / previous vehicle of FUN_8008B36C's list (the own one,
+  then those of the select screen's vehicle list it has won), sound 0xF on
+  a change, FUN_8008B644 swaps it in where the kart stands (the port
+  rebuilds the session and carries position, angles and velocity over).
+  TRIANGLE: sound 0xF, back to the gallery (mode 0xD, 0x800B074A = -1,
+  0x800B074B = 0x3C). 0x1C20 idle VBlanks (menu presses zero the count) ->
+  the title.
+- Music (FUN_8005FB4C in mode 0xE): whenever nothing plays, FUN_80089B98's
+  track (a random open course of worlds 0..5, not one of the last three)
+  once, no loop (oracle: MUSIC2.XA channels 1 / 2 = tracks 9 / 10).
+- 2D (FUN_80051698 game mode 0xE): "t BACK"; three ratings: FUN_800514AC
+  stars (nearest of five levels between FUN_80087D10's min / max over the
+  characters' own vehicles; 1..5 stars 0xC apart, alternate ones green
+  0x40) over icons at (0x70 / 0xF0 / 0x16C, 0xA8) from the vehicle row
+  0x800ACDB0 + 8 v (+1, +3, +2); the vehicle name (0x100, 0x3C, medium,
+  colour 5). The item HUD (FUN_8004F688 case 0xE: icon, FUN_80049440,
+  weapons at 0x2D, the meter); no lap / place / clock.
+
+## Checks (phase 11)
+- Oracle walks (tools/oracle/menu_walk.py, tools/oracle/xa_probe.py from
+  the title state; analysis/s8/meet, local): GP0 font sprites of the
+  gallery (Kermit: 28 / 28; character 3, not collected: "?" and the greyed
+  TEST DRIVE, 16 / 16) equal the port's; TEST DRIVE's layer (name,
+  ratings, icons, BACK: 23 sprites) all in the oracle's frame (mr-bevy
+  `menus::tests::gp0_gallery_and_test_drive`). Screenshots side by side:
+  the gallery (Kermit, Piggy beside, the zoom while the clip plays), TEST
+  DRIVE (Kermit / RACER on the turntable, the room, ratings).
+- Clips (xa_probe: per-VBlank queue 0x800B0740.. + cdrom_sector_history):
+  entering at VB 139, Kermit's idle clip 0x8050 (CHAR_04.XA channel 0,
+  first sector LBA 192238) at VB 234 (the port: 96 VBlanks after the
+  entry: 32 of fade-in, then the 0x3C wait and 0x800B0AF0 > 0x3C); RIGHT at
+  VB 600 -> Miss Piggy's 0x805C (channel 12, LBA 192250) at VB 669 (port:
+  62 VBlanks after the press, plus the frame of the press and the queue's
+  frame). The port's track ids name the same files, channels and first
+  sectors (mr-audio tests/xa_disc.rs). Not checked: the CROSS clips of
+  characters 0xD / 0xE / 0x17 (not collected in the oracle's save).

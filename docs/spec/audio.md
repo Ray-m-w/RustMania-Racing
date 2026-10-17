@@ -277,3 +277,73 @@ one-shots: jumps, landings, walls, contacts, voices).
   mode 0xD, not ported), FUN_80082708 (the finish: ported; two other calls),
   FUN_80081DD8, FUN_8007916C (a battle won), FUN_8006EC4C (CHICKEN CHASE
   catches), FUN_8008C4AC (league standings, game mode 0x12): not ported.
+
+## Phase 11 (Session 8): every voice clip, MEET THE MUPPETS, CRDIT_01 [CODE][ORACLE]
+Port: mr_sim::sound `XaReq` (the race code's requests, drained by mr-bevy
+audio.rs `MusicDirector`), mr_audio::xa `XaQueue::request_entry`.
+
+### Who writes the queue (0x800B0744..48) - all of it
+| writer | entry | when |
+|---|---|---|
+| FUN_80060580(c, n) | 0x8000 \| base(c) + n, then the course track (not in game mode 0xD) | voice flag (0x800AC22E bit 0) set, not the demo (0x800B0BD2); three clips pending = dropped |
+| FUN_800606D0 | 0xC000 \| 0xD0 + 0x800B074C (then 0x800B074C + 1 mod 7), then the course track | the results of a 1-player race won (mode 1, 0x800B0CA6 = 0, kart 0 place < 2, not knocked out under race flag 8), not the demo |
+| FUN_8008C4AC, mode 0 | 0xC000 \| the course's intro clip (+0x4 + toggle) | once per course per power-on (Session 4) |
+| FUN_8008C4AC, mode 7 | 0x8000 \| base(0x800B0C7E[0]) (no voice-flag test) | a BOSS CHALLENGE's load |
+| FUN_8008C4AC, mode 0x12 | FUN_80060580(winner, 3) when the league's winner (0x800C1E30) is human | the league's trophy presentation (course 0x1A / 0x1B; phase 12) |
+| FUN_8008C4AC / FUN_80060524 | the course track (FUN_80089B98's pick on course 0x1D and in mode 0xE) | every load |
+| FUN_8005FB4C, mode 0xE | FUN_80089B98's pick, played once | TEST DRIVE, whenever nothing plays |
+| FUN_80074A94, course select | the course track (o MUSIC, FUN_80060468) | not ported (phase 12) |
+
+base(c) = 0x800AC230[c * 0x14]: the 25 racers 0x20..0x80 (VOICES/CHAR_01..07,
+16 channels each), the bosses 0xD8..0xDD (VOICES/WIN.XA channels 8..13; voice
+flag clear, so only the mode-7 load plays them). Intro clips 0x90..0xBF
+(FILM_01..03), the taunt 0xD0..0xD6 (WIN.XA 0..6).
+
+**VOICES/CRDIT_01.XA (file row 14 = ids 0xC0..0xCF) is played by nothing**:
+no character base, intro clip (course rows 0x800ACB34 +4: 0x90..0xBE + 1) or
+music byte (< 0x20) lies in 0xC0..0xCF; the taunt adds at most 6 to 0xD0;
+FUN_80089B98 returns course music bytes; the only other XA starts are
+FUN_80060468 / FUN_80060490 (from FUN_8005FB4C and the course select's
+MUSIC, a course track); FUN_8005FDF4 (load by name) reads data files, not
+XA. The file is on the disc unused.
+
+### The race's clips (FUN_80060580 call sites; humans only = kart +0x4D7 < 0x800B0E28)
+| site | clip | port |
+|---|---|---|
+| FUN_80082708 @0x80082B60 (finish, the last lap or any lap once another finished) | 3 first, else 2 | progress.rs `race_finished` |
+| FUN_80082708 @0x80082858 (knocked out: damage >= 1000, battle or race flag 8; not on course 0x1E) | 2 | progress.rs `knocked_out` |
+| FUN_80081DD8 (stunt course finish gate) | 3 first, else 2 | stunt.rs |
+| FUN_8007916C @0x800791F8 (modes 2 / 7: one kart standing, each human still in) | 3 | session.rs |
+| FUN_8006EC4C (CHICKEN CHASE's winning catch) | the other player's 2, then the winner's 3 | chicken.rs |
+| FUN_8007916C @0x80079850 FUN_800606D0 (the results of a won 1-player race) | WIN.XA taunt | session.rs |
+| FUN_8008C4AC (mode 7 load) | the first boss's base | audio.rs (race load) |
+| FUN_8008C4AC (mode 0x12) | the league winner's 3 | phase 12 (the presentation is not ported) |
+Items, hits and the countdown make no XA requests (their voices are SPU
+sounds: FUN_8007A7F4, "Trigger points" above).
+
+- The results taunt: while the current entry has flags 0xC000 and plays,
+  FUN_8004CEA0 (1 player) draws two faces (FUN_8002FD04 at (0x120 / 0xE0,
+  0x1E, or 0x3C under the rival / NEW COURSE line), u = 0x80 + 0x20 * the
+  blink toggle 0x800B07B0 / 0x800B07B2, v 0xC0 / 0xE0, page slot 0x14,
+  CLUT +0xE): Statler and Waldorf heckling (mr-assets `taunt_faces`).
+- Level [INFER]: FUN_800602C4 gives tracks >= 0x20 the voice level; the
+  course intro's observed music level (above) is kept for the intro only;
+  the taunt (also 0xC000) keeps the voice level (no oracle tap of it).
+- MEET THE MUPPETS (frontend.md): entering stops the music; its clips queue
+  no course track; nothing plays between clips. TEST DRIVE: random course
+  tracks, each once.
+
+### Checks [ORACLE] (tools/oracle/xa_probe.py; analysis/s8/meet, local)
+| run | queue | first sector |
+|---|---|---|
+| gallery, Kermit resting (title state) | VB 234 0x8050 | CHAR_04.XA ch 0, LBA 192238 |
+| gallery, RIGHT to Miss Piggy | VB 669 0x805C | CHAR_04.XA ch 12, LBA 192250 |
+| TEST DRIVE | 0x0009 / 0x000A (random) | MUSIC2.XA ch 1 / 2, LBA 127210 / 127211 |
+| LAGOON battle won (LAGOON_grid + battle_win_pokes) | VB 244 [0x8053, 0x0012]; the track again at VB 482 | CHAR_04.XA ch 3, LBA 192241 |
+| LAGOON BOSS CHALLENGE load (route of boss_lagoon.json) | VB 285 [0x80DC, 0x0012] | WIN.XA ch 12, LBA 202266 |
+| DOCK won (slot 2 + tri_finish route and poke) | VB 2670 [0x8053, 0x0010], then 0xC0D0 at VB 2908 | WIN.XA ch 0, LBA 202254; the two faces on the results (screenshot) |
+The port: the same requests in the same order (mr-sim tests: battle.rs,
+race.rs `a_win_queues_the_finish_clip_and_the_taunt` /
+`finished_player_is_driven_by_the_ai`, stunt.rs, two_players.rs,
+secrets.rs `boss_challenge_clip`), the same files / channels / first
+sectors (mr-audio tests/xa_disc.rs).

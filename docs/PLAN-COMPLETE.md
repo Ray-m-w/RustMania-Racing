@@ -28,7 +28,7 @@ Accuracy loose ends (fold into the phase that touches them, not separate
 work): fresh-title random byte; GRAVE/BOG weather frames; DISCO floor
 animation timing; GRAVE far pickup; item sound key-on check; AI R2 specials
 check; course-select sky backdrop + world props; fades / LOADING screen
-between menus; MEET THE MUPPETS + its voice clips (the only menu clips); THE
+between menus; ~~MEET THE MUPPETS + its voice clips~~ (phase 11); THE
 END's floor render; in-process course change (no
 relaunch); ~~save.bin beside the exe~~ (phase 10: the data folder). Deferred by the owner: DLSS. Optional: AI personalities, control
 remapping.
@@ -37,8 +37,8 @@ remapping.
 | # | phase | contents | status |
 |---|---|---|---|
 | S | Ship polish | windowed exe (no console), static CRT in the package | DONE 2026-10-16 (lead) |
-| 11 | Voices + MEET THE MUPPETS | MEET THE MUPPETS (game mode 0xD gallery) with the menus' voice clips; race voice clips (lap, battle win, CHICKEN CHASE catches, league standings); CRDIT_01.XA's caller | |
-| 12 | Flow + menus | in-process course change (no relaunch); fades / LOADING between screens; course-select sky backdrop + world props; scene reload after an in-menu movie; ADJUST SCREEN, VIBRATION (pad rumble), MEMORY CARD page (over save.bin), MUSIC button; league tie-break race + trophy presentation (0x1A / 0x1B), standings' 3D line-up | |
+| 11 | Voices + MEET THE MUPPETS | MEET THE MUPPETS (game mode 0xD gallery) with the menus' voice clips; race voice clips (lap, battle win, CHICKEN CHASE catches, league standings); CRDIT_01.XA's caller | DONE 2026-10-16 (frontend.md "MEET THE MUPPETS", audio.md "Phase 11"): the gallery (25 records, FUN_80026A50's looks and springs, the nine drawn as drivers without vehicles, black when not collected; camera mode 6 incl. the zoom while a clip plays; name / ? / TEST DRIVE / BACK; the idle and CROSS clips) and TEST DRIVE (game mode 0xE: the character on grid point 5, camera mode 7, START / SELECT vehicles, ratings, item HUD, random tracks once); every race clip through the queue (finish, knock-out, stunt finish, battle win, CHICKEN CHASE win, BOSS CHALLENGE boss, the results taunt WIN.XA + Statler and Waldorf's faces; a lap is SFX 0x22 only); CRDIT_01.XA proven unreferenced (no writer yields ids 0xC0..0xCF). Oracle: gallery GP0 28/28 and 16/16, TEST DRIVE 23 sprites in the frame, the RAM records / matrices exact; XA file / channel / first LBA equal for 7 clips and tracks (gallery idle clips 95 vs 96 VB after entry); 150 fuzz runs (incl. 12 TEST DRIVE) 0 panics. The league winner's clip belongs to the trophy presentation (mode 0x12, row 12) |
+| 12 | Flow + menus | in-process course change (no relaunch); fades / LOADING between screens; course-select sky backdrop + world props; scene reload after an in-menu movie; ADJUST SCREEN, VIBRATION (pad rumble), MEMORY CARD page (over save.bin), MUSIC button; league tie-break race + trophy presentation (0x1A / 0x1B; its load queues the human winner's clip 3, audio.md "Phase 11"), standings' 3D line-up | |
 | 13 | Two players + unchecked modes | simultaneous 2P character select, secrets' "n PLAYERS", 2P TOURNAMENT (3 karts), split minimap + chicken icon, player-2 billboards / draw distance / audio listener; oracle checks of 2P battle, 2P stunt race, CHICKEN CHASE win + projectile hit, DOGFIGHT, BATTLE AS BOSS, BATTLE on race courses, reversed trial, reverse lap, Doozer goal, a second stunt course, AI R2 specials, item sound key-ons | |
 | 14 | Accuracy + render | THE END floor + "?" picture; fresh-title random byte; GRAVE/BOG weather frames; DISCO floor animation; GRAVE far pickup; stunt banner animation + mirror reflections; contact-pass pair order check (3+ karts) | |
 | 15 | Final | in-window disc picker (type or paste a path, no new crate); full test + fuzz sweep; final package; FINAL-REPORT updated to 100% | |

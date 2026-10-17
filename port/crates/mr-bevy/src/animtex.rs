@@ -41,24 +41,50 @@ struct Scroll {
     sy: usize,
     w: usize,
     h: usize,
-    /// The row scroll for frame counter f.
-    rows: fn(i32) -> usize,
+    /// The row scroll's source.
+    rows: Rows,
     shown: Option<usize>,
 }
 
-/// FUN_8007A9DC's scrolls on the race courses: (slot, u, v, w, h, du, dv,
-/// rows(f)). GALLERY (4), ISLAND (6), NEW_YORK (0x11), DISCO (0x1F, two).
-fn scrolls(course: u32) -> Vec<(usize, i32, i32, i32, i32, i32, i32, fn(i32) -> usize)> {
+/// Where a scroll's row offset comes from: the frame counter, or (course
+/// 0x17) lift i's animation counter +0x13 (anim & 0x3F).
+#[derive(Clone, Copy)]
+enum Rows {
+    Frame(fn(i32) -> usize),
+    Lift(usize),
+}
+
+/// FUN_8007A9DC's switch on the course (0x800B0FAC): (slot, u, v, w, h, du,
+/// dv, rows), every FUN_8005E38C call of the case in order. Phase 14: every
+/// case (before: GALLERY, ISLAND, NEW_YORK, DISCO only): the arenas CANYON
+/// (5), LAB (0xE), T_SQUARE (0x13), the stunt courses
+/// 0xC, 0x16, 0x17 (its lifts' strips), 0x18, 0x19, and THE END (0x1D:
+/// texture slot 2, the source below the rectangle).
+fn scrolls(course: u32) -> Vec<(usize, i32, i32, i32, i32, i32, i32, Rows)> {
     fn up(f: i32) -> usize {
         (f & 0x3F) as usize
     }
     fn down(f: i32) -> usize {
         ((f & 0x1F) * -2 + 0x3F) as usize
     }
+    fn down4(f: i32) -> usize {
+        ((f & 0xF) * -4 + 0x3F) as usize
+    }
+    fn steps(f: i32) -> usize {
+        (((f & 0x1FF) >> 5) << 2) as usize
+    }
+    let (up, down) = (Rows::Frame(up), Rows::Frame(down));
     match course {
-        4 => vec![(5, 0x40, 0x40, 8, 0x40, 0, -0x40, up as fn(i32) -> usize)],
-        6 => vec![(5, 0xC0, 0xC0, 0x40, 0x40, 0, -0x40, down)],
-        0x11 => vec![(5, 0xC0, 0xC0, 0x40, 0x40, 0, -0x40, up)],
+        4 => vec![(5, 0x40, 0x40, 8, 0x40, 0, -0x40, up)],
+        5 => vec![(5, 0x40, 0xC0, 0x40, 0x40, 0, -0x40, Rows::Frame(down4))],
+        6 | 0x13 => vec![(5, 0xC0, 0xC0, 0x40, 0x40, 0, -0x40, down)],
+        0xC => vec![(5, 0xC0, 0xC0, 0x40, 0x40, 0, -0x40, down), (5, 0x80, 0xC0, 0x40, 0x40, 0, -0x40, down)],
+        0xE => vec![(5, 0, 0x40, 0x40, 0x40, 0, -0x40, up)],
+        0x11 | 0x16 | 0x18 => vec![(5, 0xC0, 0xC0, 0x40, 0x40, 0, -0x40, up)],
+        // lifts 3..8: an 8-texel strip each at u 0xC0 + 8 k
+        0x17 => (0..6).map(|k| (5, 0xC0 + 8 * k as i32, 0xC0, 8, 0x40, 0, -0x40, Rows::Lift(k + 3))).chain(std::iter::once((5, 0x80, 0xC0, 4, 0x40, 0, -0x40, Rows::Frame(steps)))).collect(),
+        0x19 => vec![(5, 0xC0, 0xC0, 0x40, 0x40, 0, -0x40, up), (5, 0x80, 0xC0, 0x40, 0x40, 0, -0x40, up)],
+        0x1D => vec![(2, 0xE0, 0, 0x20, 0x40, 0, 0x40, up)],
         0x1F => vec![(5, 0xC0, 0, 0x40, 0x40, -0x40, 0, up), (5, 0x40, 0xC0, 0x40, 0x40, 0, -0x40, up)],
         _ => Vec::new(),
     }
@@ -178,8 +204,24 @@ fn step(
     };
     // dev: MRM_ANIM_OFFSET=n shifts the counter the strips see (timing checks)
     let f = f - std::env::var("MRM_ANIM_OFFSET").ok().and_then(|v| v.parse::<i32>().ok()).unwrap_or(0);
+    // course 0x17: the lifts' animation counters as FUN_8007A9DC reads them
+    // (before the frame's FUN_800859EC step: undo it by the speed's sign)
+    let lift_anim = |i: usize| -> Option<i32> {
+        let crate::Driver::Sim(run) = &p.driver else { return None };
+        let g = &run.session.globals;
+        let l = g.objects.lifts.get(i)?;
+        let dt = g.dt.max(1);
+        Some(l.anim as i32 - if l.speed > 0 { dt } else if l.speed < 0 { -dt } else { 0 })
+    };
     for s in at.scrolls.iter_mut() {
-        let r = (s.rows)(f).min(s.h);
+        let r = match s.rows {
+            Rows::Frame(rows) => rows(f),
+            Rows::Lift(i) => match lift_anim(i) {
+                Some(a) => (a & 0x3F) as usize,
+                None => continue,
+            },
+        }
+        .min(s.h);
         if s.shown == Some(r) {
             continue;
         }

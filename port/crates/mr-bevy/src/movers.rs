@@ -537,7 +537,9 @@ pub fn local_polys(dat: &Dat, o: &dat::Object, sin: &SinTable, slots: &[Option<d
                 uv: ord.iter().map(|&k| p.uv[k]).collect(),
                 rgb: ord.iter().map(|&k| mesh.vertices[p.idx[k] as usize].rgb()).collect(),
                 tex: slot.map(|s| dat::prim_tpage_clut(s, g, p)),
-                semi: g.semi_transparent(),
+                // phase 14: an environment-mapped group's first polygon is
+                // opaque (its reflection pass: envmap.rs)
+                semi: g.semi_transparent() && !g.double_slot(),
                 abr: g.blend_bits(),
                 cull: !g.double_sided(),
             });

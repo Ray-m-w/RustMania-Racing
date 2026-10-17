@@ -3304,7 +3304,7 @@ pub fn char_select_records(fr: &Front, s: &mr_sim::session::Session, p2: Option<
 }
 
 /// The item HUD's tables (FUN_8002FD04's sine), read once.
-fn item_tables() -> &'static Option<mr_assets::hud_items::ItemTables> {
+pub fn item_tables() -> &'static Option<mr_assets::hud_items::ItemTables> {
     static T: OnceLock<Option<mr_assets::hud_items::ItemTables>> = OnceLock::new();
     T.get_or_init(|| mr_disc::Disc::open_default().ok().and_then(|mut d| d.read("SLUS_012.37").ok()).and_then(|e| mr_assets::hud_items::ItemTables::from_exe(&e)))
 }

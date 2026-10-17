@@ -227,6 +227,9 @@ pub fn setup(
             .map(|(mesh, mat)| (mesh, push.map(|u| push_cache.get(&mats, &mut pmats, &mat, u, far_cut, far_cut2)).ok_or(mat)))
             .collect();
         let mut e = commands.spawn((Transform::default(), Visibility::default(), crate::TrackObject(i), crate::eyes::EyeMask::default()));
+        if let Some(env) = crate::envmap::object_env(&dat, o, &sin, &dslots, mover.is_some()) {
+            e.insert(env);
+        }
         if let Some(m) = mover {
             e.insert((crate::movers::pose_transform(&m, None).unwrap_or_default(), m));
         }
@@ -434,7 +437,9 @@ pub fn object_polys(dat: &Dat, o: &dat::Object, sin: &SinTable, slots: &[Option<
                 uv: ord.iter().map(|&k| p.uv[k]).collect(),
                 rgb: ord.iter().map(|&k| mesh.vertices[p.idx[k] as usize].rgb()).collect(),
                 tex: slot.map(|s| dat::prim_tpage_clut(s, g, p)),
-                semi: g.semi_transparent(),
+                // phase 14: an environment-mapped group's first polygon is
+                // opaque (its reflection pass: envmap.rs)
+                semi: g.semi_transparent() && !g.double_slot(),
                 abr: g.blend_bits(),
                 cull: !g.double_sided(),
             });

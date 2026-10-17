@@ -444,8 +444,8 @@ pub struct Vertex {
     /// primitive's 24-bit modulation colour, 0x80 = neutral. [CODE 0x8001a304]
     pub color: u16,
     /// Only for meshes with a negative vertex count (not present in DOCK):
-    /// the vertex's 4-byte record after the position array (a normal
-    /// [INFER]).
+    /// the vertex's 4-byte record after the position array and one extra
+    /// word: its normal (x, y, z bytes; FUN_800152C4) [GPU, phase 14].
     pub extra: Option<[u8; 4]>,
 }
 
@@ -702,9 +702,12 @@ fn parse_mesh(r: &R, o: usize) -> Result<Mesh, Error> {
             // row 12: the positions are the GTE's 8-byte SVECTORs as in a
             // positive-count mesh, then one 4-byte record per vertex
             // (FUN_80025b8c skips 3 words a vertex + 1); read interleaved
-            // the frontend's statue / ship props came out 20x too big
+            // the frontend's statue / ship props came out 20x too big.
+            // Phase 14: the extra word comes first, then the records (the
+            // vertex normals of FUN_800152C4's reflections: x, y, z bytes;
+            // checked against the oracle's GP0 UVs, envmap.rs)
             let b = o + 4 + 8 * i;
-            let e = o + 4 + 8 * m + 4 * i;
+            let e = o + 4 + 8 * m + 4 + 4 * i;
             vertices.push(Vertex {
                 pos: [r.i16(b)?, r.i16(b + 2)?, r.i16(b + 4)?],
                 color: r.u16(b + 6)?,

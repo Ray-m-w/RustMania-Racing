@@ -336,7 +336,6 @@ fn gp0(disc: &mut mr_disc::Disc, exe: &[u8], info: &CourseInfo, dat: &mr_assets:
             let ord: &[usize] = if n == 4 { &[0, 1, 3, 2] } else { &[0, 1, 2] };
             for p in &g.prims {
                 let (tp, cl) = mr_assets::dat::prim_tpage_clut(slot, g, p);
-                let uv: Vec<[u8; 2]> = ord.iter().map(|&k| p.uv[k]).collect();
                 for level in 0..3u8 {
                     if level > 0 && g.tex_slot() > 3 {
                         break;

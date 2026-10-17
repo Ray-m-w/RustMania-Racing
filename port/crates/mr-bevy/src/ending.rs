@@ -112,8 +112,7 @@ pub fn tables() -> &'static Tables {
 /// blend colour v = clamp(y * 256 / 0xF0, 0, 255): size 0 (v, 0x60, !v),
 /// size 1 (!v, 0x30, v), size 2 (v, 0x90, !v); abr 0x60 in the credits,
 /// 0 (semi-transparent) behind the menu. "?" lines are the picture of a
-/// complete game (0x800E02B9 = 3: FUN_8002FD04, not ported: the line stays
-/// blank) or the text.
+/// complete game (0x800E02B9 = 3: `credits_picture`) or the text.
 pub fn credits_sprites(t: &ahud::HudTables, tb: &Tables, c: i32, menu: bool, complete: bool) -> Vec<Sprite> {
     let mut out = Vec::new();
     if c / ((tb.height() + 0xF0) * 2) != 0 {
@@ -137,6 +136,31 @@ pub fn credits_sprites(t: &ahud::HudTables, tb: &Tables, c: i32, menu: bool, com
         y += Tables::step(l.size);
     }
     out
+}
+
+/// Phase 14: with a complete game (0x800E02B9 = 3) a "?" line is a picture
+/// instead (FUN_80051698 case 0x15 @0x80053160): its y is the line's + 6 /
+/// 0xC / 8 for size 2 / 1 / 0 (the last such line), and after the text the
+/// trophy is drawn there: FUN_8002FD04(0x100, y, 0x1C, 0x1C, 0, 0, u 0xC0,
+/// v 0x80, 0x37 x 0x37, 0x80 grey, slot 0x15, CLUT + 0xB, abr 0x60; 0
+/// behind the menu).
+pub fn credits_picture(tb: &Tables, c: i32) -> Option<i32> {
+    if c / ((tb.height() + 0xF0) * 2) != 0 {
+        return None;
+    }
+    let mut y = 0xF0 - c / 2;
+    let mut at = None;
+    for l in &tb.lines {
+        if l.text.as_deref() == Some("?") {
+            at = Some(y + match l.size {
+                2 => 6,
+                1 => 0xC,
+                _ => 8,
+            });
+        }
+        y += Tables::step(l.size);
+    }
+    at
 }
 
 /// After the scroll (c >= (height + 0x10E) / 30 * 60): "PRESS START" while
@@ -246,7 +270,14 @@ fn run(p: Res<crate::Player>, latch: Res<crate::pacing::PadLatch>, front: Res<cr
         m.extend(sp);
         sp = m;
     }
-    let want = Some(sp.into_iter().map(Prim::Sprt).collect::<Vec<_>>());
+    let mut want: Vec<Prim> = sp.into_iter().map(Prim::Sprt).collect();
+    // the "?" picture, drawn after the text (under it)
+    if sec == 3 {
+        if let Some(q) = credits_picture(tb, c).and_then(|y| crate::menus::item_tables().as_ref().and_then(|it| mr_assets::hud_items::quad(it, 0x100, y, 0x1C, 0x1C, 0, 0xC0, 0x80, 0x37, 0x37, [0x80; 3], 0x15, 0xB, if res.sub == 1 { 0 } else { 0x60 }))) {
+            want.push(Prim::Ft4(q));
+        }
+    }
+    let want = Some(want);
     if ov.0 != want {
         ov.0 = want;
     }
@@ -329,5 +360,35 @@ mod tests {
         println!("credits: {} oracle glyphs, best frame {} ({} differ)", theirs.len(), best.1, best.0);
         assert!(theirs.len() > 50, "{} oracle glyphs", theirs.len());
         assert_eq!(best.0, 0, "frame {}: {} glyphs differ of {}", best.1, best.0, theirs.len());
+    }
+
+    /// Phase 14: the "?" picture of a complete game against the oracle's GP0
+    /// frame (analysis/s8/end_env/g800, 0x800E02B9 = 3; local): the trophy
+    /// quad (corners, UVs, colour) at some frame counter of the scroll.
+    #[test]
+    fn gp0_credits_picture() {
+        let root = mr_sim::oracle::repo_root().join("analysis/s8/end_env");
+        let Ok(text) = std::fs::read_to_string(root.join("g800.json")) else { return };
+        let Ok(mut disc) = mr_disc::Disc::open_default() else { return };
+        let exe = mr_sim::tables::ExeImage::parse(&disc.read("SLUS_012.37").unwrap()).unwrap();
+        let tb = Tables::from_exe(&exe);
+        let Some(it) = crate::menus::item_tables().as_ref() else { return };
+        // the oracle's FT4 with UV (0xC0, 0x80)
+        let mut theirs = None;
+        for chunk in text.split("\"words\": [").skip(1) {
+            let w: Vec<u32> = chunk.split(']').next().unwrap_or("").split(',').filter_map(|w| u32::from_str_radix(w.trim().trim_matches('"').trim_start_matches("0x"), 16).ok()).collect();
+            if w.len() == 9 && (0x2C..=0x2F).contains(&(w[0] >> 24)) && (w[2] & 0xFFFF) == 0x80C0 {
+                let v: Vec<[i32; 2]> = [1, 3, 5, 7].iter().map(|&k| [(w[k] & 0xFFFF) as i16 as i32, (w[k] >> 16) as i16 as i32]).collect();
+                let uv: Vec<[u8; 2]> = [2, 4, 6, 8].iter().map(|&k| [(w[k] & 0xFF) as u8, ((w[k] >> 8) & 0xFF) as u8]).collect();
+                theirs = Some((v, uv, [(w[0] & 0xFF) as u8, ((w[0] >> 8) & 0xFF) as u8, ((w[0] >> 16) & 0xFF) as u8]));
+            }
+        }
+        let theirs = theirs.expect("the oracle frame holds the picture");
+        let hit = (0..2000).find_map(|c| {
+            let q = mr_assets::hud_items::quad(it, 0x100, credits_picture(&tb, c)?, 0x1C, 0x1C, 0, 0xC0, 0x80, 0x37, 0x37, [0x80; 3], 0x15, 0xB, 0x60)?;
+            (q.v.to_vec() == theirs.0 && q.uv.to_vec() == theirs.1 && q.rgb == theirs.2).then_some(c)
+        });
+        println!("credits picture: oracle {:?}, port equal at frame counter {hit:?}", theirs.0);
+        assert!(hit.is_some());
     }
 }

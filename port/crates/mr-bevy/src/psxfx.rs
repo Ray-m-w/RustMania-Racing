@@ -333,7 +333,7 @@ impl Plugin for PsxFxPlugin {
             .add_systems(Update, mark_camera)
             .add_systems(
                 PostUpdate,
-                (push_semi, build_frame)
+                (push_semi, crate::envmap::push_env, build_frame)
                     .chain()
                     .after(bevy::transform::TransformSystems::Propagate)
                     .after(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate),

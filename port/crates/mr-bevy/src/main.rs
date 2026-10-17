@@ -27,6 +27,7 @@ mod paths;
 mod sfx;
 mod animtex;
 mod effects;
+mod envmap;
 mod eyes;
 mod psxfx;
 mod kartfx;

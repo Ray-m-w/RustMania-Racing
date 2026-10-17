@@ -548,7 +548,7 @@ fn main() {
     let low_render = st.render_latency_low();
     let mut plugins = DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: "Muppet RaceMania (Rust)".into(),
+                title: "RustMania Racing".into(),
                 resolution: st.resolution().into(),
                 mode: if st.fullscreen() {
                     bevy::window::WindowMode::BorderlessFullscreen(bevy::window::MonitorSelection::Current)
@@ -1302,7 +1302,11 @@ fn follow_camera(
 
 fn title(p: Res<Player>, g: Res<ghost::Ghost>, mut w: Query<&mut Window>) {
     let Ok(mut win) = w.single_mut() else { return };
-    let mut s = format!("Muppet RaceMania (Rust) | tick {} | buttons {:04X}", p.tick, p.buttons);
+    // Release builds show the name only; debug builds add the tick and pad.
+    let mut s = String::from("RustMania Racing");
+    if cfg!(debug_assertions) {
+        s += &format!(" | tick {} | buttons {:04X}", p.tick, p.buttons);
+    }
     if let Some(d) = g.drift(&p.pose) {
         s += &format!(" | ghost drift {:.0} units", d);
     }

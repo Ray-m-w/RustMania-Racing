@@ -566,7 +566,7 @@ mod win {
         let px = bgra(&p);
         STATE.with(|s| *s.borrow_mut() = Some(State { picker: p, bgra: px, result: None }));
         let class = wide("MuppetRaceManiaDiscPicker");
-        let title = wide("Muppet RaceMania (Rust): choose your disc image");
+        let title = wide("RustMania Racing: choose your disc image");
         // SAFETY: standard Win32 window: the class and title buffers outlive
         // the window; the window procedure only touches this thread's STATE.
         unsafe {

@@ -36,7 +36,7 @@ RULES (still binding for any further work)
 BUILD AND RUN
 - `cd port; cargo run --release -p mr-bevy` (disc from settings.txt `disc =`,
   $MRM_DISC, or game.toml's `disc` line). `tools\play-port.ps1` wraps it.
-- Package: `powershell -File tools\package-port.ps1` -> dist\mrm-port-<v>-windows-x64.zip.
+- Package: `powershell -File tools\package-port.ps1` -> dist\rustmania-racing-<v>-windows-x64.zip.
 - User data: %APPDATA%\MuppetRaceMania (save.bin, settings.txt, crash.txt).
 
 DEVELOPMENT DATA (outside the repo)

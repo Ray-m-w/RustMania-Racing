@@ -34,7 +34,7 @@ settings.txt from beside the exe (e.g. port/target/release) when the
 folder has none. "Beside the exe" below means this folder.
 
 Standalone package (phase 10): `..\tools\package-port.ps1` ->
-dist/mrm-port-<version>-windows-x64.zip (the exe as muppet-racemania.exe,
+dist/rustmania-racing-<version>-windows-x64.zip (the exe as rustmania-racing.exe,
 README-port.txt from package/, THIRD-PARTY-LICENSES.txt generated from
 cargo metadata + the registry's licence files; no game data).
 Keyboard: arrows steer, X accelerate, S brake/reverse, Z jump, A

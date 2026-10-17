@@ -1,7 +1,7 @@
-Muppet RaceMania (Rust + Bevy port) for Windows x64, version @VERSION@
-=====================================================================
+RustMania Racing for Windows x64, version @VERSION@
+===================================================
 
-A reimplementation of Muppet RaceMania (PlayStation, 2000, SLUS-01237) in
+An unofficial fan reimplementation of Muppet RaceMania (PlayStation, 2000, SLUS-01237) in
 Rust. It contains NO game data: it reads everything (models, textures,
 music, movies, the game's tables) from YOUR OWN copy of the disc at run
 time. You need a dump of the USA disc, "Muppet RaceMania (USA)".
@@ -14,7 +14,7 @@ Controls: keyboard or gamepad (XInput / DirectInput pads; rumble).
 
 1. Point it at your disc
 ------------------------
-Start muppet-racemania.exe. Without a disc it asks for it in its window:
+Start rustmania-racing.exe. Without a disc it asks for it in its window:
 type the path to your disc image, or paste it with Ctrl+V (in Explorer:
 Shift + right-click the file -> "Copy as path"), and press Enter, e.g.
 
@@ -28,7 +28,7 @@ disc later, edit (or delete) the `disc` line in settings.txt.
 The .cue (single FILE, MODE2/2352, as Redump dumps are) or its track .bin
 both work. A .chd must be extracted first:
     chdman extractcd -i "Muppet RaceMania (USA).chd" -o "Muppet RaceMania (USA).cue"
-Other ways to name the disc: `muppet-racemania.exe --disc PATH`, or the
+Other ways to name the disc: `rustmania-racing.exe --disc PATH`, or the
 environment variable MRM_DISC.
 
 On the first start with a disc the track file is checked once against the

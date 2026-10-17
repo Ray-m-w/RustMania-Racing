@@ -183,7 +183,7 @@ pub fn no_disc_screen(reason: &str) -> ! {
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: "Muppet RaceMania (Rust): no disc".into(),
+                title: "RustMania Racing: no disc".into(),
                 resolution: ((IW * 2) as u32, (IH * 2) as u32).into(),
                 ..default()
             }),

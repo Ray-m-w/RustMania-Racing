@@ -79,7 +79,7 @@ fn report(msg: &str, at: &str) -> ! {
     let thread = std::thread::current().name().unwrap_or("(unnamed)").to_string();
     let mode = MODE.load(Ordering::Relaxed);
     let text = format!(
-        "Muppet RaceMania (Rust) {} stopped on an error.\n\
+        "RustMania Racing {} stopped on an error.\n\
          time (UTC): {}\n\
          message: {msg}\n\
          at: {}\n\

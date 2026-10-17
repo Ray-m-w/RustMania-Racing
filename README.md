@@ -54,7 +54,7 @@ You need your own copy of the game: a `.cue`/`.bin` image of
 *Muppet RaceMania (USA)* (SLUS-01237) made from your disc. A `.chd` can be
 converted with `chdman`.
 
-1. Get `muppet-racemania.exe`: download a release, or build it (below).
+1. Get `rustmania-racing.exe`: download a release, or build it (below).
 2. Run it. The first time, it asks where your `.cue` is; paste the path and
    press Enter. It checks the image against the known good dump and remembers
    it.

@@ -350,7 +350,7 @@ impl Settings {
     /// The file form of these settings (known keys with their help as
     /// comments, then any unknown keys).
     pub fn to_text(&self) -> String {
-        let mut s = String::from("# Muppet RaceMania (Rust) settings: key = value; command-line --set key=value overrides.\n");
+        let mut s = String::from("# RustMania Racing settings: key = value; command-line --set key=value overrides.\n");
         for o in KNOWN {
             s += &format!("\n# {} ({}; default {})\n{} = {}\n", o.help, o.allowed, o.default, o.key, self.get(o.key).unwrap_or(o.default));
         }

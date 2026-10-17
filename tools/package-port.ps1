@@ -1,7 +1,7 @@
 ﻿# Package the Rust + Bevy port (phase 10):
-#   dist\mrm-port-<version>-windows-x64.zip
+#   dist\rustmania-racing-<version>-windows-x64.zip
 # with exactly three files:
-#   muppet-racemania.exe        mr-bevy, release build
+#   rustmania-racing.exe        mr-bevy, release build
 #   README-port.txt             port\package\README-port.txt (disc, controls,
 #                               data folder, crash log)
 #   THIRD-PARTY-LICENSES.txt    every crate compiled into the exe (cargo
@@ -71,7 +71,7 @@ $sb = New-Object System.Text.StringBuilder
 [void]$sb.AppendLine("Muppet RaceMania (Rust port) ${Version}: third-party software")
 [void]$sb.AppendLine("=" * 72)
 [void]$sb.AppendLine("")
-[void]$sb.AppendLine("muppet-racemania.exe is compiled from the project's own crates (mr-bevy,")
+[void]$sb.AppendLine("rustmania-racing.exe is compiled from the project's own crates (mr-bevy,")
 [void]$sb.AppendLine("mr-sim, mr-disc, mr-assets, mr-audio, mr-video, mr-trace) and the")
 [void]$sb.AppendLine("$($third.Count) crates below (crates.io; versions and checksums pinned by")
 [void]$sb.AppendLine("port/Cargo.lock), plus the Rust standard library (MIT OR Apache-2.0).")
@@ -118,18 +118,18 @@ foreach ($t in $texts.Keys) {
 $Stage = Join-Path $Root "release-stage\port"
 if (Test-Path $Stage) { Remove-Item -Recurse -Force $Stage }
 New-Item -ItemType Directory -Force $Stage | Out-Null
-Copy-Item (Join-Path $Port "target-dist\release\mr-bevy.exe") (Join-Path $Stage "muppet-racemania.exe")
+Copy-Item (Join-Path $Port "target-dist\release\mr-bevy.exe") (Join-Path $Stage "rustmania-racing.exe")
 $readme = (Get-Content (Join-Path $Port "package\README-port.txt") -Raw).Replace("@VERSION@", $Version).Replace("`r`n", "`n").Replace("`n", "`r`n")
 [System.IO.File]::WriteAllText((Join-Path $Stage "README-port.txt"), $readme)
 [System.IO.File]::WriteAllText((Join-Path $Stage "THIRD-PARTY-LICENSES.txt"), $sb.ToString().Replace("`r`n", "`n").Replace("`n", "`r`n"))
 
-$want = @("muppet-racemania.exe", "README-port.txt", "THIRD-PARTY-LICENSES.txt") | Sort-Object
+$want = @("rustmania-racing.exe", "README-port.txt", "THIRD-PARTY-LICENSES.txt") | Sort-Object
 $have = Get-ChildItem -Recurse -File $Stage | ForEach-Object { $_.Name } | Sort-Object
 if (Compare-Object $want $have) { throw "stage holds unexpected files: $($have -join ', ')" }
 
 $Dist = Join-Path $Root "dist"
 New-Item -ItemType Directory -Force $Dist | Out-Null
-$Zip = Join-Path $Dist "mrm-port-$Version-windows-x64.zip"
+$Zip = Join-Path $Dist "rustmania-racing-$Version-windows-x64.zip"
 if (Test-Path $Zip) { Remove-Item -Force $Zip }
 Compress-Archive -Path (Join-Path $Stage "*") -DestinationPath $Zip
 $hash = (Get-FileHash -Algorithm SHA256 $Zip).Hash.ToLower()

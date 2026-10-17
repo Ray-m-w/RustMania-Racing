@@ -12,7 +12,7 @@
 param(
     [switch]$ExportOnly,
     [int]$DecompileTimeout = 60,
-    [string]$Quarry = 'F:\Muppet Racemania'
+    [string]$Quarry = $(if ($env:MRM_DEV) { Join-Path $env:MRM_DEV 'quarry' } else { 'G:\GameDev\RustMania Racing Development\quarry' })
 )
 $ErrorActionPreference = 'Stop'
 $repo    = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path

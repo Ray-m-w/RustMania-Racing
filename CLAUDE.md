@@ -43,7 +43,7 @@ DEVELOPMENT DATA (outside the repo)
 - G:\GameDev\RustMania Racing Development (or $env:MRM_DEV): analysis\ (oracle
   captures the tests and checkers read), build-dev\ (the oracle), generated\,
   disc\, saves\ (savestates), ghidra\, quarry\ (Ghidra + JDK + symbols.md).
-  `.	ools\dev-link.ps1` junctions them into the repo root (gitignored names);
+  `.\tools\dev-link.ps1` junctions them into the repo root (gitignored names);
   `-Unlink` removes the links only. Unlink before publishing a release.
 - Old bulk (build caches, screenshots, statistics runs) is in
   G:\GameDev\_MRM-Archive for the owner to delete.

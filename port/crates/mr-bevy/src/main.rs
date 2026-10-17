@@ -22,6 +22,7 @@ mod loading;
 mod rumble;
 mod screen;
 mod crash;
+mod discpick;
 mod discsel;
 mod paths;
 mod sfx;
@@ -522,7 +523,14 @@ fn main() {
     // the "no disc" screen; the Redump check runs once in the background.
     match discsel::resolve(settings::Settings::global()) {
         Ok(bin) => discsel::check_in_background(bin),
-        Err(reason) => discsel::no_disc_screen(&reason),
+        // Row 15: the disc picker (written to settings.txt; the game then
+        // starts in this process)
+        Err(reason) => {
+            let bin = discpick::run(&reason);
+            std::env::set_var("MRM_DISC", &bin);
+            settings::Settings::reload();
+            discsel::check_in_background(bin);
+        }
     }
     let a0: Vec<String> = crate::settings::args();
     let capture_dir = a0.iter().position(|x| x == "--replay-capture").and_then(|i| a0.get(i + 1)).cloned();

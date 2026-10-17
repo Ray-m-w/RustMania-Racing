@@ -8,8 +8,10 @@
 //! `$MRM_DISC`, which every `mr_disc::Disc::open_default` reads. mr-disc reads a .cue (single FILE, MODE2/2352)
 //! or its track .bin; not a .chd (extract it with chdman first).
 //!
-//! With no readable disc the window shows where to set it and the program
-//! exits (`no_disc_screen`). The track file's SHA-1 is compared once with
+//! With no readable disc the disc picker asks for it in a window
+//! (discpick.rs, row 15: type / paste / pick, written to settings.txt, the
+//! game then starts); elsewhere than Windows the window shows where to set
+//! it and the program exits (`no_disc_screen`). The track file's SHA-1 is compared once with
 //! Redump disc 16664 track 1 (BINLIST.toml); the result is kept in
 //! `disc-check.txt` in the data folder (keyed by path, size and time), a
 //! mismatch is a warning (stderr, the window title), never a refusal.
@@ -95,11 +97,12 @@ fn check(bin: &Path, cache: Option<&Path>) -> Option<String> {
 
 // ------------------------------------------------------------ no disc screen
 
-const IW: usize = 480;
-const IH: usize = 270;
-const COLS: usize = (IW - 16) / 6;
+pub(crate) const IW: usize = 480;
+pub(crate) const IH: usize = 270;
+pub(crate) const COLS: usize = (IW - 16) / 6;
 
 /// The message (upper case: the built-in font has no lower case).
+#[cfg_attr(windows, allow(dead_code))] // the Bevy screen: not Windows (discpick.rs there)
 pub fn message(reason: &str) -> Vec<String> {
     let dir = crate::paths::data_dir().map(|d| d.display().to_string()).unwrap_or_else(|| "(the game's folder)".into());
     let mut out = Vec::new();
@@ -131,14 +134,22 @@ pub fn message(reason: &str) -> Vec<String> {
 }
 
 /// Draw the lines into an RGBA image (5x7 font, 6x9 cells).
+#[cfg_attr(windows, allow(dead_code))] // the Bevy screen: not Windows (discpick.rs there)
 pub fn render(lines: &[String]) -> Vec<u8> {
+    let lines: Vec<(String, [u8; 3])> =
+        lines.iter().enumerate().map(|(row, l)| (l.clone(), if row == 0 { [255, 220, 80] } else { [230, 230, 230] })).collect();
+    render_colored(&lines)
+}
+
+/// Draw coloured lines into an RGBA image (the disc picker, discpick.rs).
+pub fn render_colored(lines: &[(String, [u8; 3])]) -> Vec<u8> {
     let mut px = [16u8, 16, 40, 255].repeat(IW * IH);
-    for (row, l) in lines.iter().enumerate() {
+    for (row, (l, col)) in lines.iter().enumerate() {
         let y0 = 8 + row * 9;
         if y0 + 7 > IH {
             break;
         }
-        let col = if row == 0 { [255, 220, 80] } else { [230, 230, 230] };
+        let col = *col;
         for (i, ch) in l.chars().enumerate().take(COLS) {
             let g = glyph(ch);
             let x0 = 8 + i * 6;
@@ -157,6 +168,7 @@ pub fn render(lines: &[String]) -> Vec<u8> {
 
 /// Show the "no disc" screen until a key, a pad button or the window's close
 /// (`--shot PATH` writes the picture and exits), then exit the process.
+#[cfg_attr(windows, allow(dead_code))] // the Bevy screen: not Windows (discpick.rs there)
 pub fn no_disc_screen(reason: &str) -> ! {
     eprintln!("Muppet RaceMania: {reason}. Set `disc = <your .cue>` in settings.txt in the data folder.");
     // A settings.txt to edit (every key with its help, `disc` among them).
@@ -184,9 +196,11 @@ pub fn no_disc_screen(reason: &str) -> ! {
     std::process::exit(2);
 }
 
+#[cfg_attr(windows, allow(dead_code))] // the Bevy screen: not Windows (discpick.rs there)
 #[derive(Resource)]
 struct NoDisc(Vec<u8>);
 
+#[cfg_attr(windows, allow(dead_code))] // the Bevy screen: not Windows (discpick.rs there)
 fn setup(mut c: Commands, nd: Res<NoDisc>, mut images: ResMut<Assets<Image>>, mut meshes: ResMut<Assets<Mesh>>, mut mats: ResMut<Assets<StandardMaterial>>) {
     let mut img = Image::new(
         Extent3d { width: IW as u32, height: IH as u32, depth_or_array_layers: 1 },
@@ -212,6 +226,7 @@ fn setup(mut c: Commands, nd: Res<NoDisc>, mut images: ResMut<Assets<Image>>, mu
     c.spawn((Mesh3d(meshes.add(Mesh::from(Rectangle::new(1.0, 1.0)))), MeshMaterial3d(mat), Transform::IDENTITY));
 }
 
+#[cfg_attr(windows, allow(dead_code))] // the Bevy screen: not Windows (discpick.rs there)
 fn any_key(keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, mut exit: MessageWriter<AppExit>) {
     if keys.get_just_pressed().next().is_some() || pads.iter().any(|g| g.get_just_pressed().next().is_some()) {
         exit.write(AppExit::Success);

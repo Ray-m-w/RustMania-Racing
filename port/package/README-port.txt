@@ -7,18 +7,23 @@ music, movies, the game's tables) from YOUR OWN copy of the disc at run
 time. You need a dump of the USA disc, "Muppet RaceMania (USA)".
 
 
-Requirements: Windows 10/11 x64, a GPU with Vulkan or Direct3D 12, and
-the Microsoft Visual C++ 2015-2022 Redistributable (x64; VCRUNTIME140.dll,
-already present on most PCs).
+Requirements: Windows 10/11 x64 and a GPU with Vulkan or Direct3D 12.
+Nothing else to install (the program carries its C runtime).
+Controls: keyboard only (gamepad support pending).
 
 
 1. Point it at your disc
 ------------------------
-Start muppet-racemania.exe once. Without a disc it shows a message and
-creates the settings file (see 3. below for where). Open settings.txt in a
-text editor and set the `disc` line to your disc image:
+Start muppet-racemania.exe. Without a disc it asks for it in its window:
+type the path to your disc image, or paste it with Ctrl+V (in Explorer:
+Shift + right-click the file -> "Copy as path"), and press Enter, e.g.
 
-    disc = D:\Games\Muppet RaceMania (USA).cue
+    D:\Games\Muppet RaceMania (USA).cue
+
+A .cue found next to the program or in the data folder (see 3.) is listed
+with a number: press that number. The path is checked, saved in
+settings.txt as `disc = ...` and the game starts; Esc quits. To change the
+disc later, edit (or delete) the `disc` line in settings.txt.
 
 The .cue (single FILE, MODE2/2352, as Redump dumps are) or its track .bin
 both work. A .chd must be extracted first:
@@ -29,7 +34,7 @@ environment variable MRM_DISC.
 On the first start with a disc the track file is checked once against the
 Redump record (disc 16664, track 1, SHA-1
 1b0fc0b6fa0958ecac5f087aab4b444b2067a387). A different image still runs,
-with a warning in the console and the window title; the result is kept in
+with a warning in the window title; the result is kept in
 disc-check.txt (delete it to check again).
 
 
@@ -44,15 +49,12 @@ Keyboard, player 1:
     Enter       START (pause)
     Q / W       L1 / R1 (turbo; special move on a full meter)
     E / R       L2 / R2 (character special)
-Gamepad (not read by this build, see 4.): D-pad / left stick steer, south or right trigger accelerate,
-east or left trigger brake, west jump, north = TRIANGLE, Start = START,
-bumpers = L1 / R1, stick clicks = L2 / R2.
+Gamepads are not read yet (gamepad support pending).
 OPTIONS -> SET CONTROLLERS swaps the game's layout A / B.
 
 Two players (2 PLAYER RACE / BATTLE / STUNT RACE, CHICKEN CHASE on a
-course's menu): split screen, player 1 on top. With two gamepads the first
-plays player 1, the second player 2. With one gamepad or none, player 2 on
-the keyboard:
+course's menu): split screen, player 1 on top, both on the keyboard;
+player 2:
     J / L steer, I / K up / down, N accelerate (CROSS), B brake (CIRCLE),
     M jump (SQUARE), H (TRIANGLE), Backspace = START, U / O = L1 / R1,
     Y / P = L2 / R2.
@@ -92,12 +94,14 @@ logic_hz = 30 | 60, skip_intro_movies = true, music_volume / sound_volume
 
 4. Known differences
 --------------------
-Not everything of the original is ported yet (for example the
-simultaneous two-player character select, 2-player tournament).
-Such menu entries are shown greyed out. OPTIONS -> ADJUST SCREEN moves
-the picture inside the window's black border (it cannot move when the
-picture fills the window). VIBRATION is in SET CONTROLLERS, but this
-build reads no gamepad (keyboard only), so there is nothing to rumble.
+Every mode and menu of the original is ported. By design: the default
+60 Hz game logic is tuned to feel like the original's 30 Hz (logic_hz =
+30 is the exact original timing); enhancements (widescreen, smoother
+textures and lighting, full draw distance, anti-aliasing) are options
+(faithful_view = true for the PlayStation's look). OPTIONS -> ADJUST
+SCREEN moves the picture inside the window's black border (it cannot move
+when the picture fills the window). Gamepads (and so VIBRATION) are not
+supported yet: keyboard only.
 
 
 5. Licences

@@ -2,12 +2,12 @@
 
 A reimplementation of Muppet RaceMania (PS1, SLUS-01237) in Rust, using the
 assets on the owner's disc and verified tick for tick against the psxrecomp
-build of the original (the oracle). Now: the game's title and its one-player
-menus (Session 7), then a full 3-lap race on any of the game's 18 race
-courses (Session 6; ../docs/spec/courses.md) as any character in any
-vehicle against five AI opponents (four on the overhead-camera courses),
-countdown and start game to results. Plan and rules: ../docs/SESSION-2.md; results:
-../docs/notes/SESSION-2-report.md.
+build of the original (the oracle). Complete (row 15, 2026-10-17): the
+whole game - title, menus, every mode (races, tournaments, stunt trial,
+battles, adventure, course secrets, two players, MEET THE MUPPETS / TEST
+DRIVE, the attract demo, THE END, cheat codes, movies), saves and options.
+Keyboard only (gamepad support pending: the build has no gamepad backend).
+Final report: ../docs/notes/FINAL-REPORT.md; plan: ../docs/PLAN-COMPLETE.md.
 
 ## Play
 ```
@@ -16,8 +16,13 @@ countdown and start game to results. Plan and rules: ../docs/SESSION-2.md; resul
 or `cargo run --release -p mr-bevy` from this directory. The disc (a .cue or
 its .bin; not a .chd), first match wins: `--disc PATH`, the `disc` key of
 settings.txt, `$env:MRM_DISC`, the `disc = "..."` line of ../game.toml
-(phase 10, discsel.rs). With none the window says where to set it and the
-program exits. The track is checked once against Redump disc 16664
+(phase 10, discsel.rs). With none (row 15, discpick.rs) a window asks
+for it: type or paste (Ctrl+V) the path and press Enter, or press 1..9
+for a .cue found beside the exe or in the data folder; a readable disc is
+written to settings.txt as `disc = PATH` and the game starts (no restart);
+Esc quits. Tool flags: `--picker-keys "PATH<enter>"` (`<paste>`, `<bs>`,
+`<esc>`; no window) and `--picker-shot F`; `--shot F` writes the picker's
+picture. The track is checked once against Redump disc 16664
 track 1 (SHA-1, BINLIST.toml; disc-check.txt): a mismatch warns, never
 refuses.
 
@@ -35,7 +40,7 @@ cargo metadata + the registry's licence files; no game data).
 Keyboard: arrows steer, X accelerate, S brake/reverse, Z jump, A
 (TRIANGLE) locks the camera on the nearest kart while held (Session 7),
 Enter = START (pause).
-Gamepad (mapped in input.rs; this build has no gamepad backend: Bevy gilrs not enabled): right trigger / south accelerate, left trigger / east brake, west jump.
+Gamepad (keyboard only for now: gamepad support pending the owner's approval of Bevy's gilrs backend; mapped in input.rs): right trigger / south accelerate, left trigger / east brake, west jump.
 
 Two players (phase 7; the course menu's 2 PLAYER RACE / BATTLE / STUNT
 RACE, CHICKEN CHASE): split screen, player 1 on top. The first gamepad

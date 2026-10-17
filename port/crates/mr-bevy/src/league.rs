@@ -197,7 +197,7 @@ impl League {
 
     /// The league of this run: `--league` and league.txt.
     pub fn load() -> Option<League> {
-        if !std::env::args().any(|a| a == "--league") {
+        if !crate::settings::args().into_iter().any(|a| a == "--league") {
             return None;
         }
         std::fs::read_to_string(path()?).ok().and_then(|t| League::from_text(&t))

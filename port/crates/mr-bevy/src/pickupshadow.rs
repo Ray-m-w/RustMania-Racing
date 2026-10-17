@@ -109,7 +109,11 @@ pub fn draw(
     sh: Option<Res<PickupShadows>>,
     mut prims: ResMut<FxPrims>,
     mut cache: Local<(i64, Vec<u8>)>,
+    mut boot_seen: Local<u32>,
 ) {
+    if crate::boot::fresh(&mut boot_seen) {
+        *cache = Default::default();
+    }
     let (Some(st), Some(sh)) = (st, sh) else { return };
     let Some((eye, cm)) = p.pose.cam else { return };
     let key = cap.as_ref().map(|c| c.vb).unwrap_or(p.tick);

@@ -18,10 +18,10 @@
 //! (mr_video::movies::Player): START / CROSS skips (boot movies after frame
 //! 75), the confirm sound, the fades.
 //!
-//! "Power-on" spans the port's relaunches (a course change restarts the
-//! program): `MRM_MOVIES_SEEN` (environment, inherited by the relaunched
-//! process) holds the courses whose movie was played; its absence = a
-//! fresh power-on (the boot movies). Setting `skip_intro_movies` skips the
+//! "Power-on" = the process: the boot movies play once at start-up; the
+//! courses whose first-load check ran are kept in memory (`SEEN`) across
+//! the in-process course changes (row 12, loading.rs plays a course's movie
+//! before its load). Setting `skip_intro_movies` skips the
 //! boot and course-load movies (the recomp package's skip-fmv, which skips
 //! every movie); MOVIE / PLAY MOVIE always play.
 
@@ -51,7 +51,6 @@ pub fn request(m: u8) {
     PLAYING.store(true, Ordering::Relaxed);
 }
 
-const ENV: &str = "MRM_MOVIES_SEEN";
 const W: usize = 320;
 const H: usize = 240;
 const LAYER: usize = 9;
@@ -60,8 +59,12 @@ const AUDIO_AHEAD: usize = 44_100 / 3;
 /// Decoded frames queued ahead.
 const FRAMES_AHEAD: usize = 4;
 
-/// The boot and course-load movies of this process (decided once, before
-/// the app runs; also records the course as seen for later relaunches).
+/// The courses whose first-load check ran since power-on (the course
+/// rows' bit 0x800, 0x800ACB3A + 0xC * course, RAM only): kept in memory
+/// across in-process course changes (row 12).
+static SEEN: Mutex<u64> = Mutex::new(0);
+
+/// The power-on movies (decided once, before the app runs).
 fn startup_movies() -> Vec<u8> {
     // test runs: `--movie M` plays movie M first (0..30, or 0x..)
     if let Some(m) = crate::settings::arg_value("--movie").and_then(|v| v.strip_prefix("0x").map_or_else(|| v.parse().ok(), |h| u8::from_str_radix(h, 16).ok())) {
@@ -71,35 +74,35 @@ fn startup_movies() -> Vec<u8> {
         return Vec::new();
     }
     let skip = crate::settings::Settings::global().bool("skip_intro_movies", false);
-    let seen = std::env::var(ENV).ok();
-    let mut mask = seen.as_deref().and_then(|s| u64::from_str_radix(s, 16).ok()).unwrap_or(0);
-    let mut out = Vec::new();
-    if seen.is_none() {
-        // power-on (main: 0x800B0804 = 0x1C -> 0x1C, 0x1D)
-        // (scripted title / menu runs keep their timing: no logos)
-        let script = ["--menu-keys", "--menu-shots", "--title-shot", "--title-press-start", "--title-oracle"];
-        let scripted = std::env::args().any(|x| script.contains(&x.as_str()));
-        if crate::title::first_screen() == crate::title::Screen::Title && !skip && !scripted {
-            out.extend(movies::BOOT);
-        }
+    // power-on (main: 0x800B0804 = 0x1C -> 0x1C, 0x1D)
+    // (scripted title / menu runs keep their timing: no logos)
+    let script = ["--menu-keys", "--menu-shots", "--title-shot", "--title-press-start", "--title-oracle"];
+    let scripted = crate::settings::args().into_iter().any(|x| script.contains(&x.as_str()));
+    if crate::title::first_screen() == crate::title::Screen::Title && !skip && !scripted {
+        movies::BOOT.to_vec()
     } else {
-        // main @0x80078848: the course being loaded, open, its row's 0x800
-        // bit clear -> its movie; the bit is set
-        let c = crate::courses::info();
-        if c.cup >= 0 && c.slot >= 0 && mask & (1 << c.id) == 0 {
-            let open = crate::save::with(|st| st.block.course_open(c.cup as usize, c.slot as usize));
-            if open {
-                mask |= 1 << c.id;
-                if c.row9 >= 0 && !skip {
-                    out.push(c.row9 as u8);
-                }
-            }
-        }
+        Vec::new()
     }
-    // SAFETY-free: set before the app starts its own threads' work; read
-    // only by the processes this one spawns.
-    std::env::set_var(ENV, format!("{mask:x}"));
-    out
+}
+
+/// main @0x80078848, before a course load with no movie asked for: the
+/// course open (its cup / slot), its row's 0x800 bit clear -> its movie
+/// (row + 9); the bit is set (also with `skip_intro_movies`, which only
+/// skips the playing).
+pub fn course_load_movie(c: &mr_sim::course::CourseInfo) -> Option<u8> {
+    if crate::menus::tool_run() || c.cup < 0 || c.slot < 0 {
+        return None;
+    }
+    let mut seen = SEEN.lock().unwrap();
+    if *seen & (1 << c.id) != 0 {
+        return None;
+    }
+    if !crate::save::with(|st| st.block.course_open(c.cup as usize, c.slot as usize)) {
+        return None;
+    }
+    *seen |= 1 << c.id;
+    let skip = crate::settings::Settings::global().bool("skip_intro_movies", false);
+    (c.row9 >= 0 && !skip).then_some(c.row9 as u8)
 }
 
 struct Decoded {
@@ -140,12 +143,18 @@ pub struct MoviePlugin;
 
 impl Plugin for MoviePlugin {
     fn build(&self, app: &mut App) {
-        let queue: VecDeque<u8> = startup_movies().into();
-        PLAYING.store(!queue.is_empty(), Ordering::Relaxed);
-        let table = mr_disc::Disc::open_default().ok().and_then(|mut d| d.read("FMV/FMV.BIN").ok()).map(|b| movies::table(&b)).unwrap_or_default();
-        app.insert_resource(MovieRes { queue, table, cur: None, image: Handle::default(), paused_time: false, paused_music: false, shot: None })
-            .add_systems(Startup, setup)
-            .add_systems(Update, run);
+        // power-on: the boot movies; a course change (row 12): none here
+        // (loading.rs plays the course's first-load movie before it loads)
+        crate::boot::on_boot(app, |w| {
+            let queue: VecDeque<u8> = if crate::boot::generation() == 0 { startup_movies().into() } else { VecDeque::new() };
+            PLAYING.store(!queue.is_empty(), Ordering::Relaxed);
+            let table = match w.remove_resource::<MovieRes>() {
+                Some(old) => old.table,
+                None => mr_disc::Disc::open_default().ok().and_then(|mut d| d.read("FMV/FMV.BIN").ok()).map(|b| movies::table(&b)).unwrap_or_default(),
+            };
+            w.insert_resource(MovieRes { queue, table, cur: None, image: Handle::default(), paused_time: false, paused_music: false, shot: None });
+        });
+        app.add_systems(crate::boot::Boot, setup).add_systems(Update, run);
     }
 }
 

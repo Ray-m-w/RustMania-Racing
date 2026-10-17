@@ -74,7 +74,8 @@ pub struct AnimTexPlugin;
 
 impl Plugin for AnimTexPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<AnimTex>().add_systems(Startup, setup.after(crate::scene::setup)).add_systems(Update, step);
+        crate::boot::on_boot(app, |w| w.insert_resource(AnimTex::default()));
+        app.add_systems(crate::boot::Boot, setup.after(crate::scene::setup)).add_systems(Update, step);
     }
 }
 

@@ -317,9 +317,11 @@ impl Plugin for PsxFxPlugin {
             (shaders.add(Shader::from_wgsl(SHADER, "mr-bevy/psxfx.wgsl")), shaders.add(Shader::from_wgsl(COMP_SHADER, "mr-bevy/psxfx_comp.wgsl")))
         };
         let s = crate::settings::Settings::global();
+        crate::boot::on_boot(app, |w| {
+            w.insert_resource(FxPrims::default());
+            w.insert_resource(FxPages::default());
+        });
         app.insert_resource(FxOptions { depth_test: s.bool("fx_depth_test", true), linear: s.get("fx_blend") == Some("linear") })
-            .init_resource::<FxPrims>()
-            .init_resource::<FxPages>()
             .init_resource::<FxGpuFrame>()
             .add_plugins((ExtractResourcePlugin::<FxGpuFrame>::default(), ExtractComponentPlugin::<PsxFxView>::default()))
             .add_systems(Update, mark_camera)

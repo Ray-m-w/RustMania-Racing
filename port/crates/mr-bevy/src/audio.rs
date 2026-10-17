@@ -423,11 +423,11 @@ impl Decodable for MixerSource {
 pub struct AudioOutPlugin;
 
 fn flag(k: &str) -> bool {
-    std::env::args().any(|a| a == k)
+    crate::settings::args().into_iter().any(|a| a == k)
 }
 
 fn opt_str(k: &str) -> Option<String> {
-    let a: Vec<String> = std::env::args().collect();
+    let a: Vec<String> = crate::settings::args();
     a.iter().position(|x| x == k).and_then(|i| a.get(i + 1)).cloned()
 }
 
@@ -462,7 +462,20 @@ impl Plugin for AudioOutPlugin {
                 Err(e) => warn!("music off: cannot open the disc ({e})"),
             }
         }
-        app.insert_resource(bus).insert_resource(MusicDirector::default());
+        app.insert_resource(bus);
+        // row 12: a new director per course (the game's tables per course);
+        // the drawn tracks and the taunt channel are RAM state that lives on
+        crate::boot::on_boot(app, |w| {
+            let mut d = MusicDirector::default();
+            if let Some(old) = w.remove_resource::<MusicDirector>() {
+                d.recent = old.recent;
+                d.taunt_next = old.taunt_next;
+                if let Some(bus) = w.get_resource::<AudioBus>() {
+                    bus.music(MusicCmd::Stop);
+                }
+            }
+            w.insert_resource(d);
+        });
         app.add_audio_source::<MixerSource>();
         if enabled {
             app.add_systems(Startup, start_stream);
@@ -652,7 +665,7 @@ pub static XA_STATE: AtomicU32 = AtomicU32::new(0);
 fn direct_music(mut p: ResMut<crate::Player>, bus: Res<AudioBus>, mut dir: ResMut<MusicDirector>) {
     // Phase 9: no music decisions while a movie plays (the game's player
     // owns the drive; the scene is frozen)
-    if crate::movie::playing() {
+    if crate::movie::playing() || crate::loading::holding() {
         return;
     }
     // Phase 11: MEET THE MUPPETS stops the music (FUN_8008C4AC entering game

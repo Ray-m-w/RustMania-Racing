@@ -16,8 +16,8 @@
 //!   TOURNAMENT - 1 PLAYER, OPTIONS;
 //!   - SELECT COURSE -> `CourseSelect` (game mode 0xC: the film-strip worlds;
 //!     the camera is mode 5, mr-sim camera.rs): UP / DOWN world, LEFT /
-//!     RIGHT course; CROSS on a race course loads it (the port restarts the
-//!     program on that course with `--menu`: the scene is built at start-up);
+//!     RIGHT course; CROSS on a race course loads it (row 12: in place,
+//!     behind the fades and the LOADING picture, loading.rs / boot.rs);
 //!   - OPTIONS -> `Options` (sub-state 3): ADJUST SOUND (`Sound`), SET
 //!     CONTROLLERS (`Controllers`), ADJUST SCREEN, MEMORY CARD, and the
 //!     port's own PORT SETTINGS (`PortSettings`, settings.txt);
@@ -25,7 +25,7 @@
 //!   1 PLAYER RACE - n LAPS, 2 PLAYER RACE, <COURSE> SECRETS, GAME MENU,
 //!   BACK TO MAIN MENU), `GameMenu` (ADVENTURE, GAME STATUS, CHANGE COURSE,
 //!   TOURNAMENT), `WorldList` / `CourseList` (CHANGE COURSE: the text lists,
-//!   another course restarts the program on it), `CharSelect` (0x800B07CB = 1:
+//!   another course is loaded in place), `CharSelect` (0x800B07CB = 1:
 //!   UP / DOWN character, LEFT / RIGHT vehicle, the kart on grid slot 0; CROSS
 //!   starts the race), all over the course with the orbit camera (mode 1,
 //!   `Session::menu_tick`);
@@ -1678,7 +1678,7 @@ fn cycle(key: &str, cur: &str, dir: i32) -> Option<String> {
 /// settings.txt in the data folder (or `--settings PATH`), without the
 /// command line's values.
 fn file_settings() -> crate::settings::Settings {
-    let a: Vec<String> = std::env::args().collect();
+    let a: Vec<String> = crate::settings::args();
     let mut keep = vec![a[0].clone()];
     if let Some(i) = a.iter().position(|x| x == "--settings") {
         keep.extend(a.get(i..i + 2).unwrap_or(&[]).iter().cloned());
@@ -1702,15 +1702,15 @@ fn save_settings(s: &crate::settings::Settings) {
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Effects {
     pub sfx: Vec<(i32, i32, i32, i32)>,
-    /// Restart the program on this course in its course menu.
+    /// Load this course (its course menu) in place (loading.rs).
     pub relaunch_course: Option<String>,
-    /// Restart the program on the title.
+    /// Load the title in place.
     pub relaunch_title: bool,
-    /// Phase 8: restart on THE END (course 0x1D, ending.rs).
+    /// Phase 8: load THE END (course 0x1D, ending.rs).
     pub relaunch_ending: bool,
     pub unpause: bool,
     pub volumes: Option<[u8; 2]>,
-    /// The restart continues a league (`--league`).
+    /// The load continues a league (`--league`).
     pub league: bool,
     /// Phase 9: play this movie (MOVIE, PLAY MOVIE; movie.rs).
     pub movie: Option<u8>,
@@ -2401,21 +2401,39 @@ pub struct MenusPlugin;
 
 impl Plugin for MenusPlugin {
     fn build(&self, app: &mut App) {
-        let mut front = Front::default();
-        if std::env::args().any(|a| a == "--menu") && !crate::title::on_title() {
-            front.page = Page::CourseMenu;
-            // a league: its character select first, then each race at once
-            match front.league.as_ref().map(|l| l.started) {
-                Some(false) => front.open(Page::CharSelect),
-                Some(true) => front.open(Page::LeagueMenu),
-                None => {}
-            }
-        }
-        app.insert_resource(front).add_systems(Startup, apply_saved_volumes).add_systems(Update, (run, overlay.after(run), pause.after(run)));
+        crate::boot::on_boot(app, |w| w.insert_resource(boot_front()));
+        app.add_systems(crate::boot::Boot, apply_saved_volumes).add_systems(Update, (run, overlay.after(run), pause.after(run)));
         if crate::settings::arg_value("--menu-keys").is_some() || crate::settings::arg_value("--menu-shots").is_some() {
             app.add_systems(PreUpdate, script_keys.after(bevy::input::InputSystems).after(crate::pacing::sample)).add_systems(Update, script_shots.after(overlay));
         }
     }
+}
+
+/// The menus at a course's start (each boot): `--menu` its course menu (a
+/// league: its character select or league menu); row 12: `--open-page
+/// courses:W,C` the title's course select at that cursor (the reload after
+/// its MOVIE, FUN_80074A94 sub-state 0xC).
+fn boot_front() -> Front {
+    let mut front = Front::default();
+    if crate::settings::args().into_iter().any(|a| a == "--menu") && !crate::title::on_title() {
+        front.page = Page::CourseMenu;
+        // a league: its character select first, then each race at once
+        match front.league.as_ref().map(|l| l.started) {
+            Some(false) => front.open(Page::CharSelect),
+            Some(true) => front.open(Page::LeagueMenu),
+            None => {}
+        }
+    }
+    if let Some(v) = crate::settings::arg_value("--open-page").and_then(|v| v.strip_prefix("courses:").map(String::from)) {
+        if crate::title::on_title() {
+            let (w, c) = v.split_once(',').and_then(|(w, c)| Some((w.parse::<i8>().ok()?, c.parse::<i8>().ok()?))).unwrap_or((0, 0));
+            front.open(Page::Main);
+            front.row = 2;
+            front.open(Page::CourseSelect);
+            (front.row, front.col) = (w, c);
+        }
+    }
+    front
 }
 
 /// Checks without a pad: `--menu-keys "VB:buttons,..."` holds the buttons
@@ -2472,7 +2490,7 @@ pub fn the_end_open() -> bool {
 
 /// Tool runs (routes, replays, oracle grids, shots) never see the menus.
 pub fn tool_run() -> bool {
-    let a: Vec<String> = std::env::args().collect();
+    let a: Vec<String> = crate::settings::args();
     let tool = ["--oracle-grid", "--route", "--replay", "--replay-capture", "--shot", "--fx-shots", "--latency-log", "--autopilot", "--record-route", "--trace-out", "--ghost"];
     a.iter().any(|x| tool.contains(&x.as_str()))
 }
@@ -2484,10 +2502,10 @@ fn run(
     real: Res<Time<Real>>,
     mut sfx: ResMut<crate::sfx::Sfx>,
     bus: Option<Res<crate::audio::AudioBus>>,
-    mut exit: MessageWriter<AppExit>,
     p: Res<crate::Player>,
 ) {
-    // Phase 9: no menu input while a movie covers the screen
+    // Phase 9: no menu input while a movie covers the screen; row 12: nor
+    // during a course change's fades and LOADING picture
     if crate::movie::playing() {
         front.prev = latch.now;
         return;
@@ -2497,6 +2515,10 @@ fn run(
     let n = front.vb_frac.floor();
     front.vb_frac -= n;
     front.vb = front.vb.wrapping_add(n as i32);
+    if crate::loading::busy() {
+        front.prev = latch.now;
+        return;
+    }
     // START in a race: the pause menu (not on the results, not before GO's
     // race frames exist, never in tool runs)
     let racing = matches!(&p.driver, crate::Driver::Sim(run) if !matches!(run.session.phase(), mr_sim::race::RacePhase::Finished { .. }));
@@ -2527,7 +2549,17 @@ fn run(
     let b = if front.page == Page::CharSelect && front.picking == 1 { latch.now | latch.now2 } else { latch.now };
     let fx = front.input(b, t);
     if let Some(m) = fx.movie {
-        crate::movie::request(m);
+        // row 12: main() plays the movie between two course sessions and
+        // loads the scene again after it: the course select (0x800B080C =
+        // 0xC) at its cursor, or the course menu (PLAY MOVIE)
+        let args = if front.page == Page::CourseSelect {
+            let mut a = course_args(None, front.character, front.vehicle, false);
+            a.extend(["--open-page".into(), format!("courses:{},{}", front.row, front.col)]);
+            a
+        } else {
+            course_args(Some(&crate::courses::info().name), front.character, front.vehicle, false)
+        };
+        crate::loading::change(args, Some(m));
     }
     for s in &fx.sfx {
         sfx.play(*s);
@@ -2544,7 +2576,6 @@ fn run(
     }
     if fx.relaunch_ending {
         crate::ending::relaunch(front.character, front.vehicle);
-        exit.write(AppExit::Success);
         return;
     }
     if fx.relaunch_course.is_some() || fx.relaunch_title {
@@ -2559,7 +2590,6 @@ fn run(
             }
         }
         relaunch(course.as_deref(), front.character, front.vehicle, fx.league);
-        exit.write(AppExit::Success);
     }
 }
 
@@ -2595,17 +2625,16 @@ fn pause(front: Res<Front>, mut time: ResMut<Time<Virtual>>, mut paused_here: Lo
     }
 }
 
-/// Start this program again on `course` in its course menu (`--menu`), or
-/// on the title (None), keeping the other arguments and the character /
-/// vehicle chosen. (The scene is built at start-up; the game loads the
-/// course behind its LOADING screen.)
-pub fn relaunch(course: Option<&str>, character: u8, vehicle: u8, league: bool) {
-    let a: Vec<String> = std::env::args().collect();
-    let mut out: Vec<String> = Vec::new();
+/// The boot arguments for `course` in its course menu (`--menu`), or the
+/// title (None), keeping the other arguments and the character / vehicle
+/// chosen (row 12: what the relaunch passed; boot.rs).
+pub fn course_args(course: Option<&str>, character: u8, vehicle: u8, league: bool) -> Vec<String> {
+    let a: Vec<String> = crate::settings::args();
+    let mut out: Vec<String> = vec![a.first().cloned().unwrap_or_default()];
     let mut i = 1;
     while i < a.len() {
         match a[i].as_str() {
-            "--course" | "--character" | "--vehicle" | "--menu-keys" | "--menu-shots" => i += 2,
+            "--course" | "--character" | "--vehicle" | "--menu-keys" | "--menu-shots" | "--demo-recent" | "--open-page" | "--movie" => i += 2,
             "--skip-title" | "--menu" | "--league" | "--demo" | "--ending" => i += 1,
             _ => {
                 out.push(a[i].clone());
@@ -2620,14 +2649,13 @@ pub fn relaunch(course: Option<&str>, character: u8, vehicle: u8, league: bool) 
     if league {
         out.push("--league".into());
     }
-    match std::env::current_exe() {
-        Ok(exe) => {
-            if let Err(e) = std::process::Command::new(exe).args(&out).spawn() {
-                eprintln!("menus: relaunch failed: {e}");
-            }
-        }
-        Err(e) => eprintln!("menus: relaunch failed: {e}"),
-    }
+    out
+}
+
+/// Change course in place (loading.rs: fade, LOADING, rebuild); `course`
+/// None = the title.
+pub fn relaunch(course: Option<&str>, character: u8, vehicle: u8, league: bool) {
+    crate::loading::change(course_args(course, character, vehicle, league), None);
 }
 
 #[cfg(test)]

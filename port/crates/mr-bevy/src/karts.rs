@@ -438,8 +438,8 @@ impl Plugin for KartsPlugin {
     fn build(&self, app: &mut App) {
         bevy::asset::load_internal_asset!(app, KART_TINT_SHADER, "kart_tint.wgsl", Shader::from_wgsl);
         app.add_plugins(MaterialPlugin::<KartMaterial>::default());
-        app.init_resource::<KartFeed>()
-            .add_systems(FixedUpdate, feed_player.after(crate::sim_tick))
+        crate::boot::on_boot(app, |w| w.insert_resource(KartFeed::default()));
+        app.add_systems(FixedUpdate, feed_player.after(crate::sim_tick))
             .add_systems(Update, (sync_rigs, place_rigs.after(sync_rigs), tint_rigs.after(sync_rigs), tint_semis.after(sync_rigs)));
     }
 }

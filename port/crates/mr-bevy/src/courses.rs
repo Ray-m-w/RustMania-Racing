@@ -5,53 +5,94 @@
 //! the title the frontend course 0x1E. Every course-dependent loader (scene,
 //! HUD slots, animated textures, effects, music, the session) reads
 //! `courses::info()`. The game's menus (menus.rs, Session 7) pick the
-//! course: another course restarts the program on it (`--course NAME
-//! --skip-title --menu`; the scene is built at start-up). The Session 6
-//! pick-list is gone.
+//! course: another course is booted in place (row 12, boot.rs: the boot
+//! arguments become `--course NAME --skip-title --menu`, `reset` forgets
+//! the choice, the scene is rebuilt). The Session 6 pick-list is gone.
 
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use mr_sim::course::CourseInfo;
 
 struct Choice {
-    info: CourseInfo,
+    info: &'static CourseInfo,
     explicit: bool,
-    races: Vec<CourseInfo>,
 }
 
-fn choice() -> &'static Choice {
-    static C: OnceLock<Choice> = OnceLock::new();
-    C.get_or_init(|| {
-        let mut disc = mr_disc::Disc::open_default().expect("open the disc (MRM_DISC or game.toml)");
-        let exe = mr_sim::tables::ExeImage::parse(&disc.read("SLUS_012.37").expect("read the executable")).expect("exe");
+/// The course tables, read once.
+fn all() -> &'static Vec<CourseInfo> {
+    static R: OnceLock<Vec<CourseInfo>> = OnceLock::new();
+    R.get_or_init(|| {
+        let e = exe();
         // the race courses, (phase 3) the stunt courses' trial and (phase
         // 4) the arenas' 1 PLAYER BATTLE
-        let races: Vec<CourseInfo> = CourseInfo::races(&exe).into_iter().chain(CourseInfo::stunts(&exe)).chain(CourseInfo::arenas(&exe)).collect();
-        let want = crate::settings::Settings::global().get("course").map(|s| s.to_string()).filter(|s| !s.is_empty());
-        let found = want.as_deref().and_then(|w| CourseInfo::find(&exe, w)).filter(|c| c.is_race() || c.is_stunt() || c.is_arena());
-        if let (Some(w), None) = (&want, &found) {
-            eprintln!("course {w}: not a race course of the game's table; DOCK instead (races: {})", races.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(" "));
-        }
-        let explicit = found.is_some();
-        // Phase 8: THE END (ending.rs), course 0x1D
-        if crate::ending::asked() {
-            let info = CourseInfo::read(&exe, crate::ending::COURSE).expect("THE END row");
-            return Choice { info, explicit: false, races };
-        }
-        // The title (title.rs) is the frontend course 0x1E run as the game
-        // runs it; the pick-list comes with START.
-        if crate::title::first_screen() == crate::title::Screen::Title {
-            let info = CourseInfo::read(&exe, crate::title::TITLE_COURSE as u8).expect("frontend course row");
-            return Choice { info, explicit: false, races };
-        }
-        let info = found.unwrap_or_else(|| CourseInfo::read(&exe, mr_sim::course::DOCK).expect("DOCK row"));
-        Choice { info, explicit, races }
+        CourseInfo::races(e).into_iter().chain(CourseInfo::stunts(e)).chain(CourseInfo::arenas(e)).collect()
     })
+}
+
+/// A course row, interned: one copy per course for the process (an
+/// in-process course change reuses it; no copy per change).
+fn interned(id: u8) -> &'static CourseInfo {
+    static M: Mutex<Vec<(u8, &'static CourseInfo)>> = Mutex::new(Vec::new());
+    let mut m = M.lock().unwrap();
+    if let Some((_, i)) = m.iter().find(|(k, _)| *k == id) {
+        return i;
+    }
+    let i: &'static CourseInfo = Box::leak(Box::new(CourseInfo::read(exe(), id).expect("course row")));
+    m.push((id, i));
+    i
+}
+
+/// The current boot's choice (row 12: reset by an in-process course change,
+/// boot.rs, which replaces the boot arguments first).
+static CHOICE: Mutex<Option<(&'static CourseInfo, bool)>> = Mutex::new(None);
+
+/// Forget the choice: the next `info()` reads the new boot arguments.
+pub fn reset() {
+    *CHOICE.lock().unwrap() = None;
+}
+
+fn choice() -> Choice {
+    let mut c = CHOICE.lock().unwrap();
+    if let Some((info, explicit)) = *c {
+        return Choice { info, explicit };
+    }
+    let (info, explicit) = decide();
+    *c = Some((info, explicit));
+    Choice { info, explicit }
+}
+
+fn decide() -> (&'static CourseInfo, bool) {
+    let e = exe();
+    let races = all();
+    // start-up: `--course` or the settings file's `course`; after an
+    // in-process course change only the boot arguments count
+    let want = if crate::settings::rebooted() {
+        crate::settings::arg_value("--course")
+    } else {
+        crate::settings::Settings::global().get("course").map(|s| s.to_string())
+    }
+    .filter(|s| !s.is_empty());
+    let found = want.as_deref().and_then(|w| CourseInfo::find(e, w)).filter(|c| c.is_race() || c.is_stunt() || c.is_arena());
+    if let (Some(w), None) = (&want, &found) {
+        eprintln!("course {w}: not a race course of the game's table; DOCK instead (races: {})", races.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(" "));
+    }
+    let explicit = found.is_some();
+    // Phase 8: THE END (ending.rs), course 0x1D
+    if crate::ending::asked() {
+        return (interned(crate::ending::COURSE), false);
+    }
+    // The title (title.rs) is the frontend course 0x1E run as the game
+    // runs it; the pick-list comes with START.
+    if crate::title::first_screen() == crate::title::Screen::Title {
+        return (interned(crate::title::TITLE_COURSE as u8), false);
+    }
+    let id = found.map(|f| f.id).unwrap_or(mr_sim::course::DOCK);
+    (interned(id), explicit)
 }
 
 /// The course this run drives.
 pub fn info() -> &'static CourseInfo {
-    &choice().info
+    choice().info
 }
 
 /// Its index (0x800B0FAC).
@@ -67,7 +108,7 @@ pub fn explicit() -> bool {
 /// The courses the port runs: the race courses of the game's table and
 /// the stunt courses (their 1 PLAYER STUNT TRIAL).
 pub fn races() -> &'static [CourseInfo] {
-    &choice().races
+    all()
 }
 
 /// The frame clear colour: the course row's fog colour (0x800ACB34 + 12 *

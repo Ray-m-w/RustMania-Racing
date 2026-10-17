@@ -512,14 +512,16 @@ pub struct EffectsPlugin;
 
 impl Plugin for EffectsPlugin {
     fn build(&self, app: &mut App) {
+        crate::boot::on_boot(app, |w| {
+            w.insert_resource(FxFrame::default());
+            w.insert_resource(KartLodHidden::default());
+            w.insert_resource(FxLookahead::default());
+        });
         app.add_plugins(crate::psxfx::PsxFxPlugin)
-            .init_resource::<FxFrame>()
-            .init_resource::<KartLodHidden>()
-            .init_resource::<FxLookahead>()
-            .add_systems(Startup, setup.after(crate::scene::setup))
+            .add_systems(crate::boot::Boot, setup.after(crate::scene::setup))
             .add_systems(Update, (capture_source, session_source, draw.after(capture_source).after(session_source)))
             .add_systems(Update, fx_shots.after(capture_source))
-            .add_systems(Startup, crate::pickupshadow::setup)
+            .add_systems(crate::boot::Boot, crate::pickupshadow::setup)
             .add_systems(Update, crate::pickupshadow::draw.after(crate::kartshadow::update_shadows));
     }
 }
@@ -532,7 +534,7 @@ fn setup(mut commands: Commands) {
     let env = raw::LoadEnv::from_exe(&exe, crate::courses::id()).expect("env");
     let dec = raw::decode(&file, &env).expect("decode RAW");
     commands.insert_resource(FxTables::load(&exe, dec.slots));
-    let a: Vec<String> = std::env::args().collect();
+    let a: Vec<String> = crate::settings::args();
     if let Some(dir) = a.iter().position(|x| x == "--replay-capture").and_then(|i| a.get(i + 1)) {
         if let Some(c) = CapRows::open(dir) {
             commands.insert_resource(c);
@@ -749,7 +751,11 @@ pub(crate) fn session_source(
     mut hidden: ResMut<KartLodHidden>,
     mut scenery: ResMut<crate::movers::SceneryShown>,
     mut st: Local<SourceCache>,
+    mut boot_seen: Local<u32>,
 ) {
+    if crate::boot::fresh(&mut boot_seen) {
+        *st = SourceCache::default();
+    }
     let Some(t) = t else { return };
     if fx.manual || cap.is_some() {
         return;
@@ -1057,7 +1063,7 @@ fn fx_shots(
 ) {
     if !run.init {
         run.init = true;
-        let a: Vec<String> = std::env::args().collect();
+        let a: Vec<String> = crate::settings::args();
         if let Some(i) = a.iter().position(|x| x == "--fx-shots") {
             run.dir = a.get(i + 1).cloned().unwrap_or_default();
             run.vbs = a.get(i + 2).map(|v| v.split(',').filter_map(|x| x.parse().ok()).collect()).unwrap_or_default();

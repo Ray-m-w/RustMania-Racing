@@ -155,7 +155,7 @@ pub fn setup(
     let sin = SinTable::from_exe(&exe).expect("sin table");
     // One entity per DAT object (TrackObject), so per-frame object selection
     // (the game's visibility stream / LOD) can show and hide them.
-    let textured_only = std::env::args().any(|a| a == "--textured-only");
+    let textured_only = crate::settings::args().into_iter().any(|a| a == "--textured-only");
     let world = |p: [i32; 3]| crate::to_bevy(p[0] * 32, p[1] * 32, p[2] * 32);
     let mut cache = psxmesh::MatCache::default();
     let mut ground_cache = psxmesh::MatCache(Default::default(), -2000.0);
@@ -324,7 +324,7 @@ pub fn setup(
 
     // Debug: the collision surface (DOCK.TER), flat shaded (--show-ter).
     let ter = Ter::parse(&disc.read(&course.file("TER")).expect("read TER")).expect("parse TER");
-    if std::env::args().any(|a| a == "--show-ter") { commands.spawn((
+    if crate::settings::args().into_iter().any(|a| a == "--show-ter") { commands.spawn((
         Mesh3d(meshes.add(ter_mesh(&ter))),
         MeshMaterial3d(mats.add(StandardMaterial {
             base_color: Color::WHITE,

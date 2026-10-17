@@ -17,6 +17,8 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod audio;
+mod boot;
+mod loading;
 mod crash;
 mod discsel;
 mod paths;
@@ -192,7 +194,13 @@ fn select_objects(
     mut commands: Commands,
     mut far_done: Local<bool>,
     mut full_done: Local<bool>,
+    mut boot_seen: Local<u32>,
 ) {
+    // a new course (boot.rs): new cameras and objects
+    if boot::fresh(&mut boot_seen) {
+        *far_done = false;
+        *full_done = false;
+    }
     // Painter's order of the game's ordering table: far pass (sky + DAT
     // layer 1) first, then everything else over it (scene::setup_far_pass).
     if !*far_done {
@@ -240,7 +248,7 @@ fn select_objects(
         .iter()
         .map(|d| d.object)
         .collect();
-    if p.tick % 100 == 0 && std::env::args().any(|a| a == "--debug-vis") {
+    if p.tick % 100 == 0 && crate::settings::args().into_iter().any(|a| a == "--debug-vis") {
         let n = q.iter().count();
         eprintln!("tick {} eye {:?} zone {} node {:?} drawn {} of {} entities", p.tick, eye, zone, vis.dat.vis_node(zone, eye), drawn.len(), n);
     }
@@ -281,7 +289,7 @@ struct ShotPlan {
 }
 
 fn parse_args() -> Args {
-    let a: Vec<String> = std::env::args().collect();
+    let a: Vec<String> = crate::settings::args();
     let opt = |k: &str| a.iter().position(|x| x == k).and_then(|i| a.get(i + 1)).cloned();
     if let Some(d) = opt("--disc") {
         std::env::set_var("MRM_DISC", d);
@@ -290,7 +298,7 @@ fn parse_args() -> Args {
 }
 
 fn shot_plan() -> ShotPlan {
-    let a: Vec<String> = std::env::args().collect();
+    let a: Vec<String> = crate::settings::args();
     let opt = |k: &str| a.iter().position(|x| x == k).and_then(|i| a.get(i + 1)).cloned();
     ShotPlan { path: opt("--shot"), at: opt("--shot-at").and_then(|v| v.parse().ok()).unwrap_or(30), state: 0 }
 }
@@ -393,7 +401,7 @@ impl SimRun {
             let arg = |k: &str| settings::arg_value(k).and_then(|v| v.parse::<u8>().ok());
             let c = arg("--character").unwrap_or(0);
             let v = arg("--vehicle").unwrap_or(if c == 0 { 0 } else { menus::tables().default_vehicle.get(c as usize).copied().unwrap_or(0) });
-            let menu = std::env::args().any(|a| a == "--menu") && !title::on_title() && !menus::tool_run();
+            let menu = crate::settings::args().into_iter().any(|a| a == "--menu") && !title::on_title() && !menus::tool_run();
             let mut cfg = if menu { courses::menu_config(pacing::logic_hz(), c, v) } else { courses::session_config(pacing::logic_hz(), c, v) };
             // phase 7 (tests, shots): `--players 2` a split-screen race from
             // the start, `--race-flags N` (0x40: CHICKEN CHASE)
@@ -411,10 +419,10 @@ impl SimRun {
                 s.globals.items.hit_bits = save::vehicles_won();
             }
             // --autopilot: the game's AI drives Kermit too (demo / soak test).
-            s.autopilot = std::env::args().any(|a| a == "--autopilot");
+            s.autopilot = crate::settings::args().into_iter().any(|a| a == "--autopilot");
             s
         };
-        let a: Vec<String> = std::env::args().collect();
+        let a: Vec<String> = crate::settings::args();
         let route = a.iter().position(|x| x == "--route").and_then(|i| a.get(i + 1)).map(|p| parse_route(&std::fs::read_to_string(p).expect("read --route")));
         SimRun { session, align: 0, buttons: vec![], rows: vec![], route, fade: 0 }
     }
@@ -472,26 +480,11 @@ fn main() {
         Ok(bin) => discsel::check_in_background(bin),
         Err(reason) => discsel::no_disc_screen(&reason),
     }
-    let a0: Vec<String> = std::env::args().collect();
+    let a0: Vec<String> = crate::settings::args();
     let capture_dir = a0.iter().position(|x| x == "--replay-capture").and_then(|i| a0.get(i + 1)).cloned();
-    let driver = match &args.replay {
-        _ if capture_dir.is_some() => Driver::Replay { trace: Trace::new("capture", "capture", &[]), at: 0, karts: None },
-        Some(p) => {
-            let side = p.replace(".trace.jsonl", ".kart.bin");
-            let karts = std::fs::read(&side).ok().filter(|b| b.len() % kartmodel::KART_LEN == 0);
-            if karts.is_none() {
-                eprintln!("no kart sidecar {side}: parts placed from the trace pose only");
-            }
-            Driver::Replay { trace: Trace::read(p).expect("read --replay trace"), at: 0, karts }
-        }
-        None => {
-            let a: Vec<String> = std::env::args().collect();
-            Driver::Sim(Box::new(SimRun::new(a.iter().any(|x| x == "--oracle-grid"), a.iter().any(|x| x == "--leader"))))
-        }
-    };
-    let ghost = args.ghost.as_ref().map(|p| Trace::read(p).expect("read --ghost trace"));
+    let replay = args.replay.is_some() || capture_dir.is_some();
     // Logic rate (pacing.rs): a live session at `logic_hz`; replays at 30.
-    let tick_hz = if matches!(driver, Driver::Sim(_)) { pacing::logic_hz() } else { 30 };
+    let tick_hz = if !replay { pacing::logic_hz() } else { 30 };
     let mut app = App::new();
     if let Some(d) = &capture_dir {
         app.insert_resource(capture::CaptureReplay::open(d).expect("open --replay-capture DIR (meta.json, frames.bin)"));
@@ -519,19 +512,18 @@ fn main() {
     if low_render {
         plugins = plugins.disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>();
     }
+    app.add_plugins(plugins).add_plugins(boot::BootPlugin);
+    // the course's own resources, at start-up and at each in-process course
+    // change (boot.rs)
+    boot::on_boot(&mut app, boot_main);
     app
-        .add_plugins(plugins)
         .insert_resource(Time::<Fixed>::from_hz(tick_hz as f64))
         .add_plugins(scene::ObjectsPlugin)
         // The game's frame clear on DOCK: GP0 fill 0x025F1300 = rgb (0, 19, 95)
         // at the start of every race frame (oracle GP0 capture, VB 2500); seen
         // wherever no polygon covers the screen, under the additive water.
         // Stored 15-bit like any fill: (0, 2, 11) -> (0, 16, 90) on screen.
-        .insert_resource(ClearColor(psxfx::psx_fill(courses::clear_rgb())))
-        .insert_resource(Player { driver, pose: Pose::default(), prev: Pose::default(), tick: 0, buttons: 0, kart: None, prev_kart: None })
-        .init_resource::<Split>()
-        .insert_resource(ghost::Ghost::new(ghost))
-        .add_systems(Startup, (scene::setup, setup_camera))
+        .add_systems(boot::Boot, (scene::setup, setup_camera))
         .add_systems(FixedUpdate, (sim_tick, ghost::tick.after(sim_tick)))
         .insert_resource(shot_plan())
         .add_plugins(fps::plugin)
@@ -551,6 +543,7 @@ fn main() {
         .add_plugins(demo::DemoPlugin)
         .add_plugins(ending::EndingPlugin)
         .add_plugins(movie::MoviePlugin)
+        .add_plugins(loading::LoadingPlugin)
         .add_systems(FixedUpdate, capture::tick.after(sim_tick).before(karts::feed_player))
         .add_systems(Last, write_outputs)
         .add_systems(PostUpdate, (fit_viewports, fit_bars).before(bevy::camera::CameraUpdateSystems))
@@ -559,6 +552,43 @@ fn main() {
     // one of them replaced the hook (this one runs the previous first).
     crash::install();
     app.run();
+}
+
+/// The player's driver and the course's clear colour (each boot; the
+/// replay / ghost tool inputs only at start-up: tool runs never change
+/// course).
+fn boot_main(w: &mut World) {
+    let a: Vec<String> = crate::settings::args();
+    let opt = |k: &str| a.iter().position(|x| x == k).and_then(|i| a.get(i + 1)).cloned();
+    let first = boot::generation() == 0;
+    let capture_dir = opt("--replay-capture").filter(|_| first);
+    let replay = opt("--replay").filter(|_| first);
+    let driver = match &replay {
+        _ if capture_dir.is_some() => Driver::Replay { trace: Trace::new("capture", "capture", &[]), at: 0, karts: None },
+        Some(p) => {
+            let side = p.replace(".trace.jsonl", ".kart.bin");
+            let karts = std::fs::read(&side).ok().filter(|b| b.len() % kartmodel::KART_LEN == 0);
+            if karts.is_none() {
+                eprintln!("no kart sidecar {side}: parts placed from the trace pose only");
+            }
+            Driver::Replay { trace: Trace::read(p).expect("read --replay trace"), at: 0, karts }
+        }
+        None => Driver::Sim(Box::new(SimRun::new(a.iter().any(|x| x == "--oracle-grid"), a.iter().any(|x| x == "--leader")))),
+    };
+    let ghost = opt("--ghost").filter(|_| first).map(|p| Trace::read(&p).expect("read --ghost trace"));
+    // The game's frame clear on DOCK: GP0 fill 0x025F1300 = rgb (0, 19, 95)
+    // at the start of every race frame (oracle GP0 capture, VB 2500); seen
+    // wherever no polygon covers the screen, under the additive water.
+    // Stored 15-bit like any fill: (0, 2, 11) -> (0, 16, 90) on screen.
+    w.insert_resource(ClearColor(psxfx::psx_fill(courses::clear_rgb())));
+    w.insert_resource(Player { driver, pose: Pose::default(), prev: Pose::default(), tick: 0, buttons: 0, kart: None, prev_kart: None });
+    w.insert_resource(Split::default());
+    w.insert_resource(ghost::Ghost::new(ghost));
+    // what the previous course's start-up inserted only for some courses
+    w.remove_resource::<lighting::SkyHorizon>();
+    w.remove_resource::<scene::BannerState>();
+    w.remove_resource::<kartshadow::ShadowState>();
+    input::set_two_players(false);
 }
 
 fn setup_camera(mut c: Commands, settings: Res<settings::Settings>, mut meshes: ResMut<Assets<Mesh>>, mut mats: ResMut<Assets<StandardMaterial>>) {
@@ -924,7 +954,19 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
             // The menus' session requests: a menu session for the chosen
             // character / vehicle (the orbit camera carried over while the
             // pick changes), or the race.
-            match std::mem::take(&mut front.request) {
+            // row 12: a game mode change waits for the menus' fade-out
+            // and fades the new session in (loading.rs); the character
+            // select's sessions and TEST DRIVE's vehicle swaps do not fade
+            let mode_change = match &front.request {
+                menus::Request::Race | menus::Request::Menu { keep_camera: false } => true,
+                menus::Request::TestDrive => !front.test_drive.as_ref().is_some_and(|t| t.swap),
+                _ => false,
+            } && !menus::tool_run();
+            let req = if mode_change && !loading::mode_change_ready() { menus::Request::None } else { std::mem::take(&mut front.request) };
+            if mode_change && req != menus::Request::None {
+                loading::mode_changed();
+            }
+            match req {
                 menus::Request::None => {}
                 menus::Request::Menu { keep_camera } => {
                     let hz = pacing::logic_hz();
@@ -1222,7 +1264,7 @@ fn write_outputs(mut ev: MessageReader<AppExit>, p: Res<Player>) {
     if ev.read().next().is_none() {
         return;
     }
-    let a: Vec<String> = std::env::args().collect();
+    let a: Vec<String> = crate::settings::args();
     let opt = |k: &str| a.iter().position(|x| x == k).and_then(|i| a.get(i + 1)).cloned();
     if let Driver::Sim(run) = &p.driver {
         if let Some(path) = opt("--record-route") {

@@ -239,8 +239,8 @@ pub struct MoversPlugin;
 
 impl Plugin for MoversPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<SceneryShown>()
-            .add_systems(Update, place.after(crate::select_objects).after(crate::effects::session_source).before(crate::shot))
+        crate::boot::on_boot(app, |w| w.insert_resource(SceneryShown::default()));
+        app.add_systems(Update, place.after(crate::select_objects).after(crate::effects::session_source).before(crate::shot))
             .add_systems(Update, weather.after(crate::effects::session_source).after(crate::effects::capture_source).before(crate::effects::draw))
             .add_systems(Update, look.after(crate::follow_camera).before(crate::follow_sky).before(crate::shot))
             .add_systems(Update, hide_dev.after(place).before(crate::shot))

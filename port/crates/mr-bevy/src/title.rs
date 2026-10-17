@@ -67,9 +67,11 @@ pub enum Screen {
 /// Start on the title unless `skip_title` (settings row / `--skip-title`) or
 /// a tool flag that expects to start in the race.
 pub fn first_screen() -> Screen {
-    let a: Vec<String> = std::env::args().collect();
+    let a: Vec<String> = crate::settings::args();
     let tool = ["--oracle-grid", "--route", "--replay", "--replay-capture", "--shot", "--fx-shots", "--latency-log", "--autopilot", "--record-route", "--trace-out", "--ghost"];
-    if crate::settings::Settings::global().bool("skip_title", false) || a.iter().any(|x| tool.contains(&x.as_str())) {
+    // (after an in-process course change only the boot arguments count)
+    let skip = if crate::settings::rebooted() { a.iter().any(|x| x == "--skip-title") } else { crate::settings::Settings::global().bool("skip_title", false) };
+    if skip || a.iter().any(|x| tool.contains(&x.as_str())) {
         Screen::Race
     } else {
         Screen::Title
@@ -85,7 +87,7 @@ pub fn on_title() -> bool {
 /// `--title-oracle`, else a fresh one each launch (the game's depends on
 /// everything before the title).
 pub fn session_seed() -> (u32, u32) {
-    if std::env::args().any(|a| a == "--title-oracle") {
+    if crate::settings::args().into_iter().any(|a| a == "--title-oracle") {
         return (mr_sim::title::ORACLE_SEED, mr_sim::session::RNG_START);
     }
     let n = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(1);
@@ -98,7 +100,7 @@ pub fn session_seed() -> (u32, u32) {
 /// (power-on history; mr_sim::title::ORACLE_WATER) give the same characters,
 /// grid, token colours and camera.
 pub fn prepare(s: &mut mr_sim::session::Session) {
-    if on_title() && std::env::args().any(|a| a == "--title-oracle") {
+    if on_title() && crate::settings::args().into_iter().any(|a| a == "--title-oracle") {
         s.water = mr_sim::water::WaterAnim::from_bytes(&mr_sim::title::ORACLE_WATER);
     }
 }
@@ -162,9 +164,12 @@ pub struct TitlePlugin;
 
 impl Plugin for TitlePlugin {
     fn build(&self, app: &mut App) {
+        crate::boot::on_boot(app, |w| {
+            w.insert_resource(TitleOverlay::default());
+            w.remove_resource::<TitleRes>();
+        });
         app.insert_state(first_screen())
-            .init_resource::<TitleOverlay>()
-            .add_systems(Startup, setup)
+            .add_systems(crate::boot::Boot, setup)
             .add_systems(Update, (overlay, letters, shot.after(overlay)).run_if(|| on_title()));
     }
 }
@@ -231,7 +236,7 @@ fn overlay(
     let step = (c - res.last_frame).max(0);
     res.last_frame = c;
     res.cheat_shown = (res.cheat_shown - step).max(0);
-    if !menu && !crate::menus::tool_run() && !crate::movie::playing() {
+    if !menu && !crate::menus::tool_run() && !crate::movie::playing() && !crate::loading::busy() {
         if let Some(code) = res.cheats.frame(latch.now) {
             crate::save::with(|s| {
                 let t = s.tables.clone();
@@ -260,7 +265,7 @@ fn overlay(
     // it at counter N (tests of the hand-over without a pad)
     let auto = crate::settings::arg_value("--title-press-start").and_then(|v| v.parse::<i32>().ok()).is_some_and(|v| c >= v && c < v + 8);
     let b = latch.now | if auto { crate::input::START } else { 0 };
-    if done && !menu && !crate::movie::playing() && b & crate::input::START != 0 && res.prev_buttons & crate::input::START == 0 {
+    if done && !menu && !crate::movie::playing() && b & crate::input::START != 0 && res.prev_buttons & crate::input::START == 0 && !crate::loading::busy() {
         sfx.play(CONFIRM_SFX);
         info!("title: START -> main menu (counter {c})");
         front.open_main();

@@ -10,7 +10,7 @@
 //! title again. START (FUN_8007916C after LAB_80079A58) goes to that course's
 //! menu when the course is open, else to the title.
 //!
-//! The port changes course by restarting the program (menus.rs `relaunch`):
+//! The port changes course in place (menus.rs `relaunch`, loading.rs):
 //! the title starts the demo with `--course NAME --skip-title --demo
 //! --demo-recent A,B,C` (the last three demo courses, 0x800B0A1C), the demo
 //! goes back the same way.
@@ -21,7 +21,7 @@ use mr_assets::hud_items::Prim;
 
 /// This run is the attract demo race.
 pub fn active() -> bool {
-    std::env::args().any(|a| a == "--demo") && !crate::title::on_title()
+    crate::settings::args().into_iter().any(|a| a == "--demo") && !crate::title::on_title()
 }
 
 /// 0x800B0A1C..0x800B0A1E: the last three demo courses (`--demo-recent`).
@@ -63,17 +63,18 @@ pub struct DemoPlugin;
 
 impl Plugin for DemoPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<DemoRes>().add_systems(Update, (title_idle.run_if(crate::title::on_title), demo_run.run_if(active)));
+        crate::boot::on_boot(app, |w| w.insert_resource(DemoRes::default()));
+        app.add_systems(Update, (title_idle.run_if(crate::title::on_title), demo_run.run_if(active)));
     }
 }
 
 /// Never in tool runs, shots, or with `--no-demo`.
 fn allowed() -> bool {
-    let a: Vec<String> = std::env::args().collect();
+    let a: Vec<String> = crate::settings::args();
     !crate::menus::tool_run() && !a.iter().any(|x| x == "--no-demo" || x == "--title-shot" || x == "--menu-keys" || x == "--menu-shots")
 }
 
-fn title_idle(p: Res<crate::Player>, latch: Res<crate::pacing::PadLatch>, front: Res<crate::menus::Front>, mut res: ResMut<DemoRes>, mut exit: MessageWriter<AppExit>) {
+fn title_idle(p: Res<crate::Player>, latch: Res<crate::pacing::PadLatch>, front: Res<crate::menus::Front>, mut res: ResMut<DemoRes>) {
     let crate::Driver::Sim(run) = &p.driver else { return };
     let s = &run.session;
     // FUN_8005C2EC adds dt each frame: the session's frame counter steps
@@ -104,10 +105,9 @@ fn title_idle(p: Res<crate::Player>, latch: Res<crate::pacing::PadLatch>, front:
     };
     info!("demo: idle {} VBlanks -> attract demo on {} (recent {recent:?})", res.idle, info.name);
     relaunch_demo(&info.name, recent);
-    exit.write(AppExit::Success);
 }
 
-fn demo_run(p: Res<crate::Player>, latch: Res<crate::pacing::PadLatch>, mut ov: ResMut<crate::title::TitleOverlay>, mut res: ResMut<DemoRes>, mut exit: MessageWriter<AppExit>) {
+fn demo_run(p: Res<crate::Player>, latch: Res<crate::pacing::PadLatch>, mut ov: ResMut<crate::title::TitleOverlay>, mut res: ResMut<DemoRes>) {
     let crate::Driver::Sim(run) = &p.driver else { return };
     let s = &run.session;
     if res.hud.is_none() {
@@ -124,7 +124,7 @@ fn demo_run(p: Res<crate::Player>, latch: Res<crate::pacing::PadLatch>, mut ov: 
         return;
     }
     let b = latch.now | latch.now2;
-    let start = b & crate::input::START != 0 && res.prev & crate::input::START == 0 && !crate::movie::playing();
+    let start = b & crate::input::START != 0 && res.prev & crate::input::START == 0 && !crate::movie::playing() && !crate::loading::busy();
     res.prev = b;
     if start {
         // the course's menu when it is open, else the title
@@ -134,39 +134,20 @@ fn demo_run(p: Res<crate::Player>, latch: Res<crate::pacing::PadLatch>, mut ov: 
         res.done = true;
         let name = open.then(|| crate::courses::info().name.clone());
         crate::menus::relaunch(name.as_deref(), 0, 0, false);
-        exit.write(AppExit::Success);
     } else if s.demo_over() {
         info!("demo: over (race clock {}) -> the title", s.globals.race_clock);
         res.done = true;
         crate::menus::relaunch(None, 0, 0, false);
-        exit.write(AppExit::Success);
     }
 }
 
-/// Restart on `course` as the attract demo.
+/// Change course in place to `course` as the attract demo (loading.rs).
 fn relaunch_demo(course: &str, recent: [u8; 3]) {
-    let a: Vec<String> = std::env::args().collect();
-    let mut out: Vec<String> = Vec::new();
-    let mut i = 1;
-    while i < a.len() {
-        match a[i].as_str() {
-            "--course" | "--character" | "--vehicle" | "--demo-recent" => i += 2,
-            "--skip-title" | "--menu" | "--league" | "--demo" => i += 1,
-            _ => {
-                out.push(a[i].clone());
-                i += 1;
-            }
-        }
-    }
+    // (course_args ends with --character C --vehicle V: the demo has none)
+    let mut out = crate::menus::course_args(None, 0, 0, false);
+    out.truncate(out.len().saturating_sub(4));
     out.extend(["--course".into(), course.to_string(), "--skip-title".into(), "--demo".into(), "--demo-recent".into(), format!("{},{},{}", recent[0], recent[1], recent[2])]);
-    match std::env::current_exe() {
-        Ok(exe) => {
-            if let Err(e) = std::process::Command::new(exe).args(&out).spawn() {
-                eprintln!("demo: relaunch failed: {e}");
-            }
-        }
-        Err(e) => eprintln!("demo: relaunch failed: {e}"),
-    }
+    crate::loading::change(out, None);
 }
 
 #[cfg(test)]

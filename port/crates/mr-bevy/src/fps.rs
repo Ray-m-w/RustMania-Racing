@@ -12,7 +12,7 @@ pub struct FpsLog {
 }
 
 pub fn plugin(app: &mut App) {
-    let a: Vec<String> = std::env::args().collect();
+    let a: Vec<String> = crate::settings::args();
     let Some(secs) = a.iter().position(|x| x == "--fps-log").and_then(|i| a.get(i + 1)).and_then(|s| s.parse::<f32>().ok()) else {
         return;
     };

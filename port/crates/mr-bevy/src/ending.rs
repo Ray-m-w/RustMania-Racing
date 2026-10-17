@@ -43,7 +43,7 @@ pub fn on() -> bool {
 
 /// The `--ending` argument (courses.rs picks course 0x1D).
 pub fn asked() -> bool {
-    std::env::args().any(|a| a == "--ending")
+    crate::settings::args().into_iter().any(|a| a == "--ending")
 }
 
 /// One credits line.
@@ -182,7 +182,8 @@ pub struct EndingPlugin;
 
 impl Plugin for EndingPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<EndRes>().add_systems(Update, run.run_if(on));
+        crate::boot::on_boot(app, |w| w.insert_resource(EndRes::default()));
+        app.add_systems(Update, run.run_if(on));
     }
 }
 
@@ -190,7 +191,7 @@ fn secrets() -> u8 {
     crate::save::with(|s| s.block.secrets())
 }
 
-fn run(p: Res<crate::Player>, latch: Res<crate::pacing::PadLatch>, front: Res<crate::menus::Front>, mut ov: ResMut<crate::title::TitleOverlay>, mut res: ResMut<EndRes>, mut sfx: ResMut<crate::sfx::Sfx>, mut exit: MessageWriter<AppExit>) {
+fn run(p: Res<crate::Player>, latch: Res<crate::pacing::PadLatch>, front: Res<crate::menus::Front>, mut ov: ResMut<crate::title::TitleOverlay>, mut res: ResMut<EndRes>, mut sfx: ResMut<crate::sfx::Sfx>) {
     let crate::Driver::Sim(run) = &p.driver else { return };
     let c = run.session.globals.frame;
     let mt = crate::menus::tables();
@@ -222,14 +223,12 @@ fn run(p: Res<crate::Player>, latch: Res<crate::pacing::PadLatch>, front: Res<cr
             if r == 6 {
                 res.done = true;
                 crate::menus::relaunch(None, front.character, front.vehicle, false);
-                exit.write(AppExit::Success);
             } else if sec & if r < 3 { 1 } else { 2 } != 0 {
                 let id = ROW_COURSE[r];
                 if let Some(i) = crate::courses::races().iter().find(|i| i.id == id) {
                     info!("the end: {} -> its course menu", i.name);
                     res.done = true;
                     crate::menus::relaunch(Some(&i.name), front.character, front.vehicle, false);
-                    exit.write(AppExit::Success);
                 }
             }
         }
@@ -253,30 +252,12 @@ fn run(p: Res<crate::Player>, latch: Res<crate::pacing::PadLatch>, front: Res<cr
     }
 }
 
-/// Restart on THE END (BACK TO CREDITS, OPTIONS -> THE END).
+/// Change course in place to THE END (BACK TO CREDITS, OPTIONS -> THE
+/// END; loading.rs).
 pub fn relaunch(character: u8, vehicle: u8) {
-    let a: Vec<String> = std::env::args().collect();
-    let mut out: Vec<String> = Vec::new();
-    let mut i = 1;
-    while i < a.len() {
-        match a[i].as_str() {
-            "--course" | "--character" | "--vehicle" => i += 2,
-            "--skip-title" | "--menu" | "--league" | "--demo" | "--ending" => i += 1,
-            _ => {
-                out.push(a[i].clone());
-                i += 1;
-            }
-        }
-    }
-    out.extend(["--ending".into(), "--skip-title".into(), "--character".into(), character.to_string(), "--vehicle".into(), vehicle.to_string()]);
-    match std::env::current_exe() {
-        Ok(exe) => {
-            if let Err(e) = std::process::Command::new(exe).args(&out).spawn() {
-                eprintln!("ending: relaunch failed: {e}");
-            }
-        }
-        Err(e) => eprintln!("ending: relaunch failed: {e}"),
-    }
+    let mut out = crate::menus::course_args(None, character, vehicle, false);
+    out.extend(["--ending".into(), "--skip-title".into()]);
+    crate::loading::change(out, None);
 }
 
 #[cfg(test)]

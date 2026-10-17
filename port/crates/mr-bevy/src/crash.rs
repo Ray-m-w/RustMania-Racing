@@ -98,7 +98,7 @@ fn report(msg: &str, at: &str) -> ! {
         SIM_TICKS.load(Ordering::Relaxed),
         CLOCK.load(Ordering::Relaxed),
         if mode < 0 { "-".to_string() } else { format!("{mode:#X}") },
-        std::env::args().collect::<Vec<_>>().join(" "),
+        crate::settings::args().into_iter().collect::<Vec<_>>().join(" "),
     );
     let path = crate::paths::data_file("crash.txt").or_else(|| std::env::current_exe().ok().map(|p| p.with_file_name("crash.txt"))).unwrap_or_else(|| "crash.txt".into());
     let written = std::fs::File::create(&path).and_then(|mut f| f.write_all(text.as_bytes())).is_ok();
@@ -116,7 +116,7 @@ fn dialog_wanted() -> bool {
         return false;
     }
     const TOOLS: [&str; 8] = ["--shot", "--route", "--replay", "--replay-capture", "--latency-log", "--fps-log", "--fx-shots", "--title-shot"];
-    !std::env::args().any(|a| TOOLS.contains(&a.as_str()))
+    !crate::settings::args().into_iter().any(|a| TOOLS.contains(&a.as_str()))
 }
 
 #[cfg(windows)]

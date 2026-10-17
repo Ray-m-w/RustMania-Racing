@@ -59,7 +59,7 @@ fn init() -> Option<PathBuf> {
     if cfg!(test) {
         return None;
     }
-    let args: Vec<String> = std::env::args().collect();
+    let args: Vec<String> = crate::settings::args();
     let exe = exe_dir();
     let dir = choose(&args, exe.as_deref(), user_base())?;
     if let Err(e) = std::fs::create_dir_all(&dir) {

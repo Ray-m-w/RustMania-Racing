@@ -142,12 +142,14 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<HudGlobals>()
-            .init_resource::<HudInput>()
-            .init_resource::<ItemHudInput>()
-            .init_resource::<HudOverlay>()
-            .init_resource::<TwoHudInput>()
-            .add_systems(Startup, setup.after(crate::scene::setup))
+        crate::boot::on_boot(app, |w| {
+            w.insert_resource(HudGlobals::default());
+            w.insert_resource(HudInput::default());
+            w.insert_resource(ItemHudInput::default());
+            w.insert_resource(HudOverlay::default());
+            w.insert_resource(TwoHudInput::default());
+        });
+        app.add_systems(crate::boot::Boot, setup.after(crate::scene::setup))
             .add_systems(Update, (state_from_player, items_from_player, two_from_player.after(state_from_player).after(items_from_player), fit_hud, draw.after(two_from_player).after(fit_hud)));
     }
 }

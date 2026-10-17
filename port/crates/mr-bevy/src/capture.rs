@@ -112,7 +112,7 @@ pub fn tick(cap: Option<ResMut<CaptureReplay>>, mut feed: ResMut<KartFeed>, mut 
     let i1 = cap.idx;
     let Some(f) = cap.frame(i1) else { return };
     cap.vb = cap.vbs[cap.idx];
-    if std::env::args().any(|a| a == "--capture-log") {
+    if crate::settings::args().into_iter().any(|a| a == "--capture-log") {
         eprintln!("capture tick {} vb {}", p.tick, cap.vb);
     }
     let recs: Vec<(u8, Vec<u8>)> = (0..6u8)

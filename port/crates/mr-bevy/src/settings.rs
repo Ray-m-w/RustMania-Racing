@@ -337,10 +337,35 @@ impl Settings {
     }
 }
 
+/// Row 12: the launch arguments of the current boot. At start-up the
+/// process's own; an in-process course change (boot.rs) replaces them with
+/// the course's (`--course NAME --skip-title --menu ...`, the arguments the
+/// relaunch used to pass), so every reader below sees the new course.
+static ARGS: std::sync::RwLock<Option<Vec<String>>> = std::sync::RwLock::new(None);
+
+/// The current boot's arguments (program name first).
+pub fn args() -> Vec<String> {
+    if let Some(a) = ARGS.read().unwrap().as_ref() {
+        return a.clone();
+    }
+    std::env::args().collect()
+}
+
+/// Replace the boot arguments (boot.rs).
+pub fn set_args(a: Vec<String>) {
+    *ARGS.write().unwrap() = Some(a);
+}
+
+/// True after the first in-process course change: the settings file's
+/// `course` / `skip_title` (start-up choices) no longer apply.
+pub fn rebooted() -> bool {
+    ARGS.read().unwrap().is_some()
+}
+
 /// The value after a command-line flag (`--flag VALUE`), for one-off tool flags
 /// that are not settings (paths, debug switches).
 pub fn arg_value(flag: &str) -> Option<String> {
-    let a: Vec<String> = std::env::args().collect();
+    let a = args();
     a.iter().position(|x| x == flag).and_then(|i| a.get(i + 1)).cloned()
 }
 

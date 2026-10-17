@@ -5,8 +5,7 @@
 //! (data folder, paths.rs; a relative path is taken from the data folder);
 //! `$MRM_DISC`; the `disc = "..."` line of a game.toml found upward from the
 //! current directory (the development repo). The choice is passed on as
-//! `$MRM_DISC`, which every `mr_disc::Disc::open_default` reads (and a
-//! relaunched process inherits). mr-disc reads a .cue (single FILE, MODE2/2352)
+//! `$MRM_DISC`, which every `mr_disc::Disc::open_default` reads. mr-disc reads a .cue (single FILE, MODE2/2352)
 //! or its track .bin; not a .chd (extract it with chdman first).
 //!
 //! With no readable disc the window shows where to set it and the program
@@ -36,7 +35,7 @@ pub fn warning() -> Option<&'static str> {
 
 /// Pick the disc and open it once. Err = the reason no disc could be read.
 pub fn resolve(settings: &crate::settings::Settings) -> Result<PathBuf, String> {
-    let from_flag = std::env::args().any(|a| a == "--disc");
+    let from_flag = crate::settings::args().into_iter().any(|a| a == "--disc");
     if !from_flag {
         if let Some(d) = settings.get("disc").map(str::trim).filter(|d| !d.is_empty()) {
             let p = PathBuf::from(d);

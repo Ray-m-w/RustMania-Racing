@@ -194,3 +194,13 @@ note = "owner pre-approved Session 4 (bevy_audio -> rodio 0.22.2 + cpal 0.17.3);
 #   windows_x86_64_gnu 0.42.2 sha256 8de912b8b8feb55c064867cf047dda097f92d51efad5b491dfb98f6bbb70cb36
 #   windows_x86_64_gnullvm 0.42.2 sha256 26d41b46a36d453748aedef1486d5c7a85db22e56aff34643984ea85514e94a3
 #   windows_x86_64_msvc 0.42.2 sha256 9aec5da331524158c6d1a4ac0ab1541149c0b9505fde06423b02f5ef0106b9f0
+
+[[artifact]]
+name = "bevy_gilrs 0.19.1 and its new dependency tree (9 packages added to port/Cargo.lock, all from crates.io)"
+kind = "Rust crates, dependency of port/crates/mr-bevy ONLY: the bevy feature \"bevy_gilrs\" (gamepad input and rumble)"
+origin = "crates.io (registry+https://github.com/rust-lang/crates.io-index); resolved and built with `cargo build -p mr-bevy --offline` from the local cargo cache, which already held these exact versions"
+pin = "bevy =0.19.1 feature bevy_gilrs -> bevy_gilrs 0.19.1, gilrs 0.11.2, gilrs-core 0.6.8, fnv 1.0.7, vec_map 0.8.2 (Windows); inotify 0.11.5, inotify-sys 0.1.8, libudev-sys 0.1.4 (Linux only), objc2-io-kit 0.3.2 (macOS only); every package pinned with its checksum in port/Cargo.lock (committed)"
+sha256 = "b8215d166d5c4a9f821713a1a549a57c5f8bdf404745c84f7a8b920b7b7d92b2"   # crates.io checksum of bevy_gilrs-0.19.1.crate; gilrs-0.11.2 902fb00d3f6398e635be22e5c837b303c501835cca7ac11a47bba138f7aafdd8; gilrs-core-0.6.8 dc7f0ce6237abcc0523f2a5502b1e3fe5802daaae47ac14e166fe49551301ea9; fnv-1.0.7 3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1; vec_map-0.8.2 f1bddf1187be692e79c5ffeab891132dfb0f236ed36a43c7ed39f1165ee20191
+published_hash = "Cargo.lock checksum = crates.io index sha256; cargo verifies every .crate against it when unpacking"
+date = "2026-10-17"
+note = "owner approved gamepad support 2026-10-17 (it was never compiled in before: no Gamepad entities existed); cargo-deny not re-run"

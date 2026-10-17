@@ -13,8 +13,8 @@ docs/notes/SESSION-2-oracle.md): simulation tick for tick, screens by GPU
 packets / VRAM / screenshots. The psxrecomp build itself (the recomp,
 dist/mrm-<ver>-windows-x64.zip, CLAUDE.md) is a separate product.
 
-Every row of docs/PLAN-COMPLETE.md (0-15) is DONE. The one open item is
-gamepad support, pending the owner's approval (below).
+Every row of docs/PLAN-COMPLETE.md (0-15) is DONE, and gamepad support is
+in (owner approved 2026-10-17).
 
 ## Install and run
 - Package: `tools/package-port.ps1` (run from Git bash as
@@ -44,7 +44,7 @@ gamepad support, pending the owner's approval (below).
   exe change it. An existing save.bin / settings.txt beside the exe is
   COPIED in once; nothing is deleted. A PS1 memory card image can be
   imported once (saves\card1.mcd, `--import-card`).
-- Controls: keyboard only (gamepad support pending). Player 1: arrows,
+- Controls: keyboard or gamepads (two pads for two players; rumble). Player 1: arrows,
   X accelerate, S brake, Z jump, A camera lock-on / back, Enter START,
   Q / W L1 / R1, E / R L2 / R2; player 2: J / L / I / K, N, B, M, H,
   Backspace, U / O, Y / P (README-port.txt).
@@ -142,10 +142,9 @@ phase 14).
 - ADJUST SCREEN moves the picture inside the window's border only.
 
 ## Open item
-- Gamepads: the build has no gamepad backend (Bevy's gilrs feature is off);
-  input.rs already maps pads 1 and 2 and rumble.rs issues the VIBRATION
-  requests. Enabling it is a new dependency and waits for the owner's
-  approval. Until then: keyboard only (both READMEs say so).
+- Gamepads: done 2026-10-17 (bevy_gilrs, BINLIST); input.rs maps pads 1
+  and 2, rumble.rs drives VIBRATION. Not yet tried with a physical pad by
+  the lead (the owner's first play is the check).
 
 ## Development and oracle tooling (not part of the game)
 - Oracle: the psxrecomp build-dev with the dev-only bridge plugin, TCP

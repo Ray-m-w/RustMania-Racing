@@ -9,7 +9,7 @@ time. You need a dump of the USA disc, "Muppet RaceMania (USA)".
 
 Requirements: Windows 10/11 x64 and a GPU with Vulkan or Direct3D 12.
 Nothing else to install (the program carries its C runtime).
-Controls: keyboard only (gamepad support pending).
+Controls: keyboard or gamepad (XInput / DirectInput pads; rumble).
 
 
 1. Point it at your disc
@@ -49,11 +49,13 @@ Keyboard, player 1:
     Enter       START (pause)
     Q / W       L1 / R1 (turbo; special move on a full meter)
     E / R       L2 / R2 (character special)
-Gamepads are not read yet (gamepad support pending).
+Gamepad: A/Cross accelerate (or right trigger), B/Circle brake (or left
+trigger), X/Square jump, Y/Triangle lock-on, bumpers L1 / R1, stick clicks
+L2 / R2, Start pause, D-pad or left stick steer. A second pad plays player 2.
 OPTIONS -> SET CONTROLLERS swaps the game's layout A / B.
 
 Two players (2 PLAYER RACE / BATTLE / STUNT RACE, CHICKEN CHASE on a
-course's menu): split screen, player 1 on top, both on the keyboard;
+course's menu): split screen, player 1 on top, two pads or the keyboard;
 player 2:
     J / L steer, I / K up / down, N accelerate (CROSS), B brake (CIRCLE),
     M jump (SQUARE), H (TRIANGLE), Backspace = START, U / O = L1 / R1,
@@ -100,8 +102,7 @@ Every mode and menu of the original is ported. By design: the default
 textures and lighting, full draw distance, anti-aliasing) are options
 (faithful_view = true for the PlayStation's look). OPTIONS -> ADJUST
 SCREEN moves the picture inside the window's black border (it cannot move
-when the picture fills the window). Gamepads (and so VIBRATION) are not
-supported yet: keyboard only.
+when the picture fills the window). VIBRATION rumbles the gamepad.
 
 
 5. Licences

@@ -6,7 +6,7 @@ build of the original (the oracle). Complete (row 15, 2026-10-17): the
 whole game - title, menus, every mode (races, tournaments, stunt trial,
 battles, adventure, course secrets, two players, MEET THE MUPPETS / TEST
 DRIVE, the attract demo, THE END, cheat codes, movies), saves and options.
-Keyboard only (gamepad support pending: the build has no gamepad backend).
+Keyboard and gamepads (Bevy's gilrs backend, with rumble; 2026-10-17).
 Final report: ../docs/notes/FINAL-REPORT.md; plan: ../docs/PLAN-COMPLETE.md.
 
 ## Play
@@ -40,7 +40,7 @@ cargo metadata + the registry's licence files; no game data).
 Keyboard: arrows steer, X accelerate, S brake/reverse, Z jump, A
 (TRIANGLE) locks the camera on the nearest kart while held (Session 7),
 Enter = START (pause).
-Gamepad (keyboard only for now: gamepad support pending the owner's approval of Bevy's gilrs backend; mapped in input.rs): right trigger / south accelerate, left trigger / east brake, west jump.
+Gamepad (input.rs): south or right trigger accelerate (CROSS), east or left trigger brake (CIRCLE), west jump (SQUARE), north TRIANGLE, bumpers L1 / R1, stick clicks L2 / R2, Start, D-pad / left stick steer. With two pads the second plays player 2. VIBRATION (OPTIONS -> SET CONTROLLERS) rumbles the pad.
 
 Two players (phase 7; the course menu's 2 PLAYER RACE / BATTLE / STUNT
 RACE, CHICKEN CHASE): split screen, player 1 on top. The first gamepad

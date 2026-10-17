@@ -39,6 +39,15 @@ BUILD AND RUN
 - Package: `powershell -File tools\package-port.ps1` -> dist\mrm-port-<v>-windows-x64.zip.
 - User data: %APPDATA%\MuppetRaceMania (save.bin, settings.txt, crash.txt).
 
+DEVELOPMENT DATA (outside the repo)
+- G:\GameDev\RustMania Racing Development (or $env:MRM_DEV): analysis\ (oracle
+  captures the tests and checkers read), build-dev\ (the oracle), generated\,
+  disc\, saves\ (savestates), ghidra\, quarry\ (Ghidra + JDK + symbols.md).
+  `.	ools\dev-link.ps1` junctions them into the repo root (gitignored names);
+  `-Unlink` removes the links only. Unlink before publishing a release.
+- Old bulk (build caches, screenshots, statistics runs) is in
+  G:\GameDev\_MRM-Archive for the owner to delete.
+
 ORACLE (only for verification work)
 - The oracle is the psxrecomp debug build of the original: build it from your
   disc (psxrecomp docs; tools\build.ps1), then `.\tools\run-dev.ps1 -Start`

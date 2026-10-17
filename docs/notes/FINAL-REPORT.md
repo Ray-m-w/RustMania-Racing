@@ -1,4 +1,4 @@
-# Muppet RaceMania: final report (Session 7, phase 10, 2026-10-16)
+# Muppet RaceMania: final report (100%, Session 8, row 15, 2026-10-17)
 
 ## What the port is
 A reimplementation of Muppet RaceMania (PS1, SLUS-01237, USA) in Rust with
@@ -7,105 +7,158 @@ workspace: mr-disc, mr-assets, mr-sim, mr-audio, mr-video, mr-trace are
 std-only; mr-bevy is the game). It contains no game data: models,
 textures, scenery, music, sound, movies and the game's own tables are read
 from the owner's disc at run time. The game logic (kart physics, AI, items,
-modes, menus, progression) is ported from the original code and was
-verified tick for tick against the psxrecomp build of the original (the
-oracle, docs/notes/SESSION-2-oracle.md). The psxrecomp build itself (the
-recomp, dist/mrm-<ver>-windows-x64.zip, CLAUDE.md) is a separate product.
+every mode, menus, progression) is ported from the original code and was
+verified against the psxrecomp build of the original (the oracle,
+docs/notes/SESSION-2-oracle.md): simulation tick for tick, screens by GPU
+packets / VRAM / screenshots. The psxrecomp build itself (the recomp,
+dist/mrm-<ver>-windows-x64.zip, CLAUDE.md) is a separate product.
 
-## How to run it
-- Package: `.\tools\package-port.ps1` -> dist/mrm-port-0.1.0-windows-x64.zip
-  (17.9 MB): muppet-racemania.exe, README-port.txt, THIRD-PARTY-LICENSES.txt
-  (243 crates, 125 distinct licence texts). Nothing else: no disc data, no
-  decoded assets, no captures (the script checks the file list).
-- Unzip anywhere, start muppet-racemania.exe. Without a disc a screen says to
-  set `disc = <your .cue>` in `%APPDATA%\MuppetRaceMania\settings.txt` (the
-  file is created) and the program exits. The disc can also come from
-  `--disc`, `$MRM_DISC` or (development) game.toml. The track file is checked
-  once against Redump disc 16664 track 1 (SHA-1 1b0fc0b6...; a mismatch
-  warns, never refuses; disc-check.txt).
+Every row of docs/PLAN-COMPLETE.md (0-15) is DONE. The one open item is
+gamepad support, pending the owner's approval (below).
+
+## Install and run
+- Package: `tools/package-port.ps1` (run from Git bash as
+  `powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/package-port.ps1`)
+  -> `dist/mrm-port-0.1.0-windows-x64.zip`, 18,151,344 bytes, SHA-256
+  `13cd2e081484bce5ef6b927b3367e3312db652bcd342f9fa10b118c3fb97e461`.
+  Exactly three files: muppet-racemania.exe (58,200,064 bytes),
+  README-port.txt, THIRD-PARTY-LICENSES.txt (243 crates, 125 distinct
+  licence texts). No disc data, no decoded assets, no captures (the script
+  asserts the file list).
+- The exe: Windows GUI subsystem (no console window; attaches to a parent
+  console for tool output), C runtime linked statically: its imports are
+  Windows system DLLs only (no VCRUNTIME / MSVCP / api-ms-win-crt /
+  ucrtbase). Requirements: Windows 10/11 x64, a Vulkan or D3D12 GPU.
+- Unzip anywhere and start muppet-racemania.exe. Without a disc a window
+  asks for it (row 15, discpick.rs): type or paste (Ctrl+V) the path to the
+  .cue (or .bin) and press Enter, or press 1..9 for a .cue found beside the
+  exe or in the data folder; the path is opened with mr-disc, written to
+  settings.txt as `disc = PATH` (only that line changes) and the game starts
+  in the same process; Esc quits. The disc can also come from `--disc`,
+  `$MRM_DISC` or (development) game.toml. A .chd must be extracted with
+  chdman first. The track file is checked once against Redump disc 16664
+  track 1 (SHA-1 1b0fc0b6...; a mismatch warns in the window title, never
+  refuses; disc-check.txt).
 - Data folder `%APPDATA%\MuppetRaceMania\`: settings.txt, save.bin,
   crash.txt, disc-check.txt; `--data-dir PATH` or a `portable.txt` beside the
-  exe change it. The first start COPIES an existing save.bin / settings.txt
-  from beside the exe (port/target/release) into it; nothing is deleted.
-- Development: `.\tools\play-port.ps1` (builds and runs from the repo).
-- Requirements: Windows x64, Vulkan or D3D12 GPU, the MSVC 2015-2022
-  runtime (VCRUNTIME140.dll; the exe links it dynamically).
+  exe change it. An existing save.bin / settings.txt beside the exe is
+  COPIED in once; nothing is deleted. A PS1 memory card image can be
+  imported once (saves\card1.mcd, `--import-card`).
+- Controls: keyboard only (gamepad support pending). Player 1: arrows,
+  X accelerate, S brake, Z jump, A camera lock-on / back, Enter START,
+  Q / W L1 / R1, E / R L2 / R2; player 2: J / L / I / K, N, B, M, H,
+  Backspace, U / O, Y / P (README-port.txt).
+- Development: `tools/play-port.ps1` (builds and runs from the repo).
 
-## Oracle retirement check (phase 10)
-- Run-time code: no psxrecomp, TCP (4370), oracle bridge or analysis/ path
-  is used outside `#[cfg(test)]` (grep of mr-bevy, mr-sim, mr-disc,
-  mr-assets, mr-audio, mr-video sources; the only `mr_sim::oracle::repo_root`
-  calls are in tests). The exe imports only Windows system DLLs, the MSVC
-  runtime and the GPU APIs.
-- Run: the zip unpacked into a temp folder outside the repo, MRM_DISC unset,
-  no game.toml above it, APPDATA pointed at a temp folder holding only
-  `settings.txt` with `disc = F:\Muppet Racemania\extract\muppet-usa.cue`.
-  The game's own outputs: `--title-shot` (title at frame 400: logo scene),
-  `--menu-keys/--menu-shots` (START -> main menu -> SELECT COURSE: the film
-  strip on SWAMP), `--course BOG --menu` + keys (1 PLAYER RACE -> character
-  select -> race running, LAP 1/3, 0:01.1). The disc check reported a match;
-  save.bin and disc-check.txt were written into the data folder. Migration
-  checked with the repo build and `--data-dir` (save.bin copied byte-equal,
-  the original kept). No desktop screenshots.
-- Still needs the oracle (development and verification only, never the
-  game): tools/oracle/*.py and the dev-only bridge plugin in the psxrecomp
-  build-dev; captures under analysis/ (local); mr-sim's `oracle` module and
-  the verification bins (mr-ai harness, mr-items, mr-verify, mr-course-check,
-  mr-particles, mr-title, mr-scenery's checks); mr-trace's mr-compare;
-  mr-bevy's tool flags (`--oracle-grid`, `--title-oracle` (embedded seed
-  constants only), `--replay`, `--replay-capture`, `--ghost`,
-  `--record-route`, `--trace-out`); tests that compare with the local captures; tools/compare-drive.ps1, fmv_check.py.
+## Modes and features
+- Front end: power-on movies, title (logo scene, PRESS START, cheat-code
+  entry), main menu, film-strip course select with backdrop and props,
+  world / course lists, course and game menus, character / vehicle select
+  (one and two players), pause + YES / NO, OPTIONS (ADJUST SOUND, SET
+  CONTROLLERS, ADJUST SCREEN, VIBRATION, MEMORY CARD over save.bin, PORT
+  SETTINGS), MUSIC, the game's fades and LOADING pictures, in-process
+  course change (no relaunch), GAME STATUS.
+- Racing: all 18 race courses, 3 laps against five AI opponents (four on
+  overhead-camera courses), items, specials, weather, lap records / BEST
+  LAP; TOURNAMENT leagues A / B / random (1 or 2 players), standings with
+  the 3D line-up, tie-break race and trophy presentation.
+- Stunt: the 1 PLAYER STUNT TRIAL on the six stunt courses (gates, clock,
+  course record, mirror walls, banners), 2 PLAYER STUNT RACE.
+- Battle: 1 / 2 PLAYER BATTLE on the ten arenas, BATTLE LEAGUE, CHICKEN
+  CHASE (two players).
+- ADVENTURE (game mode 0xB) and its "BEAT x" race; COURSE SECRETS: BOSS
+  CHALLENGE, BATTLE AS BOSS, DOGFIGHT, DOOZER BATTLE, REVERSE RACE, BATTLE /
+  BATTLE RACE on race courses, the reversed trial, PLAY MOVIE, the
+  "n PLAYERS" choices.
+- Two players: split screen, simultaneous character select, each player's
+  own camera pass (billboards, pickups, shadows, impostors, draw distance),
+  audio listeners, split minimap / progress bar / chicken icon.
+- Attract demo, THE END (credits roll, "?" picture, the six secret
+  courses), the six cheat codes, MEET THE MUPPETS gallery and TEST DRIVE,
+  every menu and race voice clip, all 30 FMV movies (mr-video: STR, MDEC,
+  XA), music and sound effects from the disc, save.bin progression and
+  unlocks.
 
-## Verification summary (numbers from the handoffs and logs)
+## Options (settings.txt / OPTIONS -> PORT SETTINGS / `--set key=value`)
+faithful_view (the PlayStation's look in one switch), faithful_draw_distance,
+aspect (native widescreen / 4:3), msaa, texture_filter, lighting
+(faithful / enhanced), resolution, fullscreen, vsync, fx_blend, fx_depth_test,
+logic_hz (60 / 30), render_latency, low_latency, disc, course,
+skip_intro_movies, skip_title, music_volume, sound_volume,
+controller_config(_2), vibration(_2), screen_x / screen_y, unlock_all.
+Every key with its help: settings.rs `KNOWN` and the generated settings.txt.
+
+## Verification summary (numbers from the logs and handoffs of Sessions 2-8)
 | area | result |
 |---|---|
 | Kart physics (S2) | DOCK lap, 1,538 ticks: 0 error on all 34 trace fields fed the oracle's inputs; mr-bevy live 507 ticks exact |
-| Race flow + AI (S3) | player exact over a 3-lap race (3,510 ticks); AI decisions match on 23,202 / 23,206 teacher-forced kart-ticks; opponent lap times within 1.1 % (pooled +0.11 %) |
-| Items (S4) | six karts free-running exact over 4,815 ticks on 4 races; item HUD 9,714 / 9,714 GP0 primitives |
-| Audio (S4, S9) | music / sfx from the disc; movie audio correlates 1.0000 with the decoder at CdMix 0x70 |
-| Graphics (S5, S6) | PS1 blend modes in gamma space, water within 0.5-2 %, widescreen HUD at 4:3 / 16:9 / 21:9; 60 Hz logic default (30 Hz exact) |
-| Courses (S6) | all 18 race courses: race load exact, free run exact to the end of every capture (~1,630 frames) except two weather frames |
-| Stability (P0) | 1,520 fuzz runs, 0 panics; crash.txt instead of a freeze |
-| Front end (P1) | menus GP0 font match on 7 screens |
-| Saves + leagues (P2) | progression FUN_8008BE68 matched; save block = RAM; GP0 5 screens |
-| Stunt trial (P3) | MOUNTAIN, 3 captures: free run / teacher forced exact; HUD 120 / 121 |
-| Battle (P4) | LAGOON, 3 captures exact incl. 3 knock-outs; result 116 / 116 |
-| Adventure (P6) | DOCK race load / free run / teacher forced exact; GP0 88 / 88 |
-| Course secrets (P6b) | boss_lagoon / reverse_dock / doozer_battle exact (619 / 726 / 636 frames); boss HUD 129 / 130 |
-| Two players (P7) | DOCK 2P 1,024 frames and VOLCANO CHICKEN CHASE 1,419 frames exact for both karts and cameras; split HUD 140 / 186; 204 fuzz runs 0 panics |
+| Race flow + AI (S3) | player exact over a 3-lap race (3,510 ticks); AI decisions match on 23,202 / 23,206 teacher-forced kart-ticks |
+| Items (S4) | six karts free-running exact over 4,815 ticks on 4 races; item HUD 9,714 / 9,714 GP0 primitives; item key-ons 308 / 308 (P13) |
+| Audio (S4, P9, P11) | music / sfx from the disc; movie audio correlation 1.0000 at CdMix 0x70; XA file / channel / LBA equal for 7 clips |
+| Graphics (S5, S6, P14) | PS1 blend modes, widescreen HUD at 4:3 / 16:9 / 21:9; environment-mapped primitives GP0 UVs 129 / 129 + 149 / 150; every course's VRAM scrolls |
+| Courses (S6, row 15) | analysis/oracle/courses' 21 captures (17 race courses, arena LAGOON, stunt MOUNTAIN / REST / ROOFTOPS) + DOCK (start_probe) = all 18 race courses: race load exact, free run exact to the end (31,394 + 834 frames), teacher forced motion / camera exact (row-15 re-run) |
+| Front end (P1, P12) | GP0 font match on 7 screens; LOADING and fades exact; course-select backdrop within 1 px |
+| Saves + leagues (P2, P6b) | progression FUN_8008BE68 and battle points matched; save block = RAM; GP0 5 screens |
+| Stunt (P3, P13, P14) | MOUNTAIN, ROOFTOPS reversed, REST mirrors: free run / teacher forced exact; HUD 120 / 121 |
+| Battle (P4, P13) | LAGOON 3 captures exact incl. 3 knock-outs; result 116 / 116; BATTLE on DOCK exact |
+| Adventure + secrets (P6, P6b, P13) | DOCK adventure exact, GP0 88 / 88; boss_lagoon / reverse_dock / doozer_battle exact (619 / 726 / 636 frames); DOGFIGHT, BATTLE AS BOSS, reverse lap exact |
+| Two players (P7, P13) | DOCK 2P 1,024 frames, VOLCANO CHICKEN CHASE 1,419 frames exact for both karts and cameras; result panels GP0 324 / 324, 329 / 329, 174 / 174, 104 / 104; character select 55 / 55 |
 | Attract, credits, codes (P8) | demo free run exact 290 frames; credits 118 / 118 glyphs; ARCHES code save block = RAM |
 | FMV (P9) | all 30 movies decode; 11 VRAM regions 32,768 / 32,768 bytes each |
-| Ship (P10) | package, data folder, disc handling, oracle-independent run (above); `cargo test --workspace --offline --release` green (62 suites) |
+| MEET THE MUPPETS (P11) | gallery GP0 28 / 28 and 16 / 16; RAM records exact |
+| Fresh title (P14) | 918 / 918 ticks exact with the oracle's power-on history |
+| Stability (all) | row-15 sweep: mr-fuzz every mode at 30 and 60 Hz, 1,212 runs, 21,998,356 ticks, 0 panics; earlier rows 1,520 + 840 + 272 + ... runs, 0 panics; crash.txt instead of a freeze |
+| Tests | `cargo test --workspace --offline --release`: 64 suites, 201 passed, 0 failed, 1 ignored |
+| Package (row 15) | zip unpacked into a temp folder, temp APPDATA, MRM_DISC unset: disc picker -> settings.txt written -> title (in-process); START -> main menu -> SELECT COURSE (SWAMP film strip) -> LOADING; `--course BOG --skip-title --menu` + CROSS, CROSS -> character select -> race (READY); disc check match. Game's own --title-shot / --menu-shots only |
 
-## Remaining differences and leftovers (concise)
-From PLAN-COMPLETE.md and each phase's "Left" list:
-- Front end: MEET THE MUPPETS (gallery + the menus' only voice clips);
-  fades / LOADING between menus; course-select sky backdrop and world props;
-  in-process course change (another course relaunches the program); the
-  scene reload after an in-menu movie; greyed: ADJUST SCREEN, MEMORY CARD,
-  VIBRATION, MOVIE / MUSIC.
-- Modes: simultaneous 2P character select, the secrets' "n PLAYERS" choices,
-  2-player TOURNAMENT (3 karts), split minimap / chicken icon, player-2
-  billboards and draw distance; league tie-break and presentation,
-  standings' 3D line-up; MIDWAY movie (no file); CRDIT_01.XA (caller not
-  found); race voice clips (lap, battle win, catches, standings); THE END's
-  floor render and its "?" picture.
-- Unchecked against the oracle: 2P battle / stunt race, DOGFIGHT, BATTLE AS
-  BOSS, BATTLE on race courses, reversed trial, reverse lap completion, the
-  Doozer goal marker, a second stunt course, movie audio vs the oracle.
-- Accuracy loose ends: fresh-title random byte; GRAVE / BOG weather frames;
-  DISCO floor animation timing; GRAVE far pickup; item sound key-on; AI R2
-  specials; stunt banner animation and mirror reflections.
-- Ship: the exe is a console program (a console window opens; useful for
-  the disc warning, could become a GUI subsystem build); dynamic MSVC
-  runtime; no .chd reading (extract with chdman); version 0.1.0 unchanged.
-- Deferred by the owner: DLSS. Optional: AI personalities, control
-  remapping.
+Row-15 sweep details (docs/notes/2026-10-17.md "Session 8, phase 15"):
+mr-fuzz --seeds 3: races / stunt / arenas / title 210 runs, --adventure 210,
+--beat 210, --secrets 204, --demo 168, --two 204, --test-drive 6. Course
+check extra captures: secrets/boss_lagoon, reverse_dock, battle_dock,
+reverse_rooftops exact; DOCK start_probe exact but for its known 48
+teacher-forced random-state frames (the Session-3 capture holds only 0x40
+bytes of the particle list; docs/spec/courses.md, unchanged since before
+phase 14).
 
-## To reach 100%
-1. MEET THE MUPPETS and the race / menu voice clips.
-2. In-process course change with the game's fades and LOADING screen.
-3. Two-player completeness (simultaneous select, 2P tournament, split
-   minimap, player-2 billboards) and the unchecked modes on the oracle.
-4. The accuracy loose ends above (each a short capture).
-5. Ship polish: GUI-subsystem exe, static CRT, an in-game disc picker.
+## Deliberate differences (by design)
+- 60 Hz game logic (dt = 1 per tick, kart-physics-ledger.md "60 Hz
+  mode") is the default and a feel match of the original's 30 Hz, not a
+  tick-exact one; `logic_hz = 30` is the original timing, verified tick
+  for tick. Low-latency input sampling with a look-ahead display is on by
+  default (pacing.rs).
+- Enhancements are options and on by default: native widescreen with the
+  HUD pinned to the edges, smooth texture filtering, enhanced lighting,
+  MSAA, whole-course draw distance; `faithful_view = true` gives the
+  PlayStation's look (4:3, nearest, faithful lighting and draw distance).
+- Rendering is per-pixel depth on a GPU, not the PS1's ordering-table
+  draw order; PS1 blend modes and the ordering-table pushes are emulated
+  where they show (render-ledger.md).
+- Saves: save.bin in the data folder instead of memory card prompts
+  (autosave; the MEMORY CARD page saves / loads it; card images import
+  once, read only).
+- The disc is read from a .cue / .bin dump; a .chd is not read (extract
+  with chdman). MIDWAY (movie 0x1E) has no file on the disc; CRDIT_01.XA
+  is unreferenced by the game's code.
+- ADJUST SCREEN moves the picture inside the window's border only.
+
+## Open item
+- Gamepads: the build has no gamepad backend (Bevy's gilrs feature is off);
+  input.rs already maps pads 1 and 2 and rumble.rs issues the VIBRATION
+  requests. Enabling it is a new dependency and waits for the owner's
+  approval. Until then: keyboard only (both READMEs say so).
+
+## Development and oracle tooling (not part of the game)
+- Oracle: the psxrecomp build-dev with the dev-only bridge plugin, TCP
+  4370, tools/oracle/*.py (captures, routes such as goto_course.py), the
+  local captures under analysis/oracle/ (never committed).
+- mr-sim bins: mr-course-check (race load / free run / teacher forced per
+  capture; `--cap`, `--dir`, `--adv-load`), mr-fuzz (headless stability,
+  every mode, 30 / 60 Hz), mr-verify, mr-items, mr-particles, mr-title,
+  mr-scenery checks, the AI harness; mr-trace's mr-compare.
+- mr-bevy tool flags: `--shot`, `--title-shot`, `--menu-keys` /
+  `--menu-shots`, `--picker-keys` / `--picker-shot`, `--replay`,
+  `--replay-capture`, `--ghost`, `--oracle-grid`, `--title-oracle`,
+  `--record-route`, `--trace-out`, `--boot-soak`, `--fps-log`,
+  `--latency-log`.
+- Run-time code uses no oracle, TCP or analysis/ path outside
+  `#[cfg(test)]` (phase-10 retirement check, still true).

@@ -210,10 +210,10 @@ local, not committed).
 | screen | where (0x800B0FAC / 0x800B0D46 / sub-state) | items | port |
 |---|---|---|---|
 | main menu | 0x1E / 0x10 / 0x800B0E8A = 1 | MEET THE MUPPETS, GAME STATUS, SELECT COURSE, TOURNAMENT - 1 PLAYER, OPTIONS (+ GAME STATUS CHANGED - SAVE GAME while 0x800B07DC: 6 rows); BACK = title | yes (the port autosaves: no 6th row); MEET THE MUPPETS since phase 11 ("MEET THE MUPPETS" below) |
-| options | 0x1E / 0x10 / 3 (5 rows, 4 drawn) | ADJUST SOUND, SET CONTROLLERS, ADJUST SCREEN (sub-state 4), MEMORY CARD | yes; 3, 4 greyed; 5th row = the port's PORT SETTINGS |
+| options | 0x1E / 0x10 / 3 (5 rows, 4 drawn) | ADJUST SOUND, SET CONTROLLERS, ADJUST SCREEN (sub-state 4), MEMORY CARD | yes (row 12: ADJUST SCREEN, MEMORY CARD; "Row 12" below); 5th row = the port's PORT SETTINGS |
 | adjust sound | 0x800B07CD | MUSIC VOLUME - n, SOUND VOLUME - n (0..15; levels 0x800AC118 / 0x800AC138, default 12 = 0x6C / 0x60; FUN_80074850: LEFT / RIGHT, CROSS keeps, TRIANGLE restores) | yes (settings music_volume / sound_volume; bus gains level / level(12)) |
-| set controllers | 0x800B07CC | CONTROLLER 1, s JUMP / BRAKE o, CONFIGURATION - A/B, VIBRATION - ON/OFF | configuration only (settings controller_config -> SessionConfig::alt_controls); one controller |
-| course select | 0x1E / 0xC | world name (0x100, 0x3C), the slot's type RACE A / RACE B / BATTLE / STUNT (worlds 0..5; RACE / BATTLE / RACE / BATTLE RACE above; 0x80058E30) (0x9F, size 2, colour 1), course name (0xB4, size 1, colour 5) or "?" (colour 7); s MOVIE, x SELECT, o MUSIC (0xD2); camera mode 5 (0x80070E4C): eye (0xA000, (row * 10000 - 25000) * 32, -0x28000) looking along +z, angles fixed at 0 on event 0x1E (0x80072394) | yes; CROSS on an open race, stunt or arena course restarts on it; SQUARE = MOVIE (phase 9, fmv.md: bright and playing once the course's movie object is found, flags & 0x80); MUSIC greyed; the backdrop (sky, ship) and the world's 3D prop not drawn |
+| set controllers | 0x800B07CC | CONTROLLER 1, s JUMP / BRAKE o, CONFIGURATION - A/B, VIBRATION - ON/OFF | yes (row 12: VIBRATION per controller, pad 2's own cursor; "Row 12" below) |
+| course select | 0x1E / 0xC | world name (0x100, 0x3C), the slot's type RACE A / RACE B / BATTLE / STUNT (worlds 0..5; RACE / BATTLE / RACE / BATTLE RACE above; 0x80058E30) (0x9F, size 2, colour 1), course name (0xB4, size 1, colour 5) or "?" (colour 7); s MOVIE, x SELECT, o MUSIC (0xD2); camera mode 5 (0x80070E4C): eye (0xA000, (row * 10000 - 25000) * 32, -0x28000) looking along +z, angles fixed at 0 on event 0x1E (0x80072394) | yes; CROSS on an open race, stunt or arena course restarts on it; SQUARE = MOVIE (phase 9, fmv.md: bright and playing once the course's movie object is found, flags & 0x80); row 12: MUSIC, the backdrop and the props ("Row 12" below) |
 | course menu | course / 0 / 0x800B0EA2 = 0 | 1 PLAYER RACE - n LAPS, 2 PLAYER RACE - n LAPS, COURSE SECRETS, GAME MENU, BACK TO MAIN MENU; course name (0x1E0, 0x1E, right), BEST LAP m:ss.hh (the save's record / 3 = hundredths), SELECT bottom left; LEFT / RIGHT on the race rows: laps 1..10 (0x800E038C) once the course is won (flags & 3 == 3); camera mode 1 (orbit, DAT chunks 0x0B / 0x0A). A stunt course (race type 3): 1 PLAYER STUNT TRIAL, 2 PLAYER STUNT RACE, COURSE SECRETS, GAME MENU, BACK TO MAIN MENU, "BEST TIME" (race types 2 / 3, 0x80052D90), no laps, camera mode 9 (stunt-trial.md). An arena (race type 2, phase 4): 1 PLAYER BATTLE, 2 PLAYER BATTLE, COURSE SECRETS, GAME MENU, BACK TO MAIN MENU, BEST TIME (cups above 6: sub-state 0xC, 1 PLAYER BATTLE, 2 PLAYER BATTLE, CHICKEN CHASE, BACK TO CREDITS; battle.md) | yes (2, 3 greyed); BACK TO MAIN MENU restarts on the title (or on a course the progression check opened) |
 | game menu | course / 0 / (BACK shown) | ADVENTURE, GAME STATUS, CHANGE COURSE, TOURNAMENT - 1 PLAYER | ADVENTURE (phase 6: the character select, then game mode 0xB; adventure.md), CHANGE COURSE |
 | world list | course / 0 / 1 | the 7 world names (cursor on the current world) | yes; + world 7 (SPEEDWAY, RALLY, GLACIER) once DISCO is won and world 8 (VOLCANO, HOUSE, WHATEVER) once everything is complete (the game's secret screen 0x1D, not ported, offers them) |
@@ -244,10 +244,9 @@ game's everything code applied to a copy.
   vehicles.
 
 ## Not ported (listed)
-(MEET THE MUPPETS: phase 11, "MEET THE MUPPETS" below.) 2 PLAYER RACE / STUNT
-RACE (phase 7), 2 PLAYER BATTLE / CHICKEN CHASE (phase 7; battle.md), MEMORY CARD and GAME STATUS CHANGED - SAVE
-GAME (the port autosaves), ADJUST SCREEN, VIBRATION, MUSIC in the
-course select (MOVIE: phase 9, fmv.md), the fades and LOADING screen between screens.
+(MEET THE MUPPETS: phase 11, "MEET THE MUPPETS" below; MEMORY CARD,
+ADJUST SCREEN, VIBRATION, MUSIC, the fades and LOADING: row 12, "Row 12"
+below.) GAME STATUS CHANGED - SAVE GAME (the port autosaves).
 
 
 # Saves (Session 7, phase 2)
@@ -332,7 +331,8 @@ main() compares between course sessions, the cheat codes too).
 - Autosave: written whenever the block changes (records and won bits during
   the race, vehicles won, the progression check at each course change, laps,
   the league end); options stay in settings.txt and are mirrored into the
-  block when written. No MEMORY CARD page, no "SAVE GAME" row.
+  block when written. No "SAVE GAME" row; row 12: the MEMORY CARD page
+  saves / loads save.bin on demand ("Row 12" below).
 - Course changes run the progression check first; a newly opened race
   course the port runs is loaded instead (as main() does).
 - `unlock_all` (default false): the menus show the everything code applied
@@ -441,14 +441,14 @@ Port: port/crates/mr-bevy/src/league.rs, menus.rs (`Leagues`, `LeagueMenu`,
   POINTS and TOURNAMENT POINTS "AFTER 1 RACE".
 
 ## The port
-- The league crosses the per-course restarts in league.txt beside save.bin
+- The league crosses the course changes in league.txt beside save.bin
   (`--league`); RETIRE in a league race or QUIT TOURNAMENT ends it.
-- Standings over the course's orbit (the game lines the karts up in 3D);
-  after the sixth race FINAL TABLE, then the result into the save and the
-  title.
-- Not ported: the karts lined up behind the standings, the tie-break race
-  (the port's table keeps the player first among equals), the presentation
-  on course 0x1A, 2 player leagues. BATTLE LEAGUE: phase 6b (battle.md).
+- Standings over the course's orbit with the karts lined up in front of
+  the camera; after the sixth race FINAL TABLE, the tie-break race when
+  the player shares first place, the presentation on OVAL / ARENA BATTLE
+  (row 12, "Row 12" below), then that course's menu or the title.
+- Not ported: 2 player leagues (row 13). BATTLE LEAGUE: phase 6b
+  (battle.md).
 
 ## Checks
 - `save_check.py league` (one run; the player's kart marked finished 300
@@ -654,8 +654,8 @@ Port: port/crates/mr-bevy/src/league.rs, menus.rs (`Leagues`, `LeagueMenu`,
 - (MEET THE MUPPETS: phase 11.)
 - THE END's floor rendering, its "?" picture (FUN_8002FD04). (CRDIT_01.XA
   is played by no code: audio.md "Phase 11".)
-- The fades and LOADING screen between screens; the course select's sky
-  backdrop and world props (leftovers).
+- (Row 12: the fades and LOADING screen, the course select's backdrop and
+  props.)
 
 # Phase 9 (Session 7): movies
 docs/spec/fmv.md has the decoder, the player's rules and the triggers. In
@@ -771,3 +771,150 @@ audio.rs (the clips, the music), karts.rs (a driver without a vehicle).
   frame). The port's track ids name the same files, channels and first
   sectors (mr-audio tests/xa_disc.rs). Not checked: the CROSS clips of
   characters 0xD / 0xE / 0x17 (not collected in the oracle's save).
+
+
+# Row 12 (Session 8, phase 12): flow, loading, course select, options, league end
+
+## In-process course change [port: boot.rs, loading.rs]
+- The game loads a course between two course sessions (main() ->
+  FUN_8008ACE4); the port used to restart its program. Now `boot::reboot`
+  rebuilds the course inside the running app: the boot arguments
+  (settings.rs `args`: `--course NAME --skip-title --menu --character C
+  --vehicle V [--league]`, `--ending`, `--demo ...`, `--open-page ...`)
+  are replaced, every entity with a transform except `KeepOnBoot` ones is
+  despawned (meshes, materials, VRAM page images freed with them), each
+  plugin's per-course resources are re-inserted (`boot::on_boot`, the
+  same function as at start-up), and the `Boot` schedule (the former
+  Startup systems: scene, VRAM textures, sky, movers, effects, HUD tables,
+  title, movie quad, cameras) runs again. settings.txt is read again
+  (what the menus wrote applies from the next course on, as with the
+  relaunch). Kept: the save block, the music thread and audio device, the
+  movies seen since power-on (movie.rs `SEEN`, no `MRM_MOVIES_SEEN`).
+- Check: `--boot-soak N` (N changes: a race course, the title, ...; one
+  line per settled course): over 44 changes the title settles at 1394..1437
+  entities, 613..649 meshes, 66..84 images, the materials flat; the
+  process's private bytes grow ~3..5 MB a change at first and flatten
+  (1.23 GB -> 1.34 GB over 20 changes; no asset or entity growth: driver /
+  allocator caches [INFER]).
+
+## Fades and the LOADING picture [CODE 80074a94, 800786b4, 8008ace4, 8005df74, 8008a834, 80046dfc, 80046794, 8007d1c0, 8002d1e8] [SHOT]
+- A course change: the menu's FUN_8007D174(0, 8) fades the scene out (8 a
+  VBlank, 0x800AFED0 toward 0); main() plays a movie asked for (MOVIE /
+  PLAY MOVIE, or the course's first load since power-on); FUN_8008ACE4
+  loads GFX\LOAD_nn.RAW (FUN_8005DF74: nn = rand() / 0x5D2, 0..21, never
+  the last, 0x800B0814; the file's type-0x25 picture, 320 x 256 to VRAM
+  (0x280, 0x100)), fades it in by 16 a VBlank (FUN_8005DEFC(1) passes,
+  0x800B0AEC = 2) and 3 more passes; the track loads; FUN_8008A834 fades
+  it out by 8 a VBlank (0x800B0AEC = 1), 3 passes, then 0x800B0624 / 28 =
+  -0x8000; the new session fades in from 0 (FUN_8007D174(0x80, 8)).
+- The picture is the screen backdrop (FUN_80046DFC: MoveImage strips of
+  the picture across the 320-pixel screen from x 0x800B0624 = 0, y
+  0x800B0628 = -8 (FUN_80047218(0, -8)); FUN_80046794 fills the lines below
+  with its last pixel's colour); the fade is FUN_8002D1E8's B - F quad of
+  (0x80 - level / 2) * 2.
+- In-course game mode changes (race start, back to the course menu,
+  TEST DRIVE) fade out with the menu's FUN_8007D174(0, 8) and the new
+  session fades in (main.rs: the request waits for `loading::mode_change_ready`).
+- Oracle (slot 1, DOCK course menu -> BACK TO MAIN MENU; analysis/s8/p12/
+  load, local): LOAD_04's frame exact on every sampled pixel; frames
+  during the fades exact at subtract levels 8 and 21 (5-bit); the
+  sequence fade out / picture in / hold / picture out / title fade-in as
+  the port's. Race start (analysis/s8/p12/race): the screen black ~16
+  VBlanks after CROSS, the race fading in.
+
+## Course select backdrop and props [CODE 80034ce0, 80035004, 800351e8, 80091b8c] [GPU][SHOT]
+- The backdrop: FUN_800351E8 grid type 2 (course 0x1E, drawn in game mode
+  0xC only): a 10 x 10 vertex grid in view space, x = -1080 + 240c, y =
+  -864 + 192r, z = 1000 - (v >> 8), v = (sin(p0 + 0x179 r) * sin(p1 + 500
+  c)) >> 14, the phase stepping (0x23, 0x2A) a frame (FUN_80035004);
+  texture slot 1 (u, v = 28c, 28r, 27 texels a cell), colour (s >> 2, s >>
+  1, s), s = 0xA0 - |v >> 7|; ordering table 1400 (under everything). On
+  screen sx = 256 + 192 x / z, sy = 120 + 160 y / z. Check: the oracle
+  frame's 100 vertices within one pixel and the shades exact (mr-sim test
+  `backdrop_matches_oracle_frame`, analysis/s7/menus/oracle/worlds.json).
+- FUN_80091B8C game mode 0xC moves DAT special slots: the courses' props
+  (pairs 1 + 2(4w + c)) scaled toward 0xE00 on the cursor and 0x300
+  elsewhere (0x800AD0D4, eased by 1/16 a VBlank), turned (0x100, a26,
+  sin(a28) >> 7), placed at ((0xA000 - a2c) >> 5 + 0x800 c, 10000 w -
+  25000, -1988) with a2c easing toward column * 0x10000; a closed course
+  shows the next "?" slot (0x39..) instead; the worlds' film strips
+  (0xA0 + 2w, + 1) at scale 0x1000 turning about y by (frame & 0x3FF) << 2
+  while their row is within 0x4000 of the eye. mr-sim title.rs
+  `CourseSelect`, movers.rs (FUN_8002DF88 positions); the posed slots are
+  drawn whatever the visibility stream says. Side by side with the oracle
+  (worlds.png, analysis/s8/p12/cs/o_w1.png): props, strips and backdrop
+  as the game's.
+- A DAT finding on the way: meshes with a negative vertex count (the
+  statue, the ship) keep their 8-byte positions first, then one 4-byte
+  record per vertex (FUN_80025B8C skips 3 words a vertex + 1); read
+  interleaved they came out 20x too big (mr-assets dat.rs).
+
+## Options: ADJUST SCREEN, SET CONTROLLERS' VIBRATION, MEMORY CARD [CODE 80074a94, 80073138, 80051698, 8005e260, 800744ec, 8007d304, 8004357c] [GPU][SHOT]
+- ADJUST SCREEN (sub-state 4): the D-pad moves the display offset (x / y
+  0..32; the save's 0x800E0396 / 97, (8, 2) at power-on) live, CROSS keeps,
+  TRIANGLE or 0x708 idle VBlanks restore; the page: magenta corner brackets,
+  dark purple borders, x SELECT / t BACK, a red arrow toward each side
+  still open. The port (screen.rs): settings `screen_x` / `screen_y`
+  (mirrored into the save block); the offset moves the picture (3D view +
+  HUD) by (x - 8, y - 2) of 240 lines within the window's free border (a
+  window the view fills has none). Oracle GP0 (analysis/s8/p12/opt/o_adj):
+  every bracket, border and arrow rectangle equal.
+- VIBRATION (SET CONTROLLERS row 1, per controller; save 0x204 + pad,
+  on at a new game): toggled with LEFT / RIGHT (pad 2: its own cursor,
+  UP / DOWN); switching it on rumbles 0xFF for a = b = 0x1F, and while the
+  cursor is on it a random byte < 8 starts (byte >> 1) + 0x80
+  (FUN_800744EC). In a race FUN_8007D304 gives pad p (karts 0 / 1) large =
+  +0x4B7 * a / b & 0xFE while a (+0x4EA) runs down by dt (now in mr-sim:
+  `Session::pad_motor`), FUN_8004357C -> PadSetAct. The port (rumble.rs):
+  Bevy `GamepadRumbleRequest`s (strong = large / 254, weak = the small
+  bit) to the player's gamepad. This build has no gamepad backend (Bevy's
+  gilrs integration is a crate it does not carry): no `Gamepad` entity
+  exists, so the rumble (like the gamepad buttons) reaches nothing until
+  one is added.
+- MEMORY CARD: the game loads course 10 (0x800B0AF4 = 10, back to 0x1E):
+  FRONTEND/MEM_0n.RAW (n = a random byte >> 5, + 1, not the last; its
+  512 x 256 picture as the screen backdrop from line 8), then its card
+  manager (PLEASE WAIT while it probes, then s LOAD / x SAVE / t EXIT at
+  y 0x64 / 0x78 / 0x8C and MEMORY CARD SLOT 1 at 0xD2 for a formatted
+  card; the card UI's strings at 0x80021A0C..). The port: the page over
+  save.bin (no load / course change; the picture under the HUD): LOAD
+  re-reads save.bin (CONFIRM LOAD, PRESS x TO CONFIRM / PRESS t TO EXIT,
+  then GAME LOADED / FAILED TO LOAD), SAVE writes it (GAME SAVED / FAILED
+  TO SAVE), EXIT back to OPTIONS. FORMAT is offered by the game only for
+  an unformatted card (save.bin never is one: a bad file is kept as
+  save.bin.bad, a new game starts). Oracle (analysis/s8/p12/card): MEM_03
+  95.7 % of the sampled pixels exact (the rest the text); the labels' GP0
+  positions equal.
+- The course select's o MUSIC (CIRCLE, FUN_80074A94 sub-state 0xC): an
+  open course with a track (row + 3) plays it at once (FUN_80060468, the
+  queue cleared, 0x800B0740 = it) unless it plays already; the label is
+  bright on an open course (FUN_80051698).
+
+## League tie-break and presentation; the standings' line-up [CODE 8008c4ac, 80074a94, 80051698, 80070418, 8006b1c8, 80025d8c, 80036228] [GPU][RAM]
+- After the sixth race, a tie for first with the player: the tie-break
+  race on OVAL (0x1A; the battle league ARENA/BATTLE, 0x1B) with the tied
+  karts (0x800C1E49; START TIE-BREAKER), its points added as a race's;
+  then (or without a tie) the presentation: that course in game mode 0x12
+  (FUN_8008C4AC: a league whose race is 6 and no tie); the load writes
+  the league's result (won bit, best points, fanfare 0x24) and queues the
+  human champion's clip 3; no karts (they are counted for the load's game
+  mode 0: oracle 0x800B0DFE = 0); camera mode 11 (0x80070418 case 0xB:
+  the eye along DAT chunk 0x16's path (0x800D1CA0) at 16 a VBlank, random
+  start and direction; mr-sim camera.rs); TOURNAMENT CHAMPION (0x100,
+  0x1E), the champion's name (0x36, size 1, colour 5), PRESS START, the
+  player champion: CAN YOU GET 30 (battle 20) POINTS? while the best is
+  lower, else the trophy (FUN_8002FD04, slot 0x15); START / CROSS (or 0x1C20
+  idle VBlanks): after a tie-break that course opens (flags | 1); its
+  course menu when open, else the title.
+- Oracle: the league's end poked into slot 1 (league A, race 6, points,
+  0x800B0AF4 = 0x1A and the fade; analysis/s8/p12/pres/pokes.json): game
+  mode 0x12 on course 26, no karts; the font sprites equal the port's
+  49 / 49 (mr-bevy `menus::tests::gp0_presentation`).
+- The standings (game mode 0x11): FUN_8006B1C8 lines the karts up in front
+  of the camera, drawn in camera space (FUN_80036228): RACE POINTS in
+  finishing order 0x3000 apart at y -0xF00, pitch 0x180, scale 0x600;
+  TOURNAMENT POINTS in table order 0x3400 apart at y 0xC00, pitch 0xC0,
+  scale 0x700; z 0x8000; turning by the menu VBlanks << 4. The port
+  (menus.rs `lineup_records`): records on the session camera's axes
+  without the view's 1.6 x stretch (the columns' 62-pixel spacing), the
+  scale as distance. Side by side: under their columns as in the game.

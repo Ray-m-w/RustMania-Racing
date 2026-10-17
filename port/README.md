@@ -35,7 +35,7 @@ cargo metadata + the registry's licence files; no game data).
 Keyboard: arrows steer, X accelerate, S brake/reverse, Z jump, A
 (TRIANGLE) locks the camera on the nearest kart while held (Session 7),
 Enter = START (pause).
-Gamepad: right trigger / south accelerate, left trigger / east brake, west jump.
+Gamepad (mapped in input.rs; this build has no gamepad backend: Bevy gilrs not enabled): right trigger / south accelerate, left trigger / east brake, west jump.
 
 Two players (phase 7; the course menu's 2 PLAYER RACE / BATTLE / STUNT
 RACE, CHICKEN CHASE): split screen, player 1 on top. The first gamepad
@@ -135,11 +135,19 @@ frontend.md "Menus"):
   finish, a battle won, CHICKEN CHASE's win, a BOSS CHALLENGE's boss, the
   results taunt after a win (Statler and Waldorf's faces on the results).
 Menu keys: arrows move, X (CROSS) selects, A (TRIANGLE) goes back; pad: D-pad,
-south, north. Shown greyed and not selectable (later phases): PLAY MOVIE,
-ADJUST SCREEN, MEMORY CARD, VIBRATION, MOVIE / MUSIC.
-Another course (or the title) restarts the program on it (`--course NAME
---skip-title --menu --character C --vehicle V`, `--league` within a league;
-the scene is built at start-up).
+south, north. Row 12: another course (or the title) loads in place behind
+the game's fades and LOADING picture (boot.rs / loading.rs: the boot
+arguments become `--course NAME --skip-title --menu --character C
+--vehicle V`, `--league` within a league; the course's scene is rebuilt;
+settings.txt is read again). OPTIONS -> ADJUST SCREEN moves the picture
+(`screen_x` / `screen_y`), SET CONTROLLERS has VIBRATION per controller
+(`vibration` / `vibration_2`: gamepad rumble requests; this build has no
+gamepad backend, see rumble.rs), MEMORY CARD saves / loads save.bin on
+demand; the course select's MUSIC plays the course's track and shows the
+game's backdrop and props; a league ends with the tie-break race when the
+player shares first place and the presentation on OVAL. Test flags:
+`--boot-soak N` (N course changes, entity / asset / memory lines),
+`--loading-shot PATH`, `--open-page courses:W,C | standings:N`.
 Saves (phase 2, save.rs; frontend.md "Saves"): `save.bin` in the data folder (or
 `--save PATH`) holds the game's own save block (unlocks, lap records, won
 courses, leagues, laps, options) with a version header and the game's

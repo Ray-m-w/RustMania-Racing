@@ -289,10 +289,10 @@ audio.rs `MusicDirector`), mr_audio::xa `XaQueue::request_entry`.
 | FUN_800606D0 | 0xC000 \| 0xD0 + 0x800B074C (then 0x800B074C + 1 mod 7), then the course track | the results of a 1-player race won (mode 1, 0x800B0CA6 = 0, kart 0 place < 2, not knocked out under race flag 8), not the demo |
 | FUN_8008C4AC, mode 0 | 0xC000 \| the course's intro clip (+0x4 + toggle) | once per course per power-on (Session 4) |
 | FUN_8008C4AC, mode 7 | 0x8000 \| base(0x800B0C7E[0]) (no voice-flag test) | a BOSS CHALLENGE's load |
-| FUN_8008C4AC, mode 0x12 | FUN_80060580(winner, 3) when the league's winner (0x800C1E30) is human | the league's trophy presentation (course 0x1A / 0x1B; phase 12) |
+| FUN_8008C4AC, mode 0x12 | FUN_80060580(winner, 3) when the league's winner (0x800C1E30) is human | the league's trophy presentation (course 0x1A / 0x1B; row 12: menus.rs `start_presentation`) |
 | FUN_8008C4AC / FUN_80060524 | the course track (FUN_80089B98's pick on course 0x1D and in mode 0xE) | every load |
 | FUN_8005FB4C, mode 0xE | FUN_80089B98's pick, played once | TEST DRIVE, whenever nothing plays |
-| FUN_80074A94, course select | the course track (o MUSIC, FUN_80060468) | not ported (phase 12) |
+| FUN_80074A94, course select | the course track (o MUSIC, FUN_80060468): played at once, the queue emptied, unless it plays already (0x800B0740) | row 12: menus.rs + audio.rs `MusicDirector::play_now` |
 
 base(c) = 0x800AC230[c * 0x14]: the 25 racers 0x20..0x80 (VOICES/CHAR_01..07,
 16 channels each), the bosses 0xD8..0xDD (VOICES/WIN.XA channels 8..13; voice

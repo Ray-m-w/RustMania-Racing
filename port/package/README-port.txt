@@ -44,7 +44,7 @@ Keyboard, player 1:
     Enter       START (pause)
     Q / W       L1 / R1 (turbo; special move on a full meter)
     E / R       L2 / R2 (character special)
-Gamepad: D-pad / left stick steer, south or right trigger accelerate,
+Gamepad (not read by this build, see 4.): D-pad / left stick steer, south or right trigger accelerate,
 east or left trigger brake, west jump, north = TRIANGLE, Start = START,
 bumpers = L1 / R1, stick clicks = L2 / R2.
 OPTIONS -> SET CONTROLLERS swaps the game's layout A / B.
@@ -64,8 +64,8 @@ the keyboard:
         settings.txt    options, one `key = value` per line (every key is
                         listed with its help; OPTIONS -> PORT SETTINGS in the
                         game writes it too)
-        save.bin        your progress (written automatically, no memory card
-                        prompts)
+        save.bin        your progress (written automatically; OPTIONS ->
+                        MEMORY CARD saves / loads it on demand)
         crash.txt       written if the program stops on an error: send it
                         with a bug report
         disc-check.txt  the disc check above
@@ -90,8 +90,10 @@ logic_hz = 30 | 60, skip_intro_movies = true, music_volume / sound_volume
 --------------------
 Not everything of the original is ported yet (for example the
 simultaneous two-player character select, 2-player tournament).
-Such menu entries are shown greyed out. Choosing another course restarts
-the program on it (a short pause).
+Such menu entries are shown greyed out. OPTIONS -> ADJUST SCREEN moves
+the picture inside the window's black border (it cannot move when the
+picture fills the window). VIBRATION is in SET CONTROLLERS, but this
+build reads no gamepad (keyboard only), so there is nothing to rumble.
 
 
 5. Licences

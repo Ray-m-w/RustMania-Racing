@@ -150,10 +150,17 @@ the loop as unreachable, the disassembly has it):
   volume); each frame shows at its last sector's time; the player's rules
   as above (skip with START / CROSS = keyboard Enter / X, the confirm
   sound, fades).
-- Power-on across relaunches: the environment variable `MRM_MOVIES_SEEN`
-  (hex mask of courses whose first-load check ran) is inherited by every
-  relaunched process; absent = a fresh power-on (boot movies when the run
-  starts on the title).
+- Power-on = the process (row 12: course changes happen in place, boot.rs):
+  the boot movies play once at start-up; the courses whose first-load
+  check ran are kept in memory (`SEEN`); loading.rs plays a course's
+  first-load movie after the fade-out and before the LOADING picture, as
+  main() does before FUN_8008ACE4.
+- Row 12, the scene reload after an in-menu movie: MOVIE (course select)
+  and PLAY MOVIE (COURSE SECRETS) fade the scene out, play the movie, then
+  load the scene again behind the LOADING picture (main() between two
+  course sessions: 0x800B0804 = movie, 0x800B080C = 0xC / 0x800B0AF4 =
+  the course): the course select comes back at its cursor (`--open-page
+  courses:W,C`), PLAY MOVIE's course on its course menu.
 - `skip_intro_movies` (settings.txt / PORT SETTINGS, default false = as
   the game): skips the boot movies and the courses' first-load movies;
   MOVIE and PLAY MOVIE always play. The recomp package's skip-fmv
@@ -163,8 +170,6 @@ the loop as unreachable, the disassembly has it):
   (`--route`, `--shot`, ...) play no movies.
 
 ## Not done / open
-- The game reloads the scene after an in-menu movie (course select,
-  course menu); the port returns to the same page (same state).
 - Audio vs the oracle's cd_in tap (needs skip-fmv off in the oracle, an
   owner change of build-dev mods/state.toml and a restart).
 - 0x800B0E84 / CD-error exits, and the overlay's VRAM clear after a movie

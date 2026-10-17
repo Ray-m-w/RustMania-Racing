@@ -2834,7 +2834,7 @@ impl Plugin for MenusPlugin {
     fn build(&self, app: &mut App) {
         crate::boot::on_boot(app, |w| w.insert_resource(boot_front()));
         app.add_systems(crate::boot::Boot, apply_saved_volumes).add_systems(Update, (run, overlay.after(run), pause.after(run)));
-        if crate::settings::arg_value("--menu-keys").is_some() || crate::settings::arg_value("--menu-shots").is_some() {
+        if scripted() {
             app.add_systems(PreUpdate, script_keys.after(bevy::input::InputSystems).after(crate::pacing::sample)).add_systems(Update, script_shots.after(overlay));
         }
     }
@@ -2891,12 +2891,36 @@ fn parse_steps(spec: &str) -> Vec<(i32, String)> {
     spec.split(',').filter_map(|s| s.split_once(':')).filter_map(|(v, b)| Some((v.trim().parse().ok()?, b.trim().to_string()))).collect()
 }
 
-fn script_keys(front: Res<Front>, mut latch: ResMut<crate::pacing::PadLatch>) {
+/// Row 15: the menu script's clock. `--menu-keys` / `--menu-shots` count
+/// menu VBlanks (Front::vb's rate: real time at 60 per second, stopped while
+/// a movie plays) from the process start, across in-process course changes
+/// (Front::vb restarts at each boot), and the flags are read from the
+/// process's own arguments (a course change's boot arguments drop them), so
+/// one scripted run can go title -> course select -> LOADING -> course menu
+/// -> race -> results -> ...
+static SCRIPT_VB: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+pub fn script_vb() -> i32 {
+    SCRIPT_VB.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// A menu-script flag's value from the process's arguments.
+pub fn script_arg(flag: &str) -> Option<String> {
+    let a: Vec<String> = std::env::args().collect();
+    a.iter().position(|x| x == flag).and_then(|i| a.get(i + 1)).cloned()
+}
+
+/// A scripted menu run (`--menu-keys`, `--menu-keys2`, `--menu-shots`).
+pub fn scripted() -> bool {
+    ["--menu-keys", "--menu-keys2", "--menu-shots"].iter().any(|f| script_arg(f).is_some())
+}
+
+fn script_keys(mut latch: ResMut<crate::pacing::PadLatch>) {
     let names = ["select", "", "", "start", "up", "right", "down", "left", "l2", "r2", "l1", "r1", "triangle", "circle", "cross", "square"];
     // (phase 13: --menu-keys2, pad 2's)
     for (arg, second) in [("--menu-keys", false), ("--menu-keys2", true)] {
-        let Some(spec) = crate::settings::arg_value(arg) else { continue };
-        let cur = parse_steps(&spec).into_iter().take_while(|(v, _)| *v <= front.vb).last();
+        let Some(spec) = script_arg(arg) else { continue };
+        let cur = parse_steps(&spec).into_iter().take_while(|(v, _)| *v <= script_vb()).last();
         if let Some((_, b)) = cur {
             for n in b.split('+').filter(|x| !x.is_empty()) {
                 if let Some(i) = names.iter().position(|x| *x == n) {
@@ -2912,7 +2936,7 @@ fn script_keys(front: Res<Front>, mut latch: ResMut<crate::pacing::PadLatch>) {
 }
 
 fn script_shots(front: Res<Front>, mut done: Local<usize>, mut wait: Local<u32>, mut c: Commands, mut exit: MessageWriter<AppExit>) {
-    let Some(spec) = crate::settings::arg_value("--menu-shots") else { return };
+    let Some(spec) = script_arg("--menu-shots") else { return };
     let shots = parse_steps(&spec);
     if *done >= shots.len() {
         *wait += 1;
@@ -2922,10 +2946,10 @@ fn script_shots(front: Res<Front>, mut done: Local<usize>, mut wait: Local<u32>,
         return;
     }
     let (vb, path) = shots[*done].clone();
-    if front.vb >= vb {
+    if script_vb() >= vb {
         c.spawn(bevy::render::view::screenshot::Screenshot::primary_window())
             .observe(move |ev: On<bevy::render::view::screenshot::ScreenshotCaptured>| crate::write_png(&ev.image, &path));
-        info!("menus: shot at vb {} page {:?} row {}", front.vb, front.page, front.row);
+        info!("menus: shot at script vb {} (vb {}) page {:?} row {}", script_vb(), front.vb, front.page, front.row);
         *done += 1;
     }
 }
@@ -2969,6 +2993,7 @@ fn run(
     let n = front.vb_frac.floor();
     front.vb_frac -= n;
     front.vb = front.vb.wrapping_add(n as i32);
+    SCRIPT_VB.fetch_add(n as i32, std::sync::atomic::Ordering::Relaxed);
     if crate::loading::busy() {
         front.prev = latch.now;
         return;

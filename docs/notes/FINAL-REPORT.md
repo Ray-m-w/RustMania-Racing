@@ -19,9 +19,9 @@ gamepad support, pending the owner's approval (below).
 ## Install and run
 - Package: `tools/package-port.ps1` (run from Git bash as
   `powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/package-port.ps1`)
-  -> `dist/mrm-port-0.1.0-windows-x64.zip`, 18,151,344 bytes, SHA-256
-  `13cd2e081484bce5ef6b927b3367e3312db652bcd342f9fa10b118c3fb97e461`.
-  Exactly three files: muppet-racemania.exe (58,200,064 bytes),
+  -> `dist/mrm-port-0.1.0-windows-x64.zip`, 18,150,886 bytes, SHA-256
+  `bccc122b35e260a8d08398e58bdfc10560f0ec3440fb4b77b2a5902768983f94`.
+  Exactly three files: muppet-racemania.exe (58,207,744 bytes),
   README-port.txt, THIRD-PARTY-LICENSES.txt (243 crates, 125 distinct
   licence texts). No disc data, no decoded assets, no captures (the script
   asserts the file list).
@@ -109,7 +109,7 @@ Every key with its help: settings.rs `KNOWN` and the generated settings.txt.
 | Fresh title (P14) | 918 / 918 ticks exact with the oracle's power-on history |
 | Stability (all) | row-15 sweep: mr-fuzz every mode at 30 and 60 Hz, 1,212 runs, 21,998,356 ticks, 0 panics; earlier rows 1,520 + 840 + 272 + ... runs, 0 panics; crash.txt instead of a freeze |
 | Tests | `cargo test --workspace --offline --release`: 64 suites, 201 passed, 0 failed, 1 ignored |
-| Package (row 15) | zip unpacked into a temp folder, temp APPDATA, MRM_DISC unset: disc picker -> settings.txt written -> title (in-process); START -> main menu -> SELECT COURSE (SWAMP film strip) -> LOADING; `--course BOG --skip-title --menu` + CROSS, CROSS -> character select -> race (READY); disc check match. Game's own --title-shot / --menu-shots only |
+| Package (row 15) | zip unpacked into a temp folder, temp APPDATA, MRM_DISC unset, ONE process: disc picker -> settings.txt written (disc check match) -> title -> main menu -> SELECT COURSE (SWAMP) -> LOADING + the course's first-load movie -> course menu (in-process course change, 160 ms) -> character select -> race (LAP 1/3, 0:01.3). Repo build, one process each: course menu -> GAME MENU -> CHANGE COURSE -> GHOST -> BACK TO MAIN MENU -> title; OVAL race to the 10-minute limit -> results -> START -> course menu -> BACK TO MAIN MENU -> title. Game's own --menu-shots only |
 
 Row-15 sweep details (docs/notes/2026-10-17.md "Session 8, phase 15"):
 mr-fuzz --seeds 3: races / stunt / arenas / title 210 runs, --adventure 210,

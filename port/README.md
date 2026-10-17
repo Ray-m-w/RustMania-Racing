@@ -184,7 +184,10 @@ water state), `--title-shot F --title-shot-at N` (window capture of the title
 frozen at frame counter N, then exit), `--title-press-start N` (START at N).
 Menu check flags: `--menu-keys "VB:buttons,..."` (pad buttons held from menu
 VBlank VB, route names: cross, start, down+cross, empty = none) and
-`--menu-shots "VB:PATH,..."` (window captures, exit after the last).
+`--menu-shots "VB:PATH,..."` (window captures, exit after the last). VB
+counts menu VBlanks (60 per second, stopped while a movie plays) from the
+process start, across in-process course changes (row 15): one scripted
+run can go title -> SELECT COURSE -> LOADING -> course menu -> race.
 
 mr-bevy options: `--autopilot` (AI drives Kermit), `--oracle-grid` (solo
 session aligned to the oracle's grid savestate; `--leader` there = no catch-up), `--record-route F` / `--trace-out F` (oracle loop),

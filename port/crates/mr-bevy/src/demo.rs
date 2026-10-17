@@ -71,7 +71,7 @@ impl Plugin for DemoPlugin {
 /// Never in tool runs, shots, or with `--no-demo`.
 fn allowed() -> bool {
     let a: Vec<String> = crate::settings::args();
-    !crate::menus::tool_run() && !a.iter().any(|x| x == "--no-demo" || x == "--title-shot" || x == "--menu-keys" || x == "--menu-shots")
+    !crate::menus::tool_run() && !crate::menus::scripted() && !a.iter().any(|x| x == "--no-demo" || x == "--title-shot")
 }
 
 fn title_idle(p: Res<crate::Player>, latch: Res<crate::pacing::PadLatch>, front: Res<crate::menus::Front>, mut res: ResMut<DemoRes>) {

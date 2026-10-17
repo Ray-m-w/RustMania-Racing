@@ -32,3 +32,13 @@ between menus; MEET THE MUPPETS + its voice clips (the only menu clips); THE
 END's floor render; in-process course change (no
 relaunch); ~~save.bin beside the exe~~ (phase 10: the data folder). Deferred by the owner: DLSS. Optional: AI personalities, control
 remapping.
+
+## To 100% (owner 2026-10-16: "complete everything"; same working rules, one agent at a time)
+| # | phase | contents | status |
+|---|---|---|---|
+| S | Ship polish | windowed exe (no console), static CRT in the package | DONE 2026-10-16 (lead) |
+| 11 | Voices + MEET THE MUPPETS | MEET THE MUPPETS (game mode 0xD gallery) with the menus' voice clips; race voice clips (lap, battle win, CHICKEN CHASE catches, league standings); CRDIT_01.XA's caller | |
+| 12 | Flow + menus | in-process course change (no relaunch); fades / LOADING between screens; course-select sky backdrop + world props; scene reload after an in-menu movie; ADJUST SCREEN, VIBRATION (pad rumble), MEMORY CARD page (over save.bin), MUSIC button; league tie-break race + trophy presentation (0x1A / 0x1B), standings' 3D line-up | |
+| 13 | Two players + unchecked modes | simultaneous 2P character select, secrets' "n PLAYERS", 2P TOURNAMENT (3 karts), split minimap + chicken icon, player-2 billboards / draw distance / audio listener; oracle checks of 2P battle, 2P stunt race, CHICKEN CHASE win + projectile hit, DOGFIGHT, BATTLE AS BOSS, BATTLE on race courses, reversed trial, reverse lap, Doozer goal, a second stunt course, AI R2 specials, item sound key-ons | |
+| 14 | Accuracy + render | THE END floor + "?" picture; fresh-title random byte; GRAVE/BOG weather frames; DISCO floor animation; GRAVE far pickup; stunt banner animation + mirror reflections; contact-pass pair order check (3+ karts) | |
+| 15 | Final | in-window disc picker (type or paste a path, no new crate); full test + fuzz sweep; final package; FINAL-REPORT updated to 100% | |

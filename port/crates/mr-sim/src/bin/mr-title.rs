@@ -64,6 +64,7 @@ fn main() {
         let g = &s.globals;
         let mut gm = m.clone();
         g.write(&mut gm);
+        g.items.write(&mut gm);
         let (a, b) = (m.slice(0x800B_0700, 0x900).to_vec(), gm.slice(0x800B_0700, 0x900).to_vec());
         let offs: Vec<String> = (0..0x900).filter(|&o| a[o] != b[o]).map(|o| format!("{:08X}:{:02x}/{:02x}", 0x800B_0700 + o, a[o], b[o])).collect();
         println!("globals (fields RaceGlobals writes): {}", offs.join(" "));
@@ -71,14 +72,25 @@ fn main() {
         let _ = &mut m;
         return;
     }
-    // `--fresh-vs DIR`: a new title session with the oracle's seed against
-    // an oracle capture from BACK TO MAIN MENU (title_check.py capture DIR:
-    // kart heads, camera, frame counter, dt), the oracle's dt per tick.
+    // `--fresh-vs DIR`: a new title session with the oracle's seed and power-on
+    // history (title::oracle_history; `--no-history` leaves it out, `--rr N`
+    // sets the round robin) against an oracle capture from BACK TO MAIN MENU
+    // (title_check.py capture DIR: kart heads, camera, frame counter, dt; with
+    // 0x800B0BCC the random pointer too), the oracle's dt per tick.
+    // MR_TITLE_DEBUG / MR_PROJ_DEBUG: per-tick kart / projectile differences.
     if let Some(dir) = opt("--fresh-vs") {
         let cap = Capture::open(&dir).expect("open capture");
         let mut disc = mr_disc::Disc::open_default().expect("open the disc");
-        let mut s = Session::with_config(&mut disc, mr_sim::session::SessionConfig::title(ORACLE_SEED, mr_sim::session::RNG_START, 30)).expect("title session");
+        let mut cfg = mr_sim::session::SessionConfig::title(ORACLE_SEED, mr_sim::session::RNG_START, 30);
+        cfg.round_robin_start = mr_sim::title::ORACLE_ROUND_ROBIN;
+        if let Some(r) = opt("--rr").and_then(|v| v.parse().ok()) {
+            cfg.round_robin_start = r;
+        }
+        let mut s = Session::with_config(&mut disc, cfg).expect("title session");
         s.water = mr_sim::water::WaterAnim::from_bytes(&mr_sim::title::ORACLE_WATER);
+        if !args.iter().any(|a| a == "--no-history") {
+            mr_sim::title::oracle_history(&mut s.globals);
+        }
         let rd = |vb: u32, a: u32| cap.i32(vb, a);
         // the oracle's ticks: VBlanks where the frame counter changes (in
         // mode 0x10), the result one VBlank later
@@ -96,6 +108,7 @@ fn main() {
             }
         }
         let (mut exact, mut first) = (0, None);
+        let mut rng_first = None;
         for (i, &vb) in ticks.iter().enumerate() {
             // the load frame (counter 0, dt 0): the karts on the grid
             let dt = rd(vb, 0x800B_0AEC).unwrap_or(2);
@@ -106,6 +119,27 @@ fn main() {
             let v = vb + 1;
             if !cap.has(v) {
                 break;
+            }
+            if std::env::var("MR_TITLE_DEBUG").is_ok() && (2..=5).contains(&i) {
+                for slot in 0..3usize {
+                    let a = mr_sim::kart::KART_ARRAY + 0x504 * slot as u32;
+                    let rec = cap.read(vb + 1, a, 0x504).unwrap();
+                    let (pk, pa) = if slot == 0 { (s.kart.clone(), None) } else { (s.others[slot - 1].kart.clone(), Some(s.others[slot - 1].ai.clone())) };
+                    let (x, y) = (format!("{:#?}", mr_sim::kart::KartState::from_record(&rec)), format!("{pk:#?}"));
+                    for (l1, l2) in x.lines().zip(y.lines()) {
+                        if l1 != l2 {
+                            eprintln!("  tick {i} kart {slot}: oracle {} port {}", l1.trim(), l2.trim());
+                        }
+                    }
+                    if let Some(pa) = pa {
+                        let (x, y) = (format!("{:#?}", mr_sim::ai::AiState::from_record(&rec)), format!("{pa:#?}"));
+                        for (l1, l2) in x.lines().zip(y.lines()) {
+                            if l1 != l2 {
+                                eprintln!("  tick {i} ai {slot}: oracle {} port {}", l1.trim(), l2.trim());
+                            }
+                        }
+                    }
+                }
             }
             let mut ok = true;
             for (slot, k) in std::iter::once(&s.kart).chain(s.others.iter().map(|o| &o.kart)).enumerate() {
@@ -125,9 +159,29 @@ fn main() {
                     first = Some((i, v, 9, eye, s.camera.pos));
                 }
             }
+            if std::env::var("MR_PROJ_DEBUG").is_ok() {
+                for (pi, pr) in s.globals.items.projectiles.iter().enumerate() {
+                    if let Some(want) = cap.read(v, mr_sim::items::PROJECTILE_TABLE + 0x48 * pi as u32, 0x48) {
+                        let mut got = want.to_vec();
+                        pr.write(&mut got);
+                        let d: Vec<String> = (0..0x48).filter(|&o| want[o] != got[o]).map(|o| format!("{o:#x}:{:02x}/{:02x}", want[o], got[o])).collect();
+                        if !d.is_empty() {
+                            eprintln!("tick {i} VB {v} proj {pi}: {}", d.join(" "));
+                        }
+                    }
+                }
+            }
+            if let Some(r) = rd(v, 0x800B_0BCC) {
+                if r as u32 != s.globals.rng && rng_first.is_none() {
+                    rng_first = Some((i, v, r as u32, s.globals.rng));
+                }
+            }
             if ok {
                 exact += 1;
             }
+        }
+        if let Some(f) = rng_first {
+            println!("random pointer first differs at {f:x?} (tick, VB, oracle, port)");
         }
         println!("fresh title vs {dir}: {} oracle ticks, {exact} exact (3 karts + camera eye); first difference {:?}", ticks.len(), first);
         return;

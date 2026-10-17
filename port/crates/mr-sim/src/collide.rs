@@ -2,9 +2,9 @@
 //! kart update) and the pair test FUN_80040018, with the spin-out helper
 //! FUN_8007B26C.
 //!
-//! The game tests every pair (j, i), j < i, in order. For the player (slot
-//! 0) that is (0, 1), (0, 2), ... (0, n-1); each other kart is still in the
-//! state it ended the previous frame with when it meets kart 0, so the
+//! The game tests every pair (j, i), j < i, i outer: (0,1), (0,2), (1,2),
+//! (0,3), ... For the player (slot 0) that is (0, 1), (0, 2), ... (0, n-1);
+//! each other kart is still in the state it ended the previous frame with when it meets kart 0, so the
 //! player's side of every contact is reproduced exactly from the other
 //! karts' previous-frame states (the harness takes them from the oracle; in
 //! a solo session `others` is empty).
@@ -45,8 +45,9 @@ pub fn frame_contacts(k: &mut KartState, others: &mut [KartState], g: &mut RaceG
 }
 
 /// FUN_800418D8 over every kart: the per-frame resets, then every pair
-/// (j, i), j < i, in order, sharing one nearest-kart table (0x800C3068,
-/// indexed by +0x4D7).
+/// in the game's order: i = 1..n outer, j = 0..i inner, FUN_80040018(j, i)
+/// ((0,1), (0,2), (1,2), (0,3), ...), sharing one nearest-kart table
+/// (0x800C3068, indexed by +0x4D7).
 pub fn frame_contacts_all(karts: &mut [KartState], g: &mut RaceGlobals, w: &World, rules: &ContactRules) {
     let n = karts.len();
     let mut nearest = vec![0x7FFF_FFFFu32; n.max(8)];
@@ -55,13 +56,13 @@ pub fn frame_contacts_all(karts: &mut [KartState], g: &mut RaceGlobals, w: &Worl
         k.nearest_kart = -1;
         k.close_kart = 0;
     }
-    for j in 0..n {
-        let (head, tail) = karts.split_at_mut(j + 1);
-        for o in tail.iter_mut() {
+    for i in 1..n {
+        for j in 0..i {
+            let (head, tail) = karts.split_at_mut(i);
             let mut k0 = false;
-            pair(&mut head[j], o, g, w, rules, &mut nearest, &mut k0);
+            pair(&mut head[j], &mut tail[0], g, w, rules, &mut nearest, &mut k0);
             if k0 {
-                head[0].event_bits = 8;
+                karts[0].event_bits = 8;
             }
         }
     }

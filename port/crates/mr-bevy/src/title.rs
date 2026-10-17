@@ -97,11 +97,15 @@ pub fn session_seed() -> (u32, u32) {
 
 /// `--title-oracle`: the oracle run's title (BACK TO MAIN MENU from savestate
 /// slot 1): its rand() seed (`session_seed`) and its water-animation state
-/// (power-on history; mr_sim::title::ORACLE_WATER) give the same characters,
-/// grid, token colours and camera.
+/// and the rest of its power-on history (blink timers, projectile table and
+/// slot, the round robin: mr_sim::title::oracle_history; phase 14) give the
+/// same characters, grid, token colours, camera and random stream for the
+/// whole title (mr-title --fresh-vs: 918 / 918 ticks).
 pub fn prepare(s: &mut mr_sim::session::Session) {
     if on_title() && crate::settings::args().into_iter().any(|a| a == "--title-oracle") {
         s.water = mr_sim::water::WaterAnim::from_bytes(&mr_sim::title::ORACLE_WATER);
+        mr_sim::title::oracle_history(&mut s.globals);
+        s.pick = mr_sim::title::ORACLE_ROUND_ROBIN as usize % mr_sim::title::TITLE_KARTS;
     }
 }
 

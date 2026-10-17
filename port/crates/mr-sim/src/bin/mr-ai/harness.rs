@@ -248,25 +248,10 @@ pub fn teacher_force_update(cap: &Capture, base: &[u8], w: &World, ticks: &[u32]
     rep
 }
 
-/// FUN_800418D8's pair loop over every kart (j < i, in order). mr-sim's
-/// `collide::frame_contacts` tests kart 0 against the rest; it is called
-/// once per kart with the karts after it (padded with inert karts so its
-/// nearest-kart table has room for every slot).
+/// FUN_800418D8's pair loop over every kart (the game's order, i outer):
+/// mr-sim's `collide::frame_contacts_all`.
 pub fn contacts(karts: &mut [KartState], g: &mut RaceGlobals, w: &World, rules: &ContactRules) {
-    let n = karts.len();
-    let mut dummy = KartState::default();
-    dummy.special = 1;
-    for a in 0..n {
-        let (head, tail) = karts.split_at_mut(a + 1);
-        let mut others: Vec<KartState> = tail.to_vec();
-        while others.len() < n - 1 {
-            others.push(dummy.clone());
-        }
-        collide::frame_contacts(&mut head[a], &mut others, g, w, rules);
-        for (j, o) in others.into_iter().take(n - a - 1).enumerate() {
-            tail[j] = o;
-        }
-    }
+    collide::frame_contacts_all(karts, g, w, rules);
 }
 
 // ---------------------------------------------------------------------

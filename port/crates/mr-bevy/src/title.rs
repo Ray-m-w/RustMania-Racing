@@ -170,7 +170,8 @@ impl Plugin for TitlePlugin {
         });
         app.insert_state(first_screen())
             .add_systems(crate::boot::Boot, setup)
-            .add_systems(Update, (overlay, letters, shot.after(overlay)).run_if(|| on_title()));
+            .add_systems(Update, (overlay, letters, shot.after(overlay)).run_if(|| on_title()))
+            .add_systems(Update, backdrop.after(crate::follow_camera).run_if(|| on_title()));
     }
 }
 
@@ -285,6 +286,48 @@ fn letters(p: Res<crate::Player>, mut q: Query<(&crate::TrackObject, &mut Transf
             if t.translation != want {
                 t.translation = want;
             }
+        }
+    }
+}
+
+/// Row 12: the course select's backdrop (FUN_800351E8 grid type 2, mr-sim
+/// title.rs `CourseSelect::backdrop`): 9 x 9 textured quads in view space,
+/// drawn in the far pass under everything. A view-space vertex (x, y, z)
+/// shows at sx = 256 + 192 x / z, sy = 120 + 160 y / z: in the port's
+/// camera (512 x 240 at 4:3: 256 X / Z, 160 Y / Z) that is the camera-space
+/// point (0.75 x, y, z), pushed far out along its ray (the far pass draws
+/// it first; the scale keeps it behind the scenery's depth).
+fn backdrop(
+    p: Res<crate::Player>,
+    front: Res<crate::menus::Front>,
+    t: Option<Res<crate::effects::FxTables>>,
+    cam: Query<&GlobalTransform, With<crate::ChaseCamera>>,
+    mut fx: ResMut<crate::psxfx::FxPrims>,
+) {
+    if front.page != crate::menus::Page::CourseSelect {
+        return;
+    }
+    let crate::Driver::Sim(run) = &p.driver else { return };
+    let (Some(cs), Some(t), Ok(cam)) = (run.session.course_select.as_ref(), t, cam.single()) else { return };
+    let Some(slot) = t.slots[1] else { return };
+    let Some(tp) = slot.tpage else { return };
+    let g = cs.backdrop(&run.session.world.tables);
+    const K: f32 = 0.5;
+    let world = |v: &mr_sim::title::GridVertex| cam.transform_point(Vec3::new(0.75 * v.pos[0] as f32, -(v.pos[1] as f32), -(v.pos[2] as f32)) * K);
+    let n = mr_sim::title::CourseSelect::COLS;
+    use crate::psxfx::{FxPrim, FxVert, VIEW_FAR};
+    for r in 0..mr_sim::title::CourseSelect::ROWS - 1 {
+        for c in 0..n - 1 {
+            // PS1 order: (c, r), (c + 1, r), (c, r + 1), (c + 1, r + 1)
+            let idx = [r * n + c, r * n + c + 1, (r + 1) * n + c, (r + 1) * n + c + 1];
+            let uv = [[0u8, 0], [27, 0], [0, 27], [27, 27]];
+            let v: [FxVert; 4] = std::array::from_fn(|k| {
+                let gv = &g[idx[k]];
+                let s = gv.shade as f32 / 128.0;
+                FxVert { pos: world(gv), uv: [(28 * c) as f32 + uv[k][0] as f32, (28 * r) as f32 + uv[k][1] as f32], rgb: [(gv.shade >> 2) as f32 / 128.0, (gv.shade >> 1) as f32 / 128.0, s] }
+            });
+            let center = (v[0].pos + v[3].pos) * 0.5;
+            fx.list.push(FxPrim { v, page: Some((tp & !0x60, slot.clut)), center, view: VIEW_FAR, bucket: -2, always_depth: true, ..Default::default() });
         }
     }
 }

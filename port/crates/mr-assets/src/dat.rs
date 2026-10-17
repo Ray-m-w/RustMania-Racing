@@ -443,8 +443,9 @@ pub struct Vertex {
     /// reverse of the GPU's order); the renderer expands it to the
     /// primitive's 24-bit modulation colour, 0x80 = neutral. [CODE 0x8001a304]
     pub color: u16,
-    /// Only for meshes with a negative vertex count (12-byte vertices; not
-    /// present in DOCK): the trailing 4 bytes, meaning unknown.
+    /// Only for meshes with a negative vertex count (not present in DOCK):
+    /// the vertex's 4-byte record after the position array (a normal
+    /// [INFER]).
     pub extra: Option<[u8; 4]>,
 }
 
@@ -655,8 +656,9 @@ pub fn lod_level_for_sz(sz: [i32; 4], bias: i32, t: LodThresholds) -> u8 {
 #[derive(Debug, Clone)]
 pub struct Mesh {
     pub offset: usize,
-    /// i32 at +0: vertex count; negative means 12-byte vertices plus a
-    /// 4-byte trailer (not present on DOCK) [CODE 0x80025b8c].
+    /// i32 at +0: vertex count; negative means |n| 8-byte vertices, |n|
+    /// 4-byte records and a 4-byte trailer (not present on DOCK) [CODE
+    /// 0x80025b8c].
     pub raw_count: i32,
     pub vertices: Vec<Vertex>,
     pub groups: Vec<PrimGroup>,
@@ -697,11 +699,16 @@ fn parse_mesh(r: &R, o: usize) -> Result<Mesh, Error> {
             return err(o, format!("vertex count {n} out of range"));
         }
         for i in 0..m {
-            let b = o + 4 + 12 * i;
+            // row 12: the positions are the GTE's 8-byte SVECTORs as in a
+            // positive-count mesh, then one 4-byte record per vertex
+            // (FUN_80025b8c skips 3 words a vertex + 1); read interleaved
+            // the frontend's statue / ship props came out 20x too big
+            let b = o + 4 + 8 * i;
+            let e = o + 4 + 8 * m + 4 * i;
             vertices.push(Vertex {
                 pos: [r.i16(b)?, r.i16(b + 2)?, r.i16(b + 4)?],
                 color: r.u16(b + 6)?,
-                extra: Some([r.u8(b + 8)?, r.u8(b + 9)?, r.u8(b + 10)?, r.u8(b + 11)?]),
+                extra: Some([r.u8(e)?, r.u8(e + 1)?, r.u8(e + 2)?, r.u8(e + 3)?]),
             });
         }
         q = o + 4 + 12 * m + 4;

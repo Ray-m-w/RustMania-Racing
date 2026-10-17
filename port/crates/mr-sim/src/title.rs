@@ -291,3 +291,177 @@ impl Letters {
         out
     }
 }
+
+/// Row 12: the course select's scenery (game mode 0xC on course 0x1E).
+///
+/// FUN_80091B8C, mode 0xC branch, each frame (`dt` VBlanks): angles a24 /
+/// a26 / a28 (0x800B0A24..28) += dt * (0x23, 0x19, 0x2D); the column
+/// position a2c (0x800B0A2C) eases toward cursor column * 0x10000 by 1/8
+/// (C division); per world w (y = w * 10000 - 25000, DAT units) whose row
+/// is within 0x4000 of the eye's y (eye >> 5): the world's props (special
+/// slots 0xA0 + 2w, 0xA1 + 2w) at scale 0x1000 turned about y by (frame &
+/// 0x3FF) << 2, else scale 0; per course column c: its scale (0x800AD0D4 +
+/// 8w + 2c, 0x200 at power-on) eases dt times by 1/16 toward 0xE00 on the
+/// cursor, 0x300 elsewhere (used as 0 when the row is far); an open
+/// course's pair of slots (1 + 2(4w + c), + 1) is scaled, turned (0x100,
+/// a26, sin(a28) >> 7) and placed at ((0xA000 - a2c) >> 5 + c * 0x800, y,
+/// -1988); a closed one hides that pair and shows the next "?" slot (0x39 +
+/// k) there, turned (0x100, sin(a26) >> 6, sin(a28) >> 7); the unused "?"
+/// slots get scale 0. [CODE 80091b8c]
+///
+/// FUN_80035004 / FUN_800351E8 (grid type 2, course 0x1E, drawn in game
+/// mode 0xC only): the backdrop, a 10 x 10 vertex grid in view space (x =
+/// -1080 + 240c, y = -864 + 192r, z = 1000 - (v >> 8), v = (sin(p0 + 0x179
+/// r) * sin(p1 + 500 c)) >> 14 (raw table), phase p += (0x23, 0x2A) a
+/// frame), texture slot 1 (u, v = 28c, 28r; 27 texels a cell), colour (s >>
+/// 2, s >> 1, s) with s = 0xA0 - |v >> 7|, under everything (ordering table
+/// 1400) [CODE 80034ce0, 80035004, 800351e8]. On screen: sx = 256 + 192 x /
+/// z, sy = 120 + 160 y / z (the course select's view matrix has row 0 =
+/// 1.2 [GPU: the oracle's 100 vertices within 1 pixel]).
+#[derive(Clone, Debug)]
+pub struct CourseSelect {
+    pub a: [u16; 3],
+    pub a2c: i32,
+    pub scale: [[i16; 4]; 7],
+    /// The backdrop grid's phase (0x800AFEE4 / 0x800AFEE6).
+    pub grid: (u16, u16),
+}
+
+/// One special slot set by the course select this frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SlotSet {
+    pub slot: u16,
+    /// FUN_8002D72C's scale (same on the three axes; 0 = hidden).
+    pub scale: i32,
+    /// FUN_8002D9E4's angles (added to the load pose's).
+    pub rot: [i32; 3],
+    /// FUN_8002DF88's origin (DAT units), when placed.
+    pub pos: Option<[i32; 3]>,
+}
+
+/// One backdrop grid vertex: view-space position and the shade.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GridVertex {
+    pub pos: [i32; 3],
+    pub shade: u8,
+}
+
+impl CourseSelect {
+    pub const SCALES: u32 = 0x800A_D0D4;
+    pub const COLS: usize = 10;
+    pub const ROWS: usize = 10;
+
+    pub fn new(exe: &crate::tables::ExeImage) -> CourseSelect {
+        let mut scale = [[0x200i16; 4]; 7];
+        for (w, row) in scale.iter_mut().enumerate() {
+            for (c, s) in row.iter_mut().enumerate() {
+                *s = exe.i16(Self::SCALES + 8 * w as u32 + 2 * c as u32);
+            }
+        }
+        CourseSelect { a: [0; 3], a2c: 0, scale, grid: (0, 0) }
+    }
+
+    /// One frame: `cursor` (world, column), `eye_y` (the camera eye's y,
+    /// world units), `frame` (0x800B0D90), `open(w, c)` (save flags & 1).
+    pub fn frame(&mut self, t: &crate::tables::Tables, cursor: (i8, i8), dt: i32, eye_y: i32, frame: i32, open: &dyn Fn(usize, usize) -> bool) -> Vec<SlotSet> {
+        let toward = |v: i32, s: u32| if v < 0 { (v + (1 << s) - 1) >> s } else { v >> s };
+        let d = cursor.1 as i32 * 0x10000 - self.a2c;
+        for (k, step) in [0x23i32, 0x19, 0x2D].iter().enumerate() {
+            self.a[k] = ((self.a[k] as i32 + dt * step) & 0xFFF) as u16;
+        }
+        self.a2c += toward(d, 3);
+        self.grid = ((self.grid.0 + 0x23) & 0xFFF, (self.grid.1 + 0x2A) & 0xFFF);
+        let sinr = |a: u16| t.sin_raw(a as i32 & 0xFFF);
+        let eye = eye_y >> 5;
+        let mut out = Vec::new();
+        let mut q = 0u16;
+        let mut slot = 1u16;
+        let mut y = -25000;
+        for w in 0..7usize {
+            let near = (y - eye).abs() < 0x4001;
+            for k in 0..2 {
+                let s = 0xA0 + 2 * w as u16 + k;
+                let (scale, rot) = if near { (0x1000, [0, (frame & 0x3FF) << 2, 0]) } else { (0, [0; 3]) };
+                out.push(SlotSet { slot: s, scale, rot, pos: None });
+            }
+            let wob = toward(sinr(self.a[2]), 7);
+            let mut x = (0xA000 - self.a2c) >> 5;
+            for c in 0..4usize {
+                let target = if w as i8 == cursor.0 && c as i8 == cursor.1 { 0xE00 } else { 0x300 };
+                for _ in 0..dt.max(1) {
+                    let v = self.scale[w][c] as i32;
+                    self.scale[w][c] = (v + toward(target - v, 4)) as i16;
+                }
+                let s = if near { self.scale[w][c] as i32 } else { 0 };
+                let pos = Some([x, y, -1988]);
+                if !open(w, c) {
+                    out.push(SlotSet { slot, scale: 0, rot: [0; 3], pos: None });
+                    out.push(SlotSet { slot: slot + 1, scale: 0, rot: [0; 3], pos: None });
+                    out.push(SlotSet { slot: 0x39 + q, scale: s, rot: [0x100, toward(sinr(self.a[1]), 6), wob], pos });
+                    q += 1;
+                } else {
+                    for o in [slot, slot + 1] {
+                        out.push(SlotSet { slot: o, scale: s, rot: [0x100, self.a[1] as i32, wob], pos });
+                    }
+                }
+                slot += 2;
+                x += 0x800;
+            }
+            y += 10000;
+        }
+        while q < 0x16 {
+            out.push(SlotSet { slot: 0x39 + q, scale: 0, rot: [0; 3], pos: None });
+            q += 1;
+        }
+        out
+    }
+
+    /// The backdrop grid now (FUN_80035004 type 2), row-major.
+    pub fn backdrop(&self, t: &crate::tables::Tables) -> Vec<GridVertex> {
+        let toward = |v: i32, s: u32| if v < 0 { (v + (1 << s) - 1) >> s } else { v >> s };
+        let mut out = Vec::with_capacity(Self::COLS * Self::ROWS);
+        for r in 0..Self::ROWS as i32 {
+            let u = (self.grid.0 as i32 + 0x179 * r) & 0xFFF;
+            for c in 0..Self::COLS as i32 {
+                let w = (self.grid.1 as i32 + 500 * c) & 0xFFF;
+                let v = toward(t.sin_raw(u) * t.sin_raw(w), 14) as i16 as i32;
+                out.push(GridVertex {
+                    pos: [(240 - 10 * 240) / 2 + 240 * c, (192 - 10 * 192) / 2 + 192 * r, 1000 - toward(v, 8)],
+                    shade: (0xA0 - toward(v, 7).abs()) as u8,
+                });
+            }
+        }
+        out
+    }
+}
+
+#[cfg(test)]
+mod course_select_tests {
+    use super::*;
+
+    #[test]
+    fn backdrop_matches_oracle_frame() {
+        let Ok(mut d) = mr_disc::Disc::open_default() else { return };
+        let exe = crate::tables::ExeImage::parse(&d.read("SLUS_012.37").unwrap()).unwrap();
+        let t = crate::tables::Tables::from_exe(&exe);
+        let mut cs = CourseSelect::new(&exe);
+        // the oracle's course select frame (analysis/s7/menus/oracle
+        // worlds.json): phase (3904, 588); vertex (0, 0) at (51, -17) with
+        // shade 131, (9, 9) at (451, 250) with 35 (GP0)
+        cs.grid = (3904, 588);
+        let g = cs.backdrop(&t);
+        let scr = |v: &GridVertex| (256 + 192 * v.pos[0] / v.pos[2], 120 + 160 * v.pos[1] / v.pos[2]);
+        assert_eq!(g[0].shade, 131);
+        assert_eq!(g[99].shade, 35);
+        let (x, y) = scr(&g[0]);
+        assert!((x - 51).abs() <= 1 && (y + 17).abs() <= 1, "{x} {y}");
+        let (x, y) = scr(&g[99]);
+        assert!((x - 451).abs() <= 1 && (y - 250).abs() <= 1, "{x} {y}");
+        // the cursor's slot grows toward 0xE00, the others toward 0x300
+        let sets = cs.frame(&t, (0, 0), 2, -25000 * 32, 0, &|_, _| true);
+        let s1 = sets.iter().find(|s| s.slot == 1).unwrap();
+        assert!(s1.scale > 0x200 && s1.pos.is_some());
+        let s3 = sets.iter().find(|s| s.slot == 3).unwrap();
+        assert!(s3.scale > 0x200 && s3.scale < s1.scale);
+    }
+}

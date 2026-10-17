@@ -328,6 +328,11 @@ pub struct Session {
     /// instead of the race's (0xC on the title = the course select's
     /// mode 5; `menu_tick` uses state 0 = the course menu's orbit).
     pub camera_menu: Option<(i16, i8)>,
+    /// Row 12: the course select's scenery state (FUN_80091B8C mode 0xC,
+    /// the backdrop grid; title.rs `CourseSelect`) and the special slots it
+    /// set this frame (empty off the course select).
+    pub course_select: Option<crate::title::CourseSelect>,
+    pub menu_slots: Vec<crate::title::SlotSet>,
     /// Phase 7: player 2's camera (0x800C4FB0, FUN_80070418 on kart 1 in a
     /// split-screen race); None with one player.
     pub camera2: Option<CameraState>,
@@ -1037,6 +1042,8 @@ impl Session {
             clock_plan: None,
             clock_end_dt: None,
             camera_menu: None,
+            course_select: None,
+            menu_slots: Vec::new(),
             camera2: two.then(|| CameraState::from_bytes(&cam_bytes)),
             pad2: 0,
             rand_state,
@@ -1932,6 +1939,8 @@ impl Session {
             clock_plan: None,
             clock_end_dt: None,
             camera_menu: None,
+            course_select: None,
+            menu_slots: Vec::new(),
             camera2: None,
             pad2: 0,
             rand_state: m.u32(0x8000_9010),

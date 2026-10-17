@@ -242,12 +242,22 @@ fn select_objects(
         Some(node) => vis.dat.vis[zone].mask_at(node),
         None => vec![0xFF; 256],
     };
-    let drawn: std::collections::HashSet<usize> = vis
+    let mut drawn: std::collections::HashSet<usize> = vis
         .dat
         .drawn(eye, cam, &mask, if frontend { title::TITLE_DRAW } else { vis.draw })
         .iter()
         .map(|d| d.object)
         .collect();
+    // row 12: the course select's props and "?" marks (FUN_80091B8C places
+    // and scales them; the game draws its special-slot objects wherever
+    // they are put)
+    if let Driver::Sim(run) = &p.driver {
+        for m in run.session.menu_slots.iter().filter(|m| m.scale != 0) {
+            if let Some(Some(o)) = vis.dat.special.get(m.slot as usize) {
+                drawn.insert(*o);
+            }
+        }
+    }
     if p.tick % 100 == 0 && crate::settings::args().into_iter().any(|a| a == "--debug-vis") {
         let n = q.iter().count();
         eprintln!("tick {} eye {:?} zone {} node {:?} drawn {} of {} entities", p.tick, eye, zone, vis.dat.vis_node(zone, eye), drawn.len(), n);
@@ -1037,6 +1047,19 @@ fn sim_tick(mut p: ResMut<Player>, mut latch: ResMut<pacing::PadLatch>, mut hud_
             // The title's course select: the camera on the film strips
             // (game state 0xC, mode 5).
             run.session.camera_menu = (front.page == menus::Page::CourseSelect).then_some((0xC, front.row));
+            // row 12: the course select's props and backdrop (FUN_80091B8C
+            // mode 0xC, mr-sim title.rs `CourseSelect`)
+            if front.page == menus::Page::CourseSelect {
+                let s = &mut run.session;
+                let dt = s.vblanks_per_tick() as i32;
+                let (eye_y, frame) = (s.camera.pos[1], s.globals.frame);
+                let progress = &front.progress;
+                let open = |w: usize, c: usize| progress.course_open(w, c);
+                let cs = s.course_select.get_or_insert_with(|| mr_sim::title::CourseSelect::new(courses::exe()));
+                s.menu_slots = cs.frame(&s.world.tables, (front.row, front.col), dt, eye_y, frame, &open);
+            } else if !run.session.menu_slots.is_empty() {
+                run.session.menu_slots.clear();
+            }
             // phase 8: THE END (game mode 0x15): the orbit, no karts
             if ending::on() {
                 run.session.camera_menu = Some((ending::MODE, 0));

@@ -53,11 +53,13 @@ pub struct SlotPose {
     pub dy: f32,
     /// FUN_8002D72C's scale factors (4.12).
     pub scale: [f32; 3],
+    /// Row 12: FUN_8002DF88's origin (DAT units) instead of the pose's.
+    pub pos: Option<[f32; 3]>,
 }
 
 impl Default for SlotPose {
     fn default() -> Self {
-        SlotPose { rot: [0.0; 3], dy: 0.0, scale: [4096.0; 3] }
+        SlotPose { rot: [0.0; 3], dy: 0.0, scale: [4096.0; 3], pos: None }
     }
 }
 
@@ -158,6 +160,21 @@ impl SceneryFrame {
             }
         }
         let mut hidden = Vec::new();
+        // Row 12: the course select (FUN_80091B8C mode 0xC, mr-sim title.rs
+        // `CourseSelect`): the courses' props, the "?" marks, the worlds'
+        if !s.menu_slots.is_empty() {
+            for m in &s.menu_slots {
+                if m.scale == 0 {
+                    hidden.push(m.slot);
+                    continue;
+                }
+                set(m.slot as i32, &|p| {
+                    p.scale = [m.scale as f32; 3];
+                    p.rot = m.rot.map(|r| (r & 0xFFF) as f32);
+                    p.pos = m.pos.map(|q| q.map(|v| v as f32));
+                });
+            }
+        }
         // FUN_8002DC14 (phase 6): the challenge objects' slots 0x20.. (the
         // targets, then the movie and extras; the Doozer goals have none),
         // turned by 0x800B0CB0 / CB2 / CB4 (FUN_8003C5FC: sin(0x800AFEF6) /
@@ -216,6 +233,9 @@ impl SceneryFrame {
                 p.scale[k] = pa.scale[k] + (pb.scale[k] - pa.scale[k]) * t;
             }
             p.dy = pa.dy + (pb.dy - pa.dy) * t;
+            if let (Some(x), Some(y)) = (pa.pos, pb.pos) {
+                p.pos = Some(std::array::from_fn(|k| x[k] + (y[k] - x[k]) * t));
+            }
         }
         // drops: same slot order; a drop continues while its timer falls
         for (i, d) in out.drops.iter_mut().enumerate() {
@@ -274,7 +294,7 @@ pub fn pose_transform(m: &Mover, p: Option<&SlotPose>) -> Option<Transform> {
     let rot = Mat3::from_cols(col(0), col(1), col(2));
     let rot = Quat::from_mat3(&rot).normalize();
     let scale = Vec3::new(s[0], s[1], s[2]).map(|v| if v.abs() < 1e-4 { 1e-4f32.copysign(v) } else { v }) * l;
-    let o = [m.origin[0] as f32, m.origin[1] as f32 + p.dy, m.origin[2] as f32];
+    let o = p.pos.unwrap_or([m.origin[0] as f32, m.origin[1] as f32 + p.dy, m.origin[2] as f32]);
     let translation = Vec3::new(o[0], -o[1], -o[2]) * (l * 32.0 / crate::UNITS);
     Some(Transform { translation, rotation: rot, scale })
 }
@@ -537,7 +557,7 @@ mod tests {
     fn pose_matches_the_integer_transform() {
         let sin = SinTable((0..5120).map(|i| ((i as f64 * std::f64::consts::TAU / 4096.0).sin() * 16384.0).round() as i16).collect());
         let m = Mover { slot: 1, layer: 1, origin: [100, -50, 2000], angles: [100, 900, 3000], scale: [0x1800, 0x1000, 0x800], hid: false };
-        let p = SlotPose { rot: [0.0, 300.0, 0.0], dy: -120.0, scale: [4096.0; 3] };
+        let p = SlotPose { rot: [0.0, 300.0, 0.0], dy: -120.0, scale: [4096.0; 3], pos: None };
         let tr = pose_transform(&m, Some(&p)).unwrap();
         let mut mi = dat::rot_matrix(&sin, [100, 1200, 3000]);
         dat::scale_matrix(&mut mi, m.scale);

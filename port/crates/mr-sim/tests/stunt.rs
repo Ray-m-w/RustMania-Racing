@@ -81,3 +81,36 @@ fn stunt_finish_matches_oracle() {
         assert_eq!(b.u8(at + i), m1.u8(0x800E_0190 + (at + i) as u32), "save block byte +{i}");
     }
 }
+
+/// Post-release fix (2026-10-17): FUN's six lifts (FUN_80084490 case 0x16)
+/// move their TER groups. The owner's report: the platform after the ramp
+/// (lift 0, TER group 0) never moved and the course could not be passed.
+/// A kart put on the ramp before it (the poke of the oracle capture
+/// analysis/oracle/stunt/fun_lift, where the port runs exact) with CROSS
+/// held rides it down / up and drives on along the strip.
+#[test]
+fn fun_lift_carries_the_kart() {
+    let mut d = disc();
+    let exe = ExeImage::parse(&d.read("SLUS_012.37").unwrap()).unwrap();
+    let info = CourseInfo::find(&exe, "FUN").unwrap();
+    let mut s = Session::with_config(&mut d, SessionConfig::course(&info)).unwrap();
+    assert_eq!(s.globals.objects.lifts.len(), 6);
+    assert_eq!(s.world.course.objects.lift_objects.iter().filter(|o| o.lift >= 0 && o.groups == 1).count(), 6);
+    let (x, y, z) = (86875 << 5, -1990 << 5, -95500 << 5);
+    (s.kart.x, s.kart.y, s.kart.z) = (x, y, z);
+    (s.kart.prev_x, s.kart.prev_y, s.kart.prev_z) = (x, y, z);
+    s.kart.heading = 2048;
+    s.kart.strip = mr_sim::stunt::strip_find(&s.world, 86875, -95500);
+    s.kart.gate = 1;
+    let (mut moved, mut on_deck, mut best) = (false, false, 0);
+    for _ in 0..400 {
+        s.tick(0x4000).unwrap();
+        moved |= s.globals.objects.lifts[0].cur != s.globals.objects.lifts[0].min;
+        // the upper deck beyond the lift (TER y about -6140 there)
+        on_deck |= (s.kart.z >> 5) < -104_500 && (s.kart.y >> 5) < -5_500;
+        best = best.max(s.kart.strip);
+    }
+    assert!(moved, "lift 0 moves");
+    assert!(on_deck, "the kart reached the deck the lift serves");
+    assert!(best >= 300, "the kart drove on past the lift (strip quad {best})");
+}

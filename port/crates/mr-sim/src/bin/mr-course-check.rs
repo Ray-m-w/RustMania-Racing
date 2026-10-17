@@ -283,7 +283,10 @@ pub fn session_at_load(disc: &mut mr_disc::Disc, info: &CourseInfo, cap: &Captur
     // by dt 0x800B0AEC) up to the race load (track S, oracle
     // analysis/oracle/stuck/DISCO_lifts: lift 0's timer runs down by 2 every
     // 2 VBlanks in the menu and it starts down before the race load).
-    if std::env::var("MR_NOMENULIFTS").is_err() && !s.globals.objects.lifts.is_empty() {
+    // (A capture that holds them, capture_course.py since the post-release
+    // fix: `pre` has the lifts of the VBlank before the load already.)
+    let lifts_captured = cap.read(load - 1, 0x800D_D708, 4).is_some();
+    if std::env::var("MR_NOMENULIFTS").is_err() && !lifts_captured && !s.globals.objects.lifts.is_empty() {
         let objs = s.world.course.objects.lift_objects.clone();
         let dt0 = s.globals.dt;
         let mut last = cap.mem_at(cap.vbs[0], None).i32(0x800B_0D90);
@@ -556,6 +559,8 @@ fn free_run(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_fields:
     let mut cam_first: Option<(usize, Vec<&str>)> = None;
     let mut chick_first: Option<(usize, String)> = None;
     let mut chick_n = 0usize;
+    let mut lift_first: Option<(usize, String)> = None;
+    let mut lift_n = 0usize;
     for (j, &vb) in ends.iter().enumerate().take(n) {
         let m = cap.mem_at(vb, None);
         let mut dt = m.i32(0x800B_0AEC);
@@ -765,6 +770,14 @@ fn free_run(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_fields:
                 first[slot] = Some((j, bad));
             }
         }
+        // Post-release: the lifts (0x800DD708) when the capture holds them
+        // (capture_course.py's regions since the FUN fix).
+        if let Some(d) = lift_diff(s, cap, vb) {
+            lift_n += 1;
+            if lift_first.is_none() && !d.is_empty() {
+                lift_first = Some((j, d));
+            }
+        }
         // Phase 7: CHICKEN CHASE's chicken (0x800CB658.., 0x800B0EBD).
         if chick_first.is_none() && s.globals.race_flags & 0x40 != 0 && cap.read(vb, mr_sim::chicken::ADDR, 0x28).is_some() {
             let o = mr_sim::chicken::Chicken::read(&m);
@@ -775,6 +788,12 @@ fn free_run(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_fields:
         }
         if first.iter().all(|x| x.is_some()) && cam_first.is_some() {
             break;
+        }
+    }
+    if lift_n > 0 {
+        match &lift_first {
+            None => println!("   free run: lifts exact over {lift_n} frames"),
+            Some((j, d)) => println!("   free run: lifts @{j}: {d}"),
         }
     }
     if chick_n > 0 {
@@ -792,6 +811,19 @@ fn free_run(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_fields:
         Some((j, d)) => format!("camera @{j} {d:?}"),
     };
     println!("   free run over {n} frames: {}; {cam}; random state first differs at {:?}{}", fr.collect::<Vec<_>>().join(", "), rng_first, err.map(|e| format!("; ERROR at {}: {}", e.0, e.1)).unwrap_or_default());
+}
+
+/// The session's lifts against the capture's at `vb` (None: not captured;
+/// empty: equal).
+fn lift_diff(s: &Session, cap: &Capture, vb: u32) -> Option<String> {
+    let n = s.globals.objects.lifts.len();
+    if n == 0 {
+        return None;
+    }
+    cap.read(vb, 0x800D_D708, 20 * n)?;
+    let o = mr_sim::objects::ObjectState::read(&cap.mem_at(vb, None)).lifts;
+    let d: Vec<String> = s.globals.objects.lifts.iter().zip(o.iter()).enumerate().filter(|(_, (a, b))| a != b).map(|(i, (a, b))| format!("lift {i} port {a:?} oracle {b:?}")).collect();
+    Some(d.join("; "))
 }
 
 /// `--seq`: a free run of kart 0 and the camera against the sequence of the
@@ -857,6 +889,7 @@ fn teacher_forced(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_f
     let mut first_rng = None;
     let mut tf_err = None;
     let mut cam_bad: std::collections::BTreeMap<&str, (usize, usize)> = Default::default();
+    let (mut lift_n, mut lift_bad, mut lift_first) = (0usize, 0usize, None);
     for j in 1..n {
         let mprev = cap.mem_at(ends[j - 1], None);
         // The lifts are not in the course captures: keep the session's own
@@ -947,6 +980,13 @@ fn teacher_forced(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_f
                 println!("      tf frame {j}: pointer {:+}, seed steps port-oracle {:?}", s.globals.rng.wrapping_sub(m.u32(0x800B_0BCC)) as i32, seed_steps.or(seed_ahead));
             }
         }
+        if let Some(d) = lift_diff(s, cap, ends[j]) {
+            lift_n += 1;
+            if !d.is_empty() {
+                lift_bad += 1;
+                lift_first.get_or_insert((j, d));
+            }
+        }
         for (slot, _, _, r) in s.kart_records() {
             let o = cap.read(ends[j], KART_ARRAY + (RECORD_SIZE * slot) as u32, RECORD_SIZE).unwrap();
             for &(nm, off, sz) in FIELD_OFFSETS {
@@ -970,6 +1010,9 @@ fn teacher_forced(s: &mut Session, cap: &Capture, ends: &[u32], n: usize, show_f
         if cam.is_empty() { "exact".to_string() } else { cam.join(", ") },
         tf_err.map(|e| format!("; ERROR at {}: {}", e.0, e.1)).unwrap_or_default()
     );
+    if lift_n > 0 {
+        println!("   teacher forced: lifts differ on {lift_bad} of {lift_n} frames{}", lift_first.map(|(j, d)| format!(" (first {j}: {d})")).unwrap_or_default());
+    }
     if show_fields {
         for (k, v) in &counts {
             println!("      k{} {:<14} {:>5} frames, first {}", k.0, k.1, v.0, v.1);

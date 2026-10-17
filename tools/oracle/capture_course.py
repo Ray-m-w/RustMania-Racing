@@ -45,6 +45,10 @@ def course_regions():
             n = 0x200 + 0x2C0
         regs.append((a, n))
     regs += [(0x800B4540, 0x400), (0x800C84B8, 0x680)]
+    # post-release fix: the lifts (0x800DD708, 9 x 20: REST's nine), the
+    # animated objects (0x800D8630, 27 x 0x1C: MLABS') and the first nine
+    # hooks (0x800D15A0, 9 x 0x2C: FUN's), within the bridge's slot
+    regs += [(0x800DD708, 0xB4), (0x800D8630, 0x2F4), (0x800D15A0, 0x18C)]
     return regs
 
 

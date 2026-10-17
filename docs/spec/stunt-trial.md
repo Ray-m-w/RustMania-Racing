@@ -231,3 +231,10 @@ In add order (the GPU draws the last-added first):
   entry's first point within 20000 view units (GP0 mountain_paired_gp0:
   four markers, eight quads; DOCK race3 frames have the warps'). Not drawn
   by the port before; now (effects.rs `trigger_marks`).
+
+## Post-release fix (2026-10-17): FUN's lifts
+The stunt courses' animated objects (FUN_80084490 cases 0x0C, 0x16, 0x17,
+0x19) were not ported: FUN's six lifts (the moving platforms; lift 0 after
+the ramp at x 86875, z -102200..-103850) and REST's nine never moved, so FUN
+could not be completed. Fixed and checked against the oracle (courses.md
+"Post-release fix"; captures analysis/oracle/courses/FUN, stunt/fun_lift).

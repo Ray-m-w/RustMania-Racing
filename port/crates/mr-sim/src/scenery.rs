@@ -115,6 +115,74 @@ pub fn load(id: u8, spin: &[i16], rand: &mut dyn FnMut() -> i32, byte: &mut dyn 
                 v.push(AnimObject { rot: [0, a, 0], slot: i as i16 + 1, slots: 1, base_vel: [0, tt(i), 0], ..o() });
             }
         }
+        // MOUNTAIN (stunt, 0x0C): two turntable discs (two slots each) and
+        // three wheels turning about z at fixed rates (fixed y angles).
+        0x0C => {
+            let a = r8();
+            v.push(AnimObject { rot: [0, a, 0], slots: 2, slot: 5, base_vel: [0, tt(0), 0], ..o() });
+            let a = r8();
+            v.push(AnimObject { rot: [0, a, 0], slots: 2, slot: 3, base_vel: [0, tt(1), 0], ..o() });
+            for (y, s, slot) in [(0x19E, 8, 7), (0x121, -12, 8), (0xA9, 0x10, 9)] {
+                let a = r8();
+                v.push(AnimObject { rot: [0, y, a], slots: 1, slot, base_vel: [0, 0, s], ..o() });
+            }
+        }
+        // FUN (stunt, 0x16): seven turntable spinners (slot 1 twice, at
+        // turntable 0's spin; slots 2..5 and 0x18 at turntables 1..5), then
+        // six lifts carrying their slots and TER groups 0..5 (the moving
+        // platforms of the course).
+        0x16 => {
+            for (slot, t) in [(1, 0), (1, 0), (2, 1), (3, 2), (4, 3), (5, 4), (0x18, 5)] {
+                let a = r8();
+                v.push(AnimObject { rot: [0, a, 0], slots: 1, slot, base_vel: [0, tt(t), 0], ..o() });
+            }
+            for (i, (slot, slots)) in [(6, 5), (0xB, 5), (0x10, 5), (0x15, 1), (0x16, 1), (0x17, 1)].into_iter().enumerate() {
+                v.push(AnimObject { slot, slots, group: i as i16, groups: 1, lift: i as i8, ..o() });
+            }
+        }
+        // REST (stunt, 0x17): nine lifts carrying their slots and TER groups
+        // 0..8, a turntable spinner (slot 0x71) and one spinning +-5 (slot
+        // 0x65, seven slots; the sign from a second rand()).
+        0x17 => {
+            let lifts = [(1, 5), (6, 5), (0xB, 6), (0x11, 5), (0x16, 5), (0x50, 5), (0x55, 5), (0x5A, 5), (0x6C, 5)];
+            for (i, (slot, slots)) in lifts.into_iter().enumerate() {
+                v.push(AnimObject { slot, slots, group: i as i16, groups: 1, lift: i as i8, ..o() });
+            }
+            let a = r8();
+            v.push(AnimObject { rot: [0, a, 0], slots: 1, slot: 0x71, base_vel: [0, tt(0), 0], ..o() });
+            let a = r8();
+            let s = if rand() < 0x4000 { 5 } else { -5 };
+            v.push(AnimObject { rot: [0, a, 0], base_vel: [0, s, 0], slot: 0x65, slots: 7, ..o() });
+        }
+        // MLABS (stunt, 0x19): eight turntable spinners (slots 1..8), then
+        // 19 fans on jets 0..18 (slots 9..0x1B; about x, z or y).
+        0x19 => {
+            for i in 0..8 {
+                let a = r8();
+                v.push(AnimObject { rot: [0, a, 0], slot: i as i16 + 1, slots: 1, base_vel: [0, tt(i), 0], ..o() });
+            }
+            for k in 0..0x13i16 {
+                let axis = if k == 8 {
+                    0
+                } else if (2..8).contains(&k) || (0xC..0xE).contains(&k) {
+                    2
+                } else {
+                    1
+                };
+                let mut rot = [0u16; 3];
+                let mut vel = [0i16; 3];
+                rot[axis] = r8();
+                vel[axis] = 0x60;
+                v.push(AnimObject { rot, base_vel: vel, slot: k + 9, slots: 1, jet: k as i8, ..o() });
+            }
+        }
+        // THE END (0x1D): two pairs of slots rolling about x.
+        0x1D => {
+            let a = r8();
+            v.push(AnimObject { rot: [a, 0, 0], base_vel: [-0x1C, 0, 0], slot: 1, slots: 2, ..o() });
+            let a = r8();
+            v.push(AnimObject { rot: [a, 0, 0], base_vel: [-0x18, 0, 0], slot: 3, slots: 2, ..o() });
+        }
         // 0x80084A8C (ROCK): three lifts moving scenery only.
         0x1C => {
             for i in 0..3 {
@@ -155,8 +223,13 @@ pub fn load(id: u8, spin: &[i16], rand: &mut dyn FnMut() -> i32, byte: &mut dyn 
 /// rand() and random-byte draws of `load` for course `id`.
 pub fn load_draws(id: u8) -> (u32, u32) {
     match id {
+        0x0C => (5, 0),
         0x0F => (3, 0),
         0x12 => (1, 1),
+        0x16 => (7, 0),
+        0x17 => (3, 0),
+        0x19 => (27, 0),
+        0x1D => (2, 0),
         0x1A | 0x1B => (6, 0),
         0x1F => (13, 24),
         _ => (0, 0),

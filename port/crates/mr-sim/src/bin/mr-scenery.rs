@@ -41,6 +41,23 @@ fn main() {
         let objs = mr_sim::objects::CourseObjects::from_dat(&dat, &dat_bytes);
         let breakables = mr_sim::breakables::table(info.id);
         println!("## {name} (course {:#x})", info.id);
+        if args.iter().any(|a| a == "--objects") {
+            // the course's object lists (counts; lifts from chunk 0x18)
+            let w = mr_sim::world::World::course(&mut disc, info.id).expect("world");
+            let (nr, _) = scenery::load_draws(info.id);
+            let lo = mr_sim::lifts::objects(info.id);
+            println!(
+                "   jets {} turntables {} hook groups {} lifts {} | animated objects {} (lift objects {}, rand {nr}) special slots {}",
+                objs.jets.len(),
+                objs.turntables.len(),
+                objs.hooks.len(),
+                w.course.objects.lifts.len(),
+                lo.len(),
+                lo.iter().filter(|o| o.lift >= 0).count(),
+                dat.special.iter().filter(|s| s.is_some()).count()
+            );
+            continue;
+        }
         if let Some(i) = args.iter().position(|a| a == "--ground") {
             // dev: the TER surfaces under world x, y, z
             let v: Vec<i32> = args[i + 1].split(':').map(|x| x.parse().unwrap()).collect();
@@ -103,7 +120,7 @@ fn main() {
         };
         if let (Some(ram), Some(anim)) = (ram.as_ref(), port.as_ref()) {
             let m = Mem::new(ram[..0x20_0000].to_vec(), ram[0x20_0000..0x20_0400].to_vec());
-            poses(&m, &info, &dat, anim);
+            poses(&m, &info, &dat, anim, &mr_sim::tables::Tables::from_exe(&exe));
         }
         if slots {
             let anim = port.unwrap_or_default();
@@ -163,9 +180,12 @@ fn check(m: &Mem, info: &CourseInfo, n_turn: usize) -> Option<Vec<scenery::AnimO
         };
         scenery::load(info.id, &tt_spin, rand, &mut byte)
     };
+    // (a rand() that only picks a sign, REST's spinner: both answers)
     let Some(p) = std::iter::once(ptr_now).chain(0x8001_F000..0x8002_0200u32).find(|&p| {
-        let mut z = || 0;
-        load_at(p, &mut z).iter().map(shape).collect::<Vec<_>>() == want
+        [0, 0x7FFF].iter().any(|&r| {
+            let mut z = || r;
+            load_at(p, &mut z).iter().map(shape).collect::<Vec<_>>() == want
+        })
     }) else {
         println!("   {} records in RAM: structure differs", oracle.len());
         let mut z = || 0;
@@ -228,7 +248,7 @@ fn check(m: &Mem, info: &CourseInfo, n_turn: usize) -> Option<Vec<scenery::AnimO
 /// make of the RAM's own animated records, lifts, global spin angles and
 /// frame counter: angles = pose + rot (FUN_8002D9E4), origin y = pose +
 /// the lift's travel (FUN_8002E060), HAPPY's x scale (FUN_8002D72C).
-fn poses(m: &Mem, info: &CourseInfo, dat: &mr_assets::dat::Dat, _port: &[scenery::AnimObject]) {
+fn poses(m: &Mem, info: &CourseInfo, dat: &mr_assets::dat::Dat, _port: &[scenery::AnimObject], t: &mr_sim::tables::Tables) {
     let sin = mr_assets::dat::SinTable((0..5120u32).map(|i| m.i16(0x800A_88C0 + 2 * i)).collect());
     let table = m.u32(0x800B_0C28);
     let pose_base = m.u32(0x800B_0C1C);
@@ -265,7 +285,35 @@ fn poses(m: &Mem, info: &CourseInfo, dat: &mr_assets::dat::Dat, _port: &[scenery
                 }
             }
         }
-        if info.id == 0x0F && slot == 5 {
+        // REST: lift objects 3..8 turn their slots 2 / 3 about z by the
+        // lift's counter
+        if info.id == 0x17 {
+            for (i, a) in anim.iter().enumerate().filter(|(i, a)| (3..=8).contains(i) && a.lift >= 0) {
+                if a.slot >= 0 && (a.slot as u32 + 2..a.slot as u32 + 4).contains(&slot) {
+                    let c = m.u8(0x800D_D708 + 20 * a.lift as u32 + 0x13);
+                    rot = [0, 0, ((c & 0x7F) as u16) << 5];
+                    by.push(format!("lift {} counter (anim {i})", a.lift));
+                }
+            }
+        }
+        // hooks: slot 0x30 + i on the hook (FUN_8002DF88) turned by its
+        // +0x28 / +0x2A
+        let nh = 3 * m.i8(0x800B_0E00).max(0) as u32;
+        let mut hook_org = None;
+        if (0x30..0x30 + nh).contains(&slot) {
+            let h = 0x800D_15A0 + 0x2C * (slot - 0x30);
+            rot = [m.u16(h + 0x28), 0, m.u16(h + 0x2A)];
+            // the port's FUN_8003CCBC (hooks::angles) from the record's
+            // hook and trailing point
+            let hk = mr_sim::hooks::Hook { pos: [m.i32(h), m.i32(h + 4), m.i32(h + 8)], trail: [m.i32(h + 0x10), m.i32(h + 0x14), m.i32(h + 0x18)], ..Default::default() };
+            let pa = mr_sim::hooks::angles(t, &hk);
+            if pa != [rot[0], rot[2]] {
+                println!("   hook {}: angles ram {:?} port {pa:?}", slot - 0x30, [rot[0], rot[2]]);
+            }
+            hook_org = Some([m.i32(h) >> 5, (m.i32(h + 4) >> 5) - 0x400, m.i32(h + 8) >> 5]);
+            by.push("hook".into());
+        }
+        if (info.id == 0x0F && slot == 5) || (info.id == 0x0E && slot == 1) || (info.id == 0x19 && (0x1C..0x1F).contains(&slot)) {
             rot = [spin[0], spin[1], spin[2]];
             by.push("global spin".into());
         }
@@ -288,7 +336,7 @@ fn poses(m: &Mem, info: &CourseInfo, dat: &mr_assets::dat::Dat, _port: &[scenery
         mr_assets::dat::scale_matrix(&mut want, sc);
         let got: [[i16; 3]; 3] = std::array::from_fn(|r| std::array::from_fn(|c| m.i16(rec + 2 * (3 * r + c) as u32)));
         let org = [m.i32(desc), m.i32(desc + 4), m.i32(desc + 8)];
-        let worg = [pose_org[0], pose_org[1] + dy, pose_org[2]];
+        let worg = hook_org.unwrap_or([pose_org[0], pose_org[1] + dy, pose_org[2]]);
         let ram_ang = [m.u16(desc + 0xC), m.u16(desc + 0xE), m.u16(desc + 0x10)];
         if got == want && org == worg {
             ok += 1;

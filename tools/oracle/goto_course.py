@@ -87,6 +87,16 @@ COURSES = {
     "ROOFTOPS": (11, 3, 3, "THE MUPPET CHRISTMAS CAROL / STUNT"),
     # Session 8, phase 14: world 1's stunt course (mirror walls, lift strips).
     "REST": (23, 1, 3, "THE GREAT MUPPET CAPER / STUNT"),
+    # Post-release fix (2026-10-17): the other stunt courses (FUN's lifts)
+    # and the arenas, for their animated objects / lifts / hooks.
+    "FUN": (22, 0, 3, "THE MUPPET MOVIE / STUNT"),
+    "DINER": (24, 2, 3, "THE MUPPETS TAKE MANHATTAN / STUNT"),
+    "MLABS": (25, 5, 3, "MUPPETS FROM SPACE / STUNT"),
+    "CANYON": (5, 0, 2, "THE MUPPET MOVIE / BATTLE"),
+    "T_SQUARE": (19, 1, 2, "THE GREAT MUPPET CAPER / BATTLE"),
+    "THEATRE": (20, 2, 2, "THE MUPPETS TAKE MANHATTAN / BATTLE"),
+    "CHAMBER": (13, 3, 2, "THE MUPPET CHRISTMAS CAROL / BATTLE"),
+    "LAB": (14, 5, 2, "MUPPETS FROM SPACE / BATTLE"),
 }
 GRID_SLOTS = {n: 3 + i for i, n in enumerate(list(COURSES)[:8])}
 

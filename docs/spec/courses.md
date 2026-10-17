@@ -70,7 +70,7 @@ on all 17 captured courses.)
 | 0x02 | 0x800D1C50 | hooks: groups of 32 path points, 3 hooks each (0x800B0E00); an airborne kart near a free hook is carried until the hook's phase wraps; a jump / wall drops it | FUN_800616A0, FUN_800617CC, FUN_80061BC4, 0x8003EB0C, 0x80066314 | hooks.rs; no race course has a valid list (GRAVE's 14 points are not a multiple of 32), stunt courses do |
 | 0x0E | 0x800D1C80 | air jets, 5 points: on / off times from the point distances, push a kart inside the active nearest one (one signed random byte), puff smoke | FUN_800637B8, FUN_80063A98, FUN_80063C24, FUN_8007F03C loop 1 | objects.rs |
 | 0x11 | 0x800D1C8C | turntables, 3 points (centre, inner, outer radius): turn a grounded kart on the ring by spin x dt; spin +-5 (x3 on courses 0x1A/0x1B) from rand() at course load | FUN_80084490, FUN_800632BC | objects.rs |
-| 0x18 | 0x800D1CA8 | lifts, 4 points: wait at P0.y, rise 0x39 a frame to P1.y, wait, return; the course's animated objects that name a lift move their TER groups by its change (vertex y, wall heights) | FUN_80063554, FUN_800859EC, FUN_80042374 | lifts.rs |
+| 0x18 | 0x800D1CA8 | lifts, 4 points: wait at P0.y, rise 0x39 a frame to P1.y, wait, return; the course's animated objects that name a lift move their TER groups by its change (vertex y, wall heights). Also the stunt courses FUN (6 lifts, TER groups 0..5) and REST (9, groups 0..8): post-release fix 2026-10-17, below | FUN_80063554, FUN_800859EC, FUN_80042374 | lifts.rs (`objects` = scenery.rs `load`'s lift fields) |
 | 0x0A / 0x0B | 0x800D1C70 / 74 | orbit camera look / eye paths (camera mode 1) | FUN_80070418 case 1 | camera.rs |
 | 0x04, 0x09, 0x0F / 0x10, 0x14, 0x08 / 0x17 | | the stunt courses' gates, banners, strip, pipes, mirror planes | FUN_80081DD8, FUN_80034CE0, FUN_8006F64C .., FUN_800628FC, FUN_80062E38 | stunt.rs (docs/spec/stunt-trial.md) |
 | 0x0D | 0x800D1C7C | paired triggers (two-way links; MOUNTAIN, DINER) | FUN_80061F08 / 80061FC0 | progress.rs `teleport` (none on race courses) |
@@ -217,3 +217,32 @@ kartfx.rs, hud_items.rs).
   the course flags and map table for courses 0..0x1F only; now 0..0x24, and
   knocked-out karts (race flag 8, battles) leave the map as FUN_80048A0C
   does. All 17 maps vs end.png: analysis/s6/courses/minimaps_all.png.
+
+## Post-release fix (2026-10-17): the stunt courses' and arenas' objects
+Owner report: on FUN's 1 PLAYER STUNT TRIAL the wooden platform after the
+ramp (lift 0, TER group 0, slots 6..0xA) never moved, so the course could
+not be passed. Cause: FUN_80084490's switch was ported for the race
+courses only; its cases 0x0C (MOUNTAIN), 0x16 (FUN), 0x17 (REST), 0x19
+(MLABS) and 0x1D (THE END) were missing, so FUN's six and REST's nine lifts
+never stepped (sim: their TER groups stayed at the load height) and the
+stunt courses' spinners / fans did not turn (render). Also render only:
+FUN_800859EC's global spin on LAB (slot 1) and MLABS (0x1C..0x1E), REST's
+lift-counter turn of lifts 3..8's slots 2 / 3, and the hooks' slots 0x30..
+(FUN 9, DINER 6, MLABS 15 hooks) placed on their paths and turned along the
+rope (FUN_8002DF88 / FUN_8003CCBC: `hooks::angles`). Fixed in scenery.rs
+(the cases, draw counts), lifts.rs (`objects` derived from `scenery::load`),
+hooks.rs, mr-bevy movers.rs.
+
+| course | oracle check |
+|---|---|
+| FUN | mr-scenery: 13 records structure + menu angles exact, 33 moved slots exact (24 + 9 hooks, port hook angles = RAM); mr-course-check FUN (CROSS from 230, 1033 frames): race load, free run, teacher forced exact; lifts exact every frame both ways; stunt/fun_lift (kart poked on the ramp before lift 0, CROSS held, 764 frames: rides lift 0 down and up, drives on to quad 308, falls, is thrown on): kart, camera, random state, lifts exact free run and teacher forced |
+| REST | 11 records exact (spinner sign from rand(): the structure search tries both), 47 slots exact; course check exact |
+| MOUNTAIN | 5 records exact, 7 slots exact; course check exact |
+| MLABS | 27 records exact, 45 slots exact (fans, hooks, global spin); course check exact (132 frames) |
+| DINER, ROOFTOPS | no animated objects (DINER: 6 hook slots exact); course checks exact |
+| arenas CANYON, T_SQUARE, THEATRE, CHAMBER, LAB, LAGOON | no animated objects (LAB: global spin slot exact); course checks exact |
+
+Captures now hold 0x800DD708 (9 lifts), 0x800D8630 (27 records) and
+0x800D15A0 (9 hooks) (capture_course.py); mr-course-check compares the
+lifts when present. Test `fun_lift_carries_the_kart`. Dev tool
+mr-stunt-drive (headless trial, simple driver, pokes, height map).

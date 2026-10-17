@@ -82,6 +82,26 @@ pub fn frame(g: &mut RaceGlobals, w: &World, drivers: &[[i32; 3]]) {
     }
 }
 
+/// The end of FUN_800617CC's hook loop (render side): FUN_8003CCBC's
+/// angles of the rope from the trailing point (0x8000 below it) to the
+/// hook, stored at +0x28 (about x) / +0x2A (about z); FUN_800859EC turns
+/// slot 0x30 + i by them.
+pub fn angles(t: &crate::tables::Tables, h: &Hook) -> [u16; 2] {
+    let x = h.pos[0].wrapping_sub(h.trail[0]) >> 5;
+    let y = h.pos[1].wrapping_sub(h.trail[1].wrapping_add(0x8000)) >> 5;
+    let z = h.pos[2].wrapping_sub(h.trail[2]) >> 5;
+    let ax = crate::tables::ratan2(t, z, y.wrapping_neg()).wrapping_neg() & 0xFFF;
+    let r = y.wrapping_neg().wrapping_mul(t.cos(ax)).wrapping_sub(z.wrapping_mul(t.sin(ax)));
+    let az = crate::tables::ratan2(t, x, crate::fixed::div_pow2(r, 12)) & 0xFFF;
+    [ax as u16, az as u16]
+}
+
+/// The slot origin FUN_800859EC gives hook i (FUN_8002DF88, DAT units):
+/// the hook >> 5, 0x400 higher.
+pub fn slot_origin(h: &Hook) -> [i32; 3] {
+    [h.pos[0] >> 5, (h.pos[1] >> 5) - 0x400, h.pos[2] >> 5]
+}
+
 /// FUN_80061BC4(kart): catch, carry and release.
 pub fn kart(k: &mut KartState, g: &mut RaceGlobals) {
     if k.effect != -1 || g.objects.hooks.is_empty() || k.carried_drop != 0 {

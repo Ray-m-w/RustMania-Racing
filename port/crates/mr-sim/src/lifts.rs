@@ -6,7 +6,8 @@
 //! switch). An object with a lift (+0x17) steps it and moves its TER groups
 //! (+0x14, +0x19 of them) by the lift's change: FUN_80042374 adds it to the
 //! groups' vertex y and wall heights, so the karts drive on the moving
-//! floor (BOG, ISLAND, HAPPY, DISCO; ROCK's lifts move scenery only).
+//! floor (BOG, ISLAND, HAPPY, DISCO, the stunt courses FUN and REST;
+//! ROCK's lifts move scenery only).
 //!
 //! A lift waits at its low end (|P2 - P1| * 60 / 50 VBlanks), rises 0x39 a
 //! frame to P1.y, waits there (|P3 - P2| * 60 / 50), and comes back down.
@@ -49,34 +50,19 @@ pub struct LiftObject {
     pub slots: u8,
 }
 
-/// FUN_80084490's switch (jump table 0x80023378, course - 3), the objects
-/// of the race courses with a lift field, in order (the other objects of
-/// those courses have none). DOCK's object names lift 0, which DOCK lacks.
+/// FUN_80084490's switch (jump table 0x80023378, course - 3): the lift /
+/// terrain part of every animated object of the course, in record order
+/// (scenery.rs `load`, which holds the switch; the random draws only set
+/// angles). DOCK's object names lift 0, which DOCK lacks. Courses with
+/// lifts: BOG, HAPPY, ISLAND, ROCK, DISCO and the stunt courses FUN (six
+/// lifts, TER groups 0..5) and REST (nine, groups 0..8).
 pub fn objects(course: u8) -> Vec<LiftObject> {
-    let o = |lift: i8, slot: i16, slots: u8, group: i16, groups: u8| LiftObject { lift, group, groups, slot, slots };
-    match course {
-        // 0x80084BE4
-        3 => vec![o(0, 1, 1, 0, 1)],
-        // 0x800850B4
-        6 => vec![o(0, 1, 4, 0, 2)],
-        // 0x80085110
-        8 => vec![o(0, 1, 3, 0, 1), o(1, 4, 3, 1, 1)],
-        // 0x80085068
-        9 => vec![o(0, 0x1F, 1, 0, 1)],
-        // 0x80084A8C
-        0x1C => vec![o(0, 1, 1, -1, 0), o(1, 2, 1, -1, 0), o(2, 3, 1, -1, 0)],
-        // 0x80085394: twelve spinning objects, then the lifts.
-        0x1F => {
-            let mut v = vec![o(-1, -1, 0, -1, 0); 12];
-            v.push(o(0, 0xD, 2, 0, 1));
-            v.push(o(1, 0xF, 2, 1, 1));
-            for i in 0..5 {
-                v.push(o(i + 2, 0x11 + i as i16, 1, i as i16 + 2, 1));
-            }
-            v
-        }
-        _ => Vec::new(),
-    }
+    let (mut r, mut b) = (|| 0, || 0u8);
+    let spin = [0i16; 8];
+    crate::scenery::load(course, &spin, &mut r, &mut b)
+        .iter()
+        .map(|a| LiftObject { lift: a.lift, group: a.group, groups: a.groups, slot: a.slot, slots: a.slots })
+        .collect()
 }
 
 fn dist(t: &Tables, a: [i32; 3], b: [i32; 3]) -> i32 {

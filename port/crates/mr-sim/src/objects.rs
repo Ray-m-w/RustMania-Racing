@@ -310,15 +310,9 @@ pub fn turntables_load(w: &World, rand: &mut dyn FnMut() -> i32) -> (Vec<i16>, V
 
 /// rand() calls of FUN_80084490's per-course switch (course load, after
 /// the turntables; jump table 0x80023378 indexed by course - 3): the
-/// animated scenery's phases (render side). Race courses only.
+/// animated scenery's phases (render side; scenery.rs `load_draws`).
 pub fn course_load_switch_rands(id: u8) -> u32 {
-    match id {
-        0x0F => 3,  // 0x800855FC
-        0x12 => 1,  // 0x80084B54
-        0x1A | 0x1B => 6, // 0x80084688
-        0x1F => 13, // 0x80085394
-        _ => 0,
-    }
+    crate::scenery::load_draws(id).0
 }
 
 /// FUN_800632BC(kart): +0x4E4 = -1; a grounded kart (+0x4E0) on a

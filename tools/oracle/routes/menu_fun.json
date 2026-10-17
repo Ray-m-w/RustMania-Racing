@@ -1,0 +1,130 @@
+{
+ "name": "menu_fun",
+ "slot": 1,
+ "course": 22,
+ "world": 0,
+ "type": 3,
+ "end_vb": 390,
+ "steps": [
+  [
+   0,
+   ""
+  ],
+  [
+   20,
+   "down"
+  ],
+  [
+   26,
+   ""
+  ],
+  [
+   40,
+   "down"
+  ],
+  [
+   46,
+   ""
+  ],
+  [
+   60,
+   "down"
+  ],
+  [
+   66,
+   ""
+  ],
+  [
+   80,
+   "cross"
+  ],
+  [
+   86,
+   ""
+  ],
+  [
+   120,
+   "cross"
+  ],
+  [
+   126,
+   ""
+  ],
+  [
+   160,
+   "up"
+  ],
+  [
+   166,
+   ""
+  ],
+  [
+   180,
+   "up"
+  ],
+  [
+   186,
+   ""
+  ],
+  [
+   200,
+   "up"
+  ],
+  [
+   206,
+   ""
+  ],
+  [
+   220,
+   "up"
+  ],
+  [
+   226,
+   ""
+  ],
+  [
+   250,
+   "cross"
+  ],
+  [
+   256,
+   ""
+  ],
+  [
+   300,
+   "down"
+  ],
+  [
+   306,
+   ""
+  ],
+  [
+   320,
+   "down"
+  ],
+  [
+   326,
+   ""
+  ],
+  [
+   340,
+   "down"
+  ],
+  [
+   346,
+   ""
+  ],
+  [
+   370,
+   "cross"
+  ],
+  [
+   376,
+   ""
+  ]
+ ],
+ "pokes": [],
+ "loaded_vb": 960,
+ "saved_vb": 1112,
+ "note": "THE MUPPET MOVIE / STUNT; from slot 1 (DOCK course menu); course loaded (0x800B0FAC == course, 0x800B0AF4 == -1) at loaded_vb, state saved ~150 VBlanks later (tools/oracle/goto_course.py)"
+}

@@ -1,0 +1,106 @@
+{
+ "name": "menu_theatre",
+ "slot": 1,
+ "course": 20,
+ "world": 2,
+ "type": 2,
+ "end_vb": 330,
+ "steps": [
+  [
+   0,
+   ""
+  ],
+  [
+   20,
+   "down"
+  ],
+  [
+   26,
+   ""
+  ],
+  [
+   40,
+   "down"
+  ],
+  [
+   46,
+   ""
+  ],
+  [
+   60,
+   "down"
+  ],
+  [
+   66,
+   ""
+  ],
+  [
+   80,
+   "cross"
+  ],
+  [
+   86,
+   ""
+  ],
+  [
+   120,
+   "cross"
+  ],
+  [
+   126,
+   ""
+  ],
+  [
+   160,
+   "up"
+  ],
+  [
+   166,
+   ""
+  ],
+  [
+   180,
+   "up"
+  ],
+  [
+   186,
+   ""
+  ],
+  [
+   210,
+   "cross"
+  ],
+  [
+   216,
+   ""
+  ],
+  [
+   260,
+   "down"
+  ],
+  [
+   266,
+   ""
+  ],
+  [
+   280,
+   "down"
+  ],
+  [
+   286,
+   ""
+  ],
+  [
+   310,
+   "cross"
+  ],
+  [
+   316,
+   ""
+  ]
+ ],
+ "pokes": [],
+ "loaded_vb": 869,
+ "saved_vb": 1019,
+ "note": "THE MUPPETS TAKE MANHATTAN / BATTLE; from slot 1 (DOCK course menu); course loaded (0x800B0FAC == course, 0x800B0AF4 == -1) at loaded_vb, state saved ~150 VBlanks later (tools/oracle/goto_course.py)"
+}

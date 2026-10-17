@@ -6,9 +6,12 @@
 //! hidden):
 //! - FUN_800859EC: the animated objects 0x800D8630 (mr_sim::scenery: spin
 //!   angles, the turntable discs and jet fans of BASE, OVAL's and DISCO's
-//!   spinners) and the lifts' slots moved by the lift's travel (BOG,
-//!   ISLAND, HAPPY, ROCK, DISCO); BASE's slots 5 / 6 turned by the global
-//!   spin angles 0x800A889C (FUN_8003C5FC: += 0x800A88A8[i] * dt); HAPPY's
+//!   spinners, the stunt courses' wheels / fans) and the lifts' slots moved
+//!   by the lift's travel (BOG, ISLAND, HAPPY, ROCK, DISCO, the stunt
+//!   courses FUN and REST; REST's lifts 3..8 also turn slots 2 / 3 by their
+//!   counters); BASE's slots 5 / 6, LAB's 1 and MLABS' 0x1C..0x1E turned by
+//!   the global spin angles 0x800A889C (FUN_8003C5FC: += 0x800A88A8[i] * dt);
+//!   the hooks' slots 0x30.. on their paths (FUN, DINER, MLABS); HAPPY's
 //!   slots 0x50..0x53 pulsed in x by the frame counter (% 48);
 //! - FUN_80069334: a breakable group's slots hidden (scale 0) when a weapon
 //!   knocks it down (mr_sim breakables: `hidden_slots`).
@@ -130,13 +133,18 @@ impl SceneryFrame {
         };
         // FUN_800859EC: the angles of every object with a slot, then the
         // lifts' travel (cur - the low end the DAT was loaded at).
-        for a in &o.anim {
+        for (i, a) in o.anim.iter().enumerate() {
             if a.slot < 0 {
                 continue;
             }
             let lift = (a.lift >= 0).then(|| o.lifts.get(a.lift as usize)).flatten();
             for k in 0..a.slots as i32 {
-                let rot = a.rot.map(|r| (r & 0xFFF) as f32);
+                let mut rot = a.rot.map(|r| (r & 0xFFF) as f32);
+                // REST (0x17): lift objects 3..8 turn their slots 2 / 3 about
+                // z by the lift's counter ((+0x13 & 0x7F) << 5)
+                if let (0x17, 3..=8, 2..=3, Some(l)) = (id, i, k, lift) {
+                    rot = [0.0, 0.0, (((l.anim & 0x7F) as u32) << 5) as f32];
+                }
                 set(a.slot as i32 + k, &|p| p.rot = rot);
                 if let Some(l) = lift {
                     let d = (l.cur - l.min) as f32;
@@ -144,13 +152,36 @@ impl SceneryFrame {
                 }
             }
         }
+        // FUN_800859EC's end: the hooks' slots 0x30 + i ride their paths
+        // (FUN_8002DF88) turned along the rope (FUN_8002D9E4; hooks.rs)
+        for (i, h) in o.hooks.iter().enumerate() {
+            let pos = mr_sim::hooks::slot_origin(h).map(|v| v as f32);
+            let [ax, az] = mr_sim::hooks::angles(&s.world.tables, h);
+            set(0x30 + i as i32, &|p| {
+                p.pos = Some(pos);
+                p.rot = [ax as f32, 0.0, az as f32];
+            });
+        }
         // the frame counter FUN_8007A9DC saw (one race frame before it
         // stepped; animtex.rs)
         let f = g.frame - g.dt.max(1);
-        if id == 0x0F {
+        // FUN_800859EC's start: the global spin angles on BASE (slots 5, 6),
+        // the arena LAB (slot 1) and MLABS (slots 0x1C..0x1E)
+        if matches!(id, 0x0E | 0x0F | 0x19) {
             let a = global_spin(f).map(|v| v as f32);
-            set(5, &|p| p.rot = [a[0], a[1], a[2]]);
-            set(6, &|p| p.rot = [0.0, a[1], 0.0]);
+            let all = |p: &mut SlotPose| p.rot = [a[0], a[1], a[2]];
+            match id {
+                0x0F => {
+                    set(5, &all);
+                    set(6, &|p| p.rot = [0.0, a[1], 0.0]);
+                }
+                0x0E => set(1, &all),
+                _ => {
+                    for slot in 0x1C..0x1F {
+                        set(slot, &all);
+                    }
+                }
+            }
         }
         if id == 9 && o.anim.iter().any(|a| a.lift == 0) && !o.lifts.is_empty() {
             let m = f.rem_euclid(0x30);

@@ -347,3 +347,21 @@ race.rs `a_win_queues_the_finish_clip_and_the_taunt` /
 `finished_player_is_driven_by_the_ai`, stunt.rs, two_players.rs,
 secrets.rs `boss_challenge_clip`), the same files / channels / first
 sectors (mr-audio tests/xa_disc.rs).
+
+## Phase 13 (Session 8): item key-ons over the whole race frame [ORACLE]
+- `sfx_verify --session` runs the full race frame (Session::load_mem from
+  the oracle's state, one tick with its pad words and dt) instead of the
+  kart update alone: every kart, the items (pickups, projectiles,
+  specials), the objects, the cameras' listeners. Capture
+  analysis/oracle/sfx_items1 (`capture_sfx.py routes/items1.json
+  --course --end 3300`: DOCK slot 2, items fired, R1 specials; the course
+  regions + the voice dirty flags): SPU key-ons 308 / 308 matched (address,
+  same VBlank, pitch, volumes, ADSR all 100 %); the looping channels'
+  pitch and volume 100 %. The voice number agrees on 98.4 %: five key-ons
+  pick another free voice (_SsVmAlloc reads the envelopes, which the SPU
+  sampled at a sub-VBlank moment; not audible).
+- Fix: `Session::load_mem` now loads the character voices' timers (kart
+  +0x4F5): teacher forcing played four extra voice clips without them.
+- The listeners: FUN_8007A620 takes the nearest human camera (two in split
+  screen, `RaceGlobals::sound.listeners`, phase 7); volumes only, mono, as
+  the game.

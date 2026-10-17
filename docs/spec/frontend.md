@@ -370,6 +370,7 @@ Port: port/crates/mr-bevy/src/league.rs, menus.rs (`Leagues`, `LeagueMenu`,
   game shows both pickers at once: not ported); SET CONTROLLERS draws
   controller 2's column (x 0x180) and pad 2's LEFT / RIGHT switches its
   layout (0x800E0393, settings `controller_config_2`); either START pauses;
+  (phase 13: both pickers at once, as the game: "Row 13" below)
   the results go back to the course menu once both players are out (mode
   10).
 - The split HUD (FUN_8004F688 per human with the half's rectangle
@@ -385,8 +386,8 @@ Port: port/crates/mr-bevy/src/league.rs, menus.rs (`Leagues`, `LeagueMenu`,
   above the centre, no COURSE FINISHED) around the half's centre;
   FUN_80050F64's texts ("2 PLAYER BATTLE", "CATCH %i CHICKENS", READY,
   ...), the race clock FUN_80050B2C and "PRESS START" (FUN_80050DB8) at y
-  0x78. Not ported in split screen: the minimap, the chicken icon
-  (FUN_8002FD04).
+  0x78. (Phase 13: the minimap / chicken icon / progress bar at the split:
+  hud.md "Phase 13".)
 - Check (tools/oracle/capture_two.py --hud, local
   analysis/oracle/two/dock_hud: the DOCK 2 PLAYER RACE, GP0 at VB 560,
   1000, 1600; `hudx_check.py` with mr-hudx's split layout): 140 of 186 port
@@ -918,3 +919,83 @@ audio.rs (the clips, the music), karts.rs (a driver without a vehicle).
   (menus.rs `lineup_records`): records on the session camera's axes
   without the view's 1.6 x stretch (the columns' 62-pixel spacing), the
   scale as distance. Side by side: under their columns as in the game.
+
+# Row 13 (Session 8, phase 13): two players complete
+
+## The two-player character select [CODE 80051698 @0x80051C5C, 80073138, 80073c58, 80073e44, 80072d8c, 8006b1c8, 80036228, 80049c70] [SHOT][GPU]
+- 0x800B07CB = 2: both players pick at once, a column each at x 0x80 /
+  0x180 (0x100 with one player). Per player p: cursor 0x800B0E24 + 2p
+  (row) / 0x800B0E25 + 2p (column), ready flag 0x800B0DCE[p]; FUN_80073138
+  moves a player's cursor (and its kart) only while not ready.
+- FUN_80073E44, player 1 then player 2: TRIANGLE un-readies a ready player;
+  with nobody ready it leaves the character select. CROSS: FUN_80073C58
+  (collected and not the character the other, ready player has: else
+  ALREADY PICKED), the vehicle won (DOGFIGHT: the PLANE) -> ready; both
+  ready -> the race (a 2-player league: its menu after FUN_8008BAF8).
+- Drawn per column: "t BACK" unless this player is not ready while the
+  other is; CANCEL instead once anyone is ready (FUN_80049C70); a ready
+  player "PLAYER n" (x, 0x78, bottom, size 1, colour 6) and "READY" (top,
+  colour 5); else the name (0x3C), vehicle (0xB4), arrows, "x SELECT" and
+  the blinking warning: NOT COLLECTED (0xFF, 0x7F, 0) / NOT WON (0, 0xFF,
+  0xFF) / ALREADY PICKED (0xFF, 0, 0xFF, the name and vehicle greyed, abr 0)
+  over MUPPET / VEHICLE. The warning is the font's colour 0 with that tint
+  (GP0: CLUT +0, not colour 7; the one-player screen had it wrong too).
+- The karts: FUN_8006B1C8 runs every frame of the character select and
+  puts the karts not yet ready in front of the camera (FUN_80036228 ->
+  FUN_80026F3C(kart, 0), camera space): x 0 (one player) or -0x6000 /
+  +0x6000, y 0x1800, z 0x8000, pitch 0, scale 0xC00, turning with the menu
+  VBlanks << 4; a character not collected black (+0x414.. and +0x416.. 0),
+  a vehicle not won black (+0x414..). The port (menus.rs
+  `char_select_records`, `view_record`; player 2's kart from
+  `Session::menu_kart_record`) now draws the one-player kart that way too
+  (it stood on grid slot 0 in world space before).
+- Port: menus.rs (`Front::ready`, `sel2`; the 2-player branch of
+  `Page::CharSelect`), the overlay unanchored for the two columns
+  (hud.rs `HudOverlay::centred`), `--menu-keys2` (pad 2 scripts).
+- Check: the oracle's 2P character select (DOCK, player 1 ready on MISS
+  PIGGY, player 2 on MISS PIGGY with a vehicle not won;
+  analysis/s8/p13/charsel2.json + .png, local): every font sprite equal,
+  55 / 55 (test `menus::tests::gp0_two_player_char_select`); the window
+  shot matches the oracle's layout (columns, kart at the right column).
+
+## COURSE SECRETS' "- n PLAYERS" [CODE 80051698 cases 8 / 9 / 0xA, 80074a94 sub-states 8 / 9 / 0xA (80076d64, 80077094, 8007753c)]
+- 0x800B07F0..0x800B07F2 (1 or 2; LEFT / RIGHT on an open row, sound 0xE
+  on a change) per row: race courses REVERSE RACE / BATTLE / BATTLE RACE
+  (DISCO's row 2 CHICKEN CHASE stays two players); ARENA/BATTLE DOGFIGHT /
+  DOOZER BATTLE; a stunt course's REVERSE. CROSS: 0x800B07CB = the row's
+  count (the character select for both), 0x800B07CA = count - 1; DOOZER
+  BATTLE starts at once (split screen with two Doozers, the vehicle turn
+  stepped per kart). BOSS CHALLENGE and BATTLE AS BOSS stay one player.
+- Port: `Front::secret_players`; mr-sim gives player 2 the Doozer / the
+  PLANE in those modes (session.rs). Test `two_player_secret_modes`.
+
+## TOURNAMENT - 2 PLAYERS [CODE 80074a94 sub-states 1 / 2, 8008baf8, 8008c4ac, 800597cc, 8004eedc, 80078538]
+- The main menu's row 3 "TOURNAMENT - n PLAYERS" (0x800B07ED, LEFT /
+  RIGHT); CROSS: 0x800C1DEF = n, 0x800C1E4B = 6 (one) or 3 (two). The
+  league's karts 0..n-1 are the players' picks (0x800B0B28 / 0x800B0C18),
+  FUN_8008BAF8 draws opponents for the rest of the six; a race runs
+  0x800C1E4B karts (two players: split screen and one AI kart, kart 2).
+- The standings (FUN_800597CC) and POINTS (FUN_8004EEDC) show 0x800B0DFE /
+  0x800C1E4B karts ("P1" / "P2" over the players'); with two players every
+  column hides the value of the heading's row. A tie for first with at
+  least one human tied (0x800C1E4A) is played off; the save's league result
+  only with one player (FUN_8008C4AC @0x8008CE98); the champion's voice
+  clip when a player wins.
+- Port: league.rs (`League::players`, `karts_n`, `draw_karts_for`,
+  `tie_humans`); courses.rs (the league's players into the session);
+  mr-sim session.rs (two players + a league: 2 + opponents karts). A tie
+  with player 2 alone: the game keeps split screen with player 1's view
+  off (0x800B0CBC / CBD, FUN_80078538); the port runs that tie-break as a
+  one-player race driven by pad 2. Tests `two_player_league` (league.rs),
+  `two_player_league_race` (mr-sim).
+
+## Saves with two players [CODE 8007916c, 80082708, 80081dd8, 800823d4]
+- Every won bit (race, stunt course, arena) and the battle record need
+  0x800B0CA6 == 0; lap and stunt records do not (either player sets them;
+  the holder is the record's kart, 0x800B0816 = its +0x4D7:
+  `RaceGlobals::record_kart`). Oracle two/battle_win: the save block
+  unchanged by a 2 PLAYER BATTLE win.
+- FUN_800823D4 (the last human out of a 1-player race, game mode 1, race
+  flags 0): the AI catch-up scale 0x800E039A (+3 for a win, at most 16;
+  else + 1 - place, at least 0). The port now applies it (save.rs) and the
+  sessions take it from the save (it stayed at 8 before).

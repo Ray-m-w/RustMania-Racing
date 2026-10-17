@@ -287,3 +287,25 @@ docs/spec/stunt-trial.md "HUD" (mr_assets::hud_items::stunt_hud; GP0 120 of
 121 primitives equal, tools/oracle/hudx_check.py analysis/oracle/stunt/fx).
 The results' PRESS START blinks with 0x800B0AF0 (VBlanks since mode 10) in
 races too (the same FUN_80051698 case).
+
+## Phase 13 (Session 8): split screen's minimap, chicken icon, progress bar, results
+- FUN_80051698 with 0x800B0CA6: once racing (countdown 0, not modes 0 /
+  10 / 0x11 / 0x12) the minimap once for both players at the split (its
+  top at 0x78 - h / 2, x 0x1E0 - w as one player), or on a stunt course
+  with a strip FUN_80047F1C's progress bar at y 0x78. CHICKEN CHASE (mode
+  0x14): the chicken's icon on the map (FUN_8002FD04(x, y, 9, 9, 0, sin
+  ((frame & 0x3F) * 0x40) / 0x60, 0xE0, 0x60, 0x1F, 0x1F, 0x80.., slot
+  0x14, CLUT + 7)) and on a stunt course on the progress bar (0x800CB67C).
+  mr-assets `minimap_full`, `progress_bar_full` (every kart before
+  0x800B0DFE), `ItemHud::chicken`, `MapKart::strip`.
+- mr-hudx lays out a race's result panels (FUN_8004CEA0 inputs from the
+  records, the winner by place) for the checks.
+- GP0 (capture_two.py --hud): 2 PLAYER RACE results (two/dock_results,
+  both karts written out) 324 / 324 in the result frames; 2 PLAYER BATTLE
+  results 329 / 329; 2 PLAYER STUNT RACE results 174 / 174; CHICKEN CHASE
+  WINNER / LOSER 104 / 104; the minimap at the split found in the racing
+  frames (DOCK, VOLCANO, LAGOON). The racing frames' remaining misses are
+  the sampled row's lag: the direction arrow, the weapon rings' pulse, a
+  clock digit, a kart marker a pixel off, the progress bar face's blink;
+  each matches at a neighbouring row (the frames take 3 VBlanks in split
+  screen).

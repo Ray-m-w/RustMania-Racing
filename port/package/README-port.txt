@@ -56,6 +56,10 @@ the keyboard:
     J / L steer, I / K up / down, N accelerate (CROSS), B brake (CIRCLE),
     M jump (SQUARE), H (TRIANGLE), Backspace = START, U / O = L1 / R1,
     Y / P = L2 / R2.
+Both players pick their characters at the same time (CROSS = ready,
+TRIANGLE = not ready). COURSE SECRETS rows switch between 1 PLAYER and
+2 PLAYERS with LEFT / RIGHT; the main menu's TOURNAMENT switches to
+2 PLAYERS the same way (a three-kart league for two).
 
 
 3. Your files (the data folder)

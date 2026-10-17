@@ -718,3 +718,24 @@ free run and teacher forced exact to the end (1635 frames); the other lift
 courses (BOG, ISLAND, HAPPY, ROCK) unchanged (exact). Not a port change:
 the session's lifts were right, the checker's starting state was not.
 
+
+### Phase 13 (Session 8): two players and the unchecked modes [ORACLE]
+- FUN_80041CC4: a kart's look-at override (+0x2C0.. = camera eye >> 5)
+  takes the camera of its +0x4F2; the port used camera 1 for every kart
+  (player 2 in split screen). Render-side fields (+0x2C0.., body sway);
+  found by MR_GDIFF on two/chicken_win.
+- FUN_8006EC4C runs whenever race flag 0x40 is set, also in the results
+  (mode 10); the port ran it only in mode 0x14: one random byte a frame
+  short after a CHICKEN CHASE win (teacher forced: 171 frames).
+- Session::load_mem: the character voices' timers (+0x4F5) load with the
+  state (sfx_verify --session).
+- mr-course-check (analysis only): the stale leader index 0x800D8F94 until
+  GO also for captures from the course menu (two/dock: player 2's catch-up
+  +0x4C3 in the countdown); split-screen captures taken on mid-race
+  (--dir with 0x800B0CA6); mode 20 frames in --dir; a mode-3 frame whose
+  only clock step is its sampled end steps by the frame counter's change;
+  the jets' state and the menu camera's random picks from RAM.
+- Every phase-13 capture: race load, free run and teacher forced exact
+  (battle.md, adventure.md, stunt-trial.md "Phase 13"); the 18 course
+  captures, boss_lagoon, reverse_dock, doozer_battle, two/dock and
+  two/chicken unchanged (exact).

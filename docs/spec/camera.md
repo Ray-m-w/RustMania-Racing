@@ -420,9 +420,24 @@ world axes, y down) and `E = cam.pos` (world units).
   rectangle, `ChaseCamera2` + its far pass (its own sky copy, SKY2_LAYER)
   in the bottom half, both with that FOV; the aspect option applies to the
   whole rectangle (each half Hor+). The effects pass sorts the shared
-  primitives from each eye; camera-facing billboards keep player 1's
-  orientation and the faithful draw-distance selection follows player 1's
-  eye (deferred).
+  primitives from each eye. Phase 13 (mr-bevy eyes.rs): FUN_80078F38's
+  second pass is reproduced per eye: billboards, pickups (FUN_8007E21C's
+  +-10000 square around that eye), the chicken's view frame, the Doozer /
+  trigger markers, kart effects and far impostors (+0x4B4 from
+  FUN_8002669C(camera) before each pass), kart and pickup shadows
+  (FUN_8002ADA8), the parts quads, and with faithful_draw_distance the
+  scenery selection (visibility zone / node per eye; FUN_8002E2F0(1): 4000
+  or 0x600 with course flag 4, a stunt race 0x952; the frustum's vertical
+  row x 3/2) and the banners: what one eye alone shows goes to its layers
+  (EYE1 / EYE2 / FAR_EYE1 / FAR_EYE2), effect primitives to its view
+  (`FxPrim::eye_only`). The per-polygon far cut switches to the split
+  distances with split screen (scenepush.rs `split_far`). Not reproduced:
+  0x800B0E3C (0x122 instead of 0x244 in split screen), the polygon
+  subdivision threshold of a 120-line view (the port draws at the
+  window's resolution).
+- FUN_80041CC4: each kart's look-at override (status 0x10000, finished,
+  the intro) takes its own camera (+0x4F2): phase 13 fix (player 2's
+  +0x2C0.. had camera 1's eye; oracle two/chicken_win).
 - FUN_80064B5C @0x80064FB0: an AI kart's camera (+0x4F2) is the human
   camera nearest it (ported; no 2P mode has AI karts).
 

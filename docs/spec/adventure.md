@@ -150,8 +150,8 @@ The page: course menu row 2 "<COURSE> SECRETS" (FUN_80074A94 sub-state 8
 on race courses, 0xA on stunt courses, 9 in the arenas; FUN_80051698 cases
 8 / 0xA / 9 draw it): four rows, each the mode's text once its secret is
 found, "?" before (the course's save flags, 0x800E0196 + 8 * slot + 0x20 *
-world). Two-player choices ("- n PLAYERS", LEFT / RIGHT, 0x800B07F0..)
-stay at 1 PLAYER in the port. Rows and what CROSS starts (0x800B0F10 =
+world). Two-player choices ("- n PLAYERS", LEFT / RIGHT, 0x800B07F0..):
+ported in phase 13 (frontend.md "Row 13"). Rows and what CROSS starts (0x800B0F10 =
 the game mode FUN_80073E44 then loads):
 
 | course | row | needs | text | starts |
@@ -247,9 +247,17 @@ analysis/oracle/secrets, routes tools/oracle/routes/*.json):
   0x800B0DCC), BATTLE AS BOSS, DOGFIGHT, DOOZER BATTLE, REVERSE RACE and
   BATTLE on four race courses, the reversed trial and BATTLE on MOUNTAIN;
   mr-fuzz --secrets: 272 runs, 5.5 M ticks, 0 panics.
-- Not checked against the oracle: DOGFIGHT, BATTLE AS BOSS, BATTLE on a
-  race course, the reversed stunt trial, a REVERSE RACE lap completion
-  (code + tests + fuzz only).
+- Phase 13 (Session 8; captures local under analysis/oracle/secrets):
+  DOGFIGHT, BATTLE AS BOSS, BATTLE on DOCK (battle.md "Phase 13"); the
+  reversed stunt trial (reverse_rooftops: ROOFTOPS flags -> 0x109, REVERSE
+  - 1 PLAYER, race flag 4): race load exact, free run and teacher forced
+  exact over 873 frames; a REVERSE RACE lap (reverse_dock_lap, to VB 3900):
+  free run and teacher forced exact over 1825 frames, five AI karts
+  completing a reversed lap; AI R2 character specials (ai_r2_pokes: DOCK's
+  grid state, kart 0 AI-driven so every AI kart is "behind" it, two AI
+  karts with preference 4 and a full meter): kart 1's special at frame 0
+  and kart 4's 300 VBlanks later, free run and teacher forced exact (every
+  named kart field and the globals) over 464 frames.
 
 ## ADVENTURE's markers (phase 6b) [CODE][GPU]
 - FUN_80048A0C / FUN_80047F1C (drawn by FUN_80051698 once racing: the
@@ -266,9 +274,14 @@ analysis/oracle/secrets, routes tools/oracle/routes/*.json):
   the parked Doozer still in the race (kart 1 +0x496 bit 0x40), each goal
   (challenge objects 0x800B0EBC.., 0x800B0B98 of them) within 20000 view
   units of the camera: two additive quads 0x100 x 0x100 (slot 0x15 at 0, 0,
-  0x3F x 0x3F), red and blue, turning with the camera roll - (frame & 0x7F)
-  * 0x20, 0x200 apart (mr-bevy effects.rs `doozer_goals`; not checked
-  against GP0).
+  0x3F x 0x3F), red and green (phase 13 GP0: not blue), turning with the camera roll - (frame & 0x7F)
+  * 0x20, 0x200 apart (mr-bevy effects.rs `doozer_goals`). Phase 13 GP0
+  (adventure_goal_gp0: DOCK's ADVENTURE state, the goal written next to
+  the kart; the challenge list 0x800D1C78 is a count word, then 12-byte
+  points): two PolyFT4 per goal, UV (0, 0)..(63, 63), slot 0x15 CLUT, tpage
+  ABR 1, 0x200 apart, the angle = camera roll - (frame & 0x7F) * 0x20
+  within a frame step; the second quad is green (0, 0x80, 0), not blue:
+  fixed.
 
 ## Not ported (listed)
 - (PLAY MOVIE: ported in phase 9, fmv.md.) The two-player choices ("- n PLAYERS", LEFT /

@@ -440,3 +440,11 @@ race3e equal a decoded frame halfword for halfword (0 of 896 differ; the
 "112" were the non-zero halfwords, columns 6 and 7, byte-swapped).
 FUN_800311AC's pointer (DAT_800BBB20[slot] = chunk + 8 by FUN_800441D8:
 w, h, then frame k at + 4 + k * w * h / 2) agrees with mr-assets.
+
+## Phase 13 (Session 8)
+- Split screen: each player's eye has its own selection and facing
+  (camera.md "Split screen", mr-bevy eyes.rs, `FxFrame::second`).
+- FUN_8007E21C's FUN_800362D4 markers: the Doozer's goal red / green (was
+  blue), and the paired triggers (0x800D1C7C) and one-way triggers
+  (0x800D1C9C, DOCK's warps) blue / yellow (were not drawn): GP0 checked
+  (adventure.md, stunt-trial.md "Phase 13").

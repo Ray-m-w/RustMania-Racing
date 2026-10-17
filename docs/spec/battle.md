@@ -236,8 +236,8 @@ track direction points at it. Phase 7 (split screen) is its home.
   frame (`mr-course-check --cap analysis/oracle/two/chicken VOLCANO`; the
   first frame's camera 1 rand fields differ in the free run: the menu
   camera's carried values, as on one player).
-- Not checked against the oracle: 2 PLAYER BATTLE (the battle rules are
-  one player's, shared), a CHICKEN CHASE win, the chicken's projectile hit.
+- (Phase 13: 2 PLAYER BATTLE, a CHICKEN CHASE win and the chicken's
+  projectile hit are checked: "Phase 13" below.)
 
 ## Not ported (listed)
 - A 2-player league (TOURNAMENT - 2 PLAYERS: 3 karts).
@@ -245,3 +245,38 @@ track direction points at it. Phase 7 (split screen) is its home.
   END"; BACK TO CREDITS goes there. The port also keeps worlds 7 and 8 in
   the world list.)
 - The league's tie-break and presentation (above).
+
+## Phase 13 (Session 8): oracle checks
+Captures local under analysis/oracle/two and analysis/oracle/secrets;
+routes tools/oracle/routes/*.json (capture_two.py: "pokes", "save",
+"writes" = TCP write_ram, chase2_target kart0 / kart0_then_chicken,
+chase2_aim, until_out).
+- 2 PLAYER BATTLE (two_lagoon_battle: LAGOON, pad 2 chasing kart 0 and
+  firing): race load exact (2 karts), free run and teacher forced exact
+  over 1069 frames with damage both ways.
+- 2 PLAYER BATTLE won (two_lagoon_battle_win, player 2's damage held at
+  1000): the split result panels GP0 329 / 329; the save block unchanged.
+- CHICKEN CHASE projectile hit and win (two_volcano_chicken_win: player 2's
+  slots charged, counts 3 / 9 written at VB 300, pad 2 fires at kart 0
+  until it loses a chicken, then chases): `mr-course-check VOLCANO --dir
+  analysis/oracle/two/chicken_win --from 320` (MR_KEY_ENDS=1): free run and
+  teacher forced exact over 1419 frames through the hit (kart 0 3 -> 2), the
+  tenth catch and the results; the chicken exact every frame. Fixes: the
+  chicken runs on in the results (FUN_8007916C calls FUN_8006EC4C whenever
+  race flag 0x40; the port stopped it outside mode 0x14: one random byte a
+  frame short), each kart's look-at override uses its own camera
+  (FUN_80041CC4 indexes camera +0x4F2: player 2's +0x2C0.. took camera 1).
+- CHICKEN CHASE result panels (two_volcano_chicken_results: counts and
+  "out" written): WINNER / LOSER GP0 104 / 104.
+- DOGFIGHT (dogfight_battle, ARENA/BATTLE flags 0x61 -> 0x79): race load
+  exact (six karts on vehicle 8), free run and teacher forced exact over
+  584 frames.
+- BATTLE AS BOSS (boss_as_lagoon, LAGOON flags -> 0x159): race load exact
+  (THE CHIEF on the LOG and five drawn), free run and teacher forced exact
+  over 636 frames.
+- BATTLE on a race course (battle_dock, DOCK flags 0x101 -> 0x111): race
+  load exact, free run and teacher forced exact over 706 frames.
+- Racing HUD in split screen (two/battle_hud): the minimap at the split
+  matches; the rest of the misses are the sampled row's lag (the arrow,
+  the weapon rings' pulse, a clock digit, a map marker one pixel): each
+  matches at the neighbouring row.

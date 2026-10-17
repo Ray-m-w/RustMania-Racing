@@ -198,3 +198,31 @@ In add order (the GPU draws the last-added first):
   (FUN_80081DD8, -1 at race load; mr-sim `first_finish`, phase 7).
 - The stunt menu camera (mode 9) is ported from the code, not checked
   against the oracle.
+
+## Phase 13 (Session 8): a second course, the reversed trial, two players
+- ROOFTOPS (world 3's stunt course; goto_course.py menu ROOFTOPS,
+  capture_course.py --hold cross 230): `mr-course-check ROOFTOPS`: race
+  load exact, free run and teacher forced exact over 1033 frames. The
+  checker now carries the menu camera's random picks (+0x6B / +0x6E: mode 3
+  never redraws them) and the jets' on / off state from RAM.
+- The reversed trial (race flag 4): adventure.md "Phase 13".
+- 2 PLAYER STUNT RACE (two_mountain_stunt): race load exact (2 karts), free
+  run and teacher forced exact over 1116 frames (mr-course-check: a mode-3
+  frame whose only clock step is its sampled end steps by the frame
+  counter's own change: the end sample can already hold the next frame's
+  dt). Its result panels (two_mountain_stunt_results): GP0 174 / 174; its
+  racing HUD (two/stunt_hud): the progress bar at the split (y 0x78,
+  player 1's face above the bar, player 2's below, FUN_80047F1C) matches.
+- FUN_80047F1C draws every kart before 0x800B0DFE: a human's face, and a
+  kart with flags 0x60 spinning (ADVENTURE's parked Doozer on a stunt
+  course: now drawn), CHICKEN CHASE's chicken at its strip place
+  (0x800CB67C).
+- Draw distances (FUN_8002E2F0): in a stunt course's race MOUNTAIN and
+  REST use 0x952 with one player (the port had 5000), every stunt course
+  0x952 with two; the faithful draw distance now follows it.
+- The paired triggers (MOUNTAIN, DINER; and the one-way list 0x800D1C9C,
+  DOCK's warps) carry markers: FUN_8007E21C -> FUN_800362D4, two turning
+  additive quads, blue (0, 0, 0x80) and yellow (0x80, 0x80, 0), at each
+  entry's first point within 20000 view units (GP0 mountain_paired_gp0:
+  four markers, eight quads; DOCK race3 frames have the warps'). Not drawn
+  by the port before; now (effects.rs `trigger_marks`).
